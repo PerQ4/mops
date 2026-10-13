@@ -54,6 +54,9 @@ add_subdirectory(${FLUTTER_MANAGED_DIR})
 find_package(PkgConfig REQUIRED)
 pkg_check_modules(GTK REQUIRED IMPORTED_TARGET gtk+-3.0)
 
+# Встроенный браузер (окно входа в аккаунт) построен на WebKitGTK.
+pkg_check_modules(WEBKIT REQUIRED IMPORTED_TARGET webkit2gtk-4.1)
+
 # Application build; see runner/CMakeLists.txt.
 add_subdirectory("runner")
 

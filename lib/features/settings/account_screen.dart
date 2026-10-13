@@ -4,6 +4,7 @@ import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:url_launcher/url_launcher.dart';
 
 import '../../core/auth/oauth_device_flow.dart';
+import '../../core/auth/webview_login.dart';
 import '../../core/auth/token_store.dart';
 import '../../state/auth_controller.dart';
 import '../../state/providers.dart';
@@ -206,6 +207,12 @@ class _SignedOutView extends ConsumerWidget {
           ),
           const SizedBox(height: 16),
         ],
+
+        // ------------------------------------------- вход во встроенном браузере
+        // Самый простой путь: открывается настоящее окно входа Google,
+        // cookie забираются автоматически.
+        const _WebviewLoginCard(),
+        const SizedBox(height: 16),
 
         // ------------------------------------------------------- OAuth device flow
         Card(
@@ -472,5 +479,109 @@ class _DeviceCodeBlock extends StatelessWidget {
         ),
       ],
     );
+  }
+}
+
+
+/// Вход во встроенном браузере.
+///
+/// Показывается только там, где браузер доступен (сейчас это Linux).
+/// Открывает окно WebKit со страницей входа Google; как только вход выполнен,
+/// окно закрывается само, а cookie попадают в сессию приложения.
+class _WebviewLoginCard extends ConsumerStatefulWidget {
+  const _WebviewLoginCard();
+
+  @override
+  ConsumerState<_WebviewLoginCard> createState() => _WebviewLoginCardState();
+}
+
+class _WebviewLoginCardState extends ConsumerState<_WebviewLoginCard> {
+  bool _available = false;
+  bool _busy = false;
+  String? _error;
+
+  @override
+  void initState() {
+    super.initState();
+    WebviewLogin.isAvailable().then((bool value) {
+      if (mounted) setState(() => _available = value);
+    });
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    if (!_available) return const SizedBox.shrink();
+
+    final TextTheme text = Theme.of(context).textTheme;
+    final ColorScheme scheme = Theme.of(context).colorScheme;
+
+    return Card(
+      child: Padding(
+        padding: const EdgeInsets.all(20),
+        child: Column(
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: <Widget>[
+            Text(
+              'Вход во встроенном браузере',
+              style: text.titleLarge?.copyWith(fontWeight: FontWeight.w700),
+            ),
+            const SizedBox(height: 8),
+            Text(
+              'Откроется окно входа Google. Как только вы войдёте, оно закроется '
+              'само, а приложение заберёт cookie — ничего копировать вручную '
+              'не нужно.',
+              style: text.bodyMedium?.copyWith(color: scheme.onSurfaceVariant),
+            ),
+            const SizedBox(height: 16),
+            FilledButton.icon(
+              onPressed: _busy ? null : _login,
+              icon: _busy
+                  ? const SizedBox(
+                      width: 18,
+                      height: 18,
+                      child: CircularProgressIndicator(strokeWidth: 2),
+                    )
+                  : const Icon(Icons.open_in_browser),
+              label: Text(_busy ? 'Ждём вход…' : 'Войти в браузере'),
+            ),
+            if (_error != null) ...<Widget>[
+              const SizedBox(height: 12),
+              Text(
+                _error!,
+                style: text.bodySmall?.copyWith(color: scheme.error),
+              ),
+            ],
+          ],
+        ),
+      ),
+    );
+  }
+
+  Future<void> _login() async {
+    setState(() {
+      _busy = true;
+      _error = null;
+    });
+
+    try {
+      final String cookies = await WebviewLogin.openLogin();
+      await ref
+          .read(authControllerProvider.notifier)
+          .signInWithCookies(cookies);
+      if (!mounted) return;
+      setState(() => _busy = false);
+    } on WebviewLoginException catch (error) {
+      if (!mounted) return;
+      setState(() {
+        _busy = false;
+        _error = error.message;
+      });
+    } on Object catch (error) {
+      if (!mounted) return;
+      setState(() {
+        _busy = false;
+        _error = 'Ошибка входа: $error';
+      });
+    }
   }
 }
