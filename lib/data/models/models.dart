@@ -1,0 +1,300 @@
+import 'package:flutter/foundation.dart';
+
+/// Обложка в конкретном размере.
+@immutable
+class Thumbnail {
+  const Thumbnail({required this.url, this.width, this.height});
+
+  final String url;
+  final int? width;
+  final int? height;
+
+  @override
+  bool operator ==(Object other) =>
+      other is Thumbnail && other.url == url && other.width == width;
+
+  @override
+  int get hashCode => Object.hash(url, width);
+}
+
+/// Ссылка на исполнителя (может быть без id, если YouTube его не отдал).
+@immutable
+class ArtistRef {
+  const ArtistRef({required this.name, this.id});
+
+  final String name;
+  final String? id;
+
+  bool get isNavigable => id != null && id!.isNotEmpty;
+}
+
+/// Ссылка на альбом.
+@immutable
+class AlbumRef {
+  const AlbumRef({required this.name, this.id});
+
+  final String name;
+  final String? id;
+
+  bool get isNavigable => id != null && id!.isNotEmpty;
+}
+
+/// Утилиты выбора лучшей обложки.
+extension ThumbnailListX on List<Thumbnail> {
+  /// Обложка максимального размера (или последняя доступная).
+  String? get best => _pick(int.maxFinite);
+
+  /// Обложка, подходящая под квадрат заданной стороны (для списков — меньше трафик).
+  String? sized(int target) => _pick(target);
+
+  String? _pick(int target) {
+    if (isEmpty) return null;
+    final List<Thumbnail> sorted = <Thumbnail>[...this]
+      ..sort((Thumbnail a, Thumbnail b) =>
+          (a.width ?? 0).compareTo(b.width ?? 0));
+    for (final Thumbnail t in sorted) {
+      if ((t.width ?? 0) >= target) return t.url;
+    }
+    return sorted.last.url;
+  }
+}
+
+/// Трек (аудио, который можно воспроизвести).
+@immutable
+class Track {
+  const Track({
+    required this.id,
+    required this.title,
+    this.artists = const <ArtistRef>[],
+    this.album,
+    this.duration = Duration.zero,
+    this.thumbnails = const <Thumbnail>[],
+    this.isExplicit = false,
+    this.playlistId,
+    this.isVideo = false,
+    this.played = false,
+  });
+
+  /// YouTube videoId — он же идентификатор потока.
+  final String id;
+  final String title;
+  final List<ArtistRef> artists;
+  final AlbumRef? album;
+  final Duration duration;
+  final List<Thumbnail> thumbnails;
+  final bool isExplicit;
+
+  /// Если трек получен из плейлиста — его id нужен для корректного queue/next.
+  final String? playlistId;
+  final bool isVideo;
+
+  /// Отмечался ли трек как прослушанный (для отображения в плейлистах).
+  final bool played;
+
+  String get artistLine =>
+      artists.isEmpty ? 'Неизвестный исполнитель' : artists.map((ArtistRef a) => a.name).join(', ');
+
+  String? get artwork => thumbnails.best;
+
+  Track copyWith({bool? played}) => Track(
+        id: id,
+        title: title,
+        artists: artists,
+        album: album,
+        duration: duration,
+        thumbnails: thumbnails,
+        isExplicit: isExplicit,
+        playlistId: playlistId,
+        isVideo: isVideo,
+        played: played ?? this.played,
+      );
+
+  @override
+  bool operator ==(Object other) =>
+      other is Track && other.id == id && other.playlistId == playlistId;
+
+  @override
+  int get hashCode => Object.hash(id, playlistId);
+}
+
+/// Альбом.
+@immutable
+class Album {
+  const Album({
+    required this.id,
+    required this.title,
+    this.artists = const <ArtistRef>[],
+    this.year,
+    this.thumbnails = const <Thumbnail>[],
+    this.tracks = const <Track>[],
+    this.trackCount,
+    this.duration,
+    this.description,
+  });
+
+  final String id;
+  final String title;
+  final List<ArtistRef> artists;
+  final String? year;
+  final List<Thumbnail> thumbnails;
+  final List<Track> tracks;
+  final int? trackCount;
+  final Duration? duration;
+  final String? description;
+
+  String get artistLine => artists.map((ArtistRef a) => a.name).join(', ');
+  String? get artwork => thumbnails.best;
+}
+
+/// Исполнитель.
+@immutable
+class Artist {
+  const Artist({
+    required this.id,
+    required this.name,
+    this.thumbnails = const <Thumbnail>[],
+    this.description,
+    this.subscribers,
+    this.topTracks = const <Track>[],
+    this.albums = const <Album>[],
+    this.singles = const <Album>[],
+    this.related = const <Artist>[],
+  });
+
+  final String id;
+  final String name;
+  final List<Thumbnail> thumbnails;
+  final String? description;
+  final String? subscribers;
+  final List<Track> topTracks;
+  final List<Album> albums;
+  final List<Album> singles;
+  final List<Artist> related;
+
+  String? get artwork => thumbnails.best;
+}
+
+/// Плейлист.
+@immutable
+class Playlist {
+  const Playlist({
+    required this.id,
+    required this.title,
+    this.author,
+    this.description,
+    this.thumbnails = const <Thumbnail>[],
+    this.tracks = const <Track>[],
+    this.trackCount,
+    this.duration,
+  });
+
+  final String id;
+  final String title;
+  final String? author;
+  final String? description;
+  final List<Thumbnail> thumbnails;
+  final List<Track> tracks;
+  final int? trackCount;
+  final Duration? duration;
+
+  String? get artwork => thumbnails.best;
+}
+
+/// Элемент карусели на главной: может быть треком, альбомом, плейлистом и т.д.
+sealed class BrowseItem {
+  const BrowseItem();
+
+  String get title;
+  List<Thumbnail> get thumbnails;
+  String? get image => thumbnails.best;
+}
+
+class TrackItem extends BrowseItem {
+  const TrackItem(this.track);
+
+  final Track track;
+
+  @override
+  String get title => track.title;
+
+  @override
+  List<Thumbnail> get thumbnails => track.thumbnails;
+}
+
+class AlbumItem extends BrowseItem {
+  const AlbumItem(this.album);
+
+  final Album album;
+
+  @override
+  String get title => album.title;
+
+  @override
+  List<Thumbnail> get thumbnails => album.thumbnails;
+}
+
+class ArtistItem extends BrowseItem {
+  const ArtistItem(this.artist);
+
+  final Artist artist;
+
+  @override
+  String get title => artist.name;
+
+  @override
+  List<Thumbnail> get thumbnails => artist.thumbnails;
+}
+
+class PlaylistItem extends BrowseItem {
+  const PlaylistItem(this.playlist);
+
+  final Playlist playlist;
+
+  @override
+  String get title => playlist.title;
+
+  @override
+  List<Thumbnail> get thumbnails => playlist.thumbnails;
+}
+
+/// Секция главного экрана / раздела.
+@immutable
+class BrowseSection {
+  const BrowseSection({
+    required this.title,
+    this.items = const <BrowseItem>[],
+    this.subtitle,
+    this.browseId,
+    this.params,
+  });
+
+  final String title;
+  final String? subtitle;
+  final List<BrowseItem> items;
+  final String? browseId;
+  final String? params;
+}
+
+/// Строка синхронизированного текста.
+@immutable
+class TimedLyric {
+  const TimedLyric({required this.time, required this.text});
+
+  final Duration time;
+  final String text;
+}
+
+/// Текст песни: обычный, синхронизированный или отсутствует.
+@immutable
+class Lyrics {
+  const Lyrics({this.plain, this.timed, this.source});
+
+  final String? plain;
+  final List<TimedLyric>? timed;
+  final String? source;
+
+  bool get isEmpty => (plain == null || plain!.isEmpty) && (timed?.isEmpty ?? true);
+  bool get isSynced => timed != null && timed!.isNotEmpty;
+
+  static const Lyrics none = Lyrics();
+}

@@ -1,0 +1,38 @@
+# Flutter / Dart
+.dart_tool/
+.packages
+.pub-cache/
+.pub/
+build/
+.flutter-plugins
+.flutter-plugins-dependencies
+*.iml
+.idea/
+.vscode/
+
+# Platform build artifacts
+android/.gradle/
+android/local.properties
+android/key.properties
+android/app/debug/
+android/app/profile/
+android/app/release/
+ios/Pods/
+ios/.symlinks/
+macos/Pods/
+linux/flutter/ephemeral/
+windows/flutter/ephemeral/
+web/.dart_tool/
+
+# Secrets — never commit
+secrets/
+*.secrets.json
+.oauth.json
+token_store.json
+
+# OS
+.DS_Store
+Thumbs.db
+
+# Flutter SDK downloaded during setup
+flutter-dl/
