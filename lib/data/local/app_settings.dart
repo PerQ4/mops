@@ -1,5 +1,6 @@
 import 'dart:convert';
 
+import '../../core/net/anti_dpi.dart';
 import '../../core/theme/seed_colors.dart';
 
 /// Качество аудио. YouTube отдаёт свободным клиентам только part-качество
@@ -66,6 +67,8 @@ class AppSettings {
     this.lastVolume = 1.0,
     this.lastSpeed = 1.0,
     this.uiScale = 0.0,
+    this.bypass = const AntiDpiConfig(),
+    this.bypassProbed = false,
   });
 
   final ThemeModePreference themeMode;
@@ -85,6 +88,12 @@ class AppSettings {
 
   /// Масштаб интерфейса. `0` — автоматически (по масштабу рабочего стола).
   final double uiScale;
+
+  /// Обход блокировок провайдера (подмена хоста, прокси).
+  final AntiDpiConfig bypass;
+
+  /// Выполнялась ли автопроверка необходимости обхода.
+  final bool bypassProbed;
 
   bool get isUiScaleAuto => uiScale <= 0;
 
@@ -107,6 +116,8 @@ class AppSettings {
     double? lastVolume,
     double? lastSpeed,
     double? uiScale,
+    AntiDpiConfig? bypass,
+    bool? bypassProbed,
   }) {
     return AppSettings(
       themeMode: themeMode ?? this.themeMode,
@@ -124,6 +135,8 @@ class AppSettings {
       lastVolume: lastVolume ?? this.lastVolume,
       lastSpeed: lastSpeed ?? this.lastSpeed,
       uiScale: uiScale ?? this.uiScale,
+      bypass: bypass ?? this.bypass,
+      bypassProbed: bypassProbed ?? this.bypassProbed,
     );
   }
 
@@ -143,6 +156,8 @@ class AppSettings {
         'lastVolume': lastVolume,
         'lastSpeed': lastSpeed,
         'uiScale': uiScale,
+        'bypass': bypass.toJson(),
+        'bypassProbed': bypassProbed,
       };
 
   String encode() => jsonEncode(toJson());
@@ -164,6 +179,10 @@ class AppSettings {
       lastVolume: (json['lastVolume'] as num?)?.toDouble() ?? 1.0,
       lastSpeed: (json['lastSpeed'] as num?)?.toDouble() ?? 1.0,
       uiScale: (json['uiScale'] as num?)?.toDouble() ?? 0.0,
+      bypass: json['bypass'] is Map<String, dynamic>
+          ? AntiDpiConfig.fromJson(json['bypass'] as Map<String, dynamic>)
+          : const AntiDpiConfig(),
+      bypassProbed: json['bypassProbed'] as bool? ?? false,
     );
   }
 

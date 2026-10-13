@@ -5,6 +5,13 @@ import 'package:http/http.dart' as http;
 
 import '../auth/sapisid_hash.dart';
 
+/// Публичный ключ веб-клиента YouTube Music.
+///
+/// Он присутствует в HTML главной страницы, но его извлечение может не
+/// сработать — например, если страница отдалась не полностью. Ключ не
+/// секретный: его использует и `ytmusicapi`, и другие неофициальные клиенты.
+const String kPublicInnerTubeKey = 'AIzaSyC9XL3ZjWddXya6X74dJoCTL-WEYFDNX30';
+
 /// Источник заголовков авторизации для InnerTube.
 abstract class AuthProvider {
   /// Заголовки, которые добавляются к каждому запросу (или пустая карта).
@@ -129,6 +136,8 @@ class InnerTubeClient {
       Uri.parse('$_origin/'),
       headers: <String, String>{
         'User-Agent': _userAgent,
+        'Accept':
+            'text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8',
         'Accept-Language': '$locale,en;q=0.9',
         'Cookie': 'SOCS=CAI',
       },
@@ -158,9 +167,18 @@ class InnerTubeClient {
     final String visitorData = _grab(html, r'"VISITOR_DATA":"(.*?)"');
 
     if (apiKey.isEmpty) {
-      throw InnerTubeException(
-        'Не удалось извлечь API-ключ YouTube Music. Изменился формат страницы.',
+      // Публичный ключ веб-клиента YouTube Music, он не является секретом:
+      // без него не обходится ни один неофициальный клиент.
+      _config = InnerTubeConfig(
+        apiKey: kPublicInnerTubeKey,
+        apiVersion: 'v1',
+        clientName: 'WEB_REMIX',
+        clientVersion: '1.20240101.01.00',
+        visitorData: visitorData,
+        gl: region,
+        hl: locale,
       );
+      return _config!;
     }
 
     _config = InnerTubeConfig(

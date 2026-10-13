@@ -6,6 +6,7 @@ import 'package:flutter_riverpod/flutter_riverpod.dart';
 
 import '../core/audio/audio_engine.dart';
 import '../data/models/models.dart';
+import '../data/sources/stream_downloader.dart';
 import '../data/sources/stream_resolver.dart';
 import 'catalog_providers.dart';
 import 'providers.dart';
@@ -39,6 +40,8 @@ class PlayerUiState {
     this.resolving = false,
     this.error,
     this.autoPlayRadio = true,
+    this.downloading = false,
+    this.downloadProgress = 0,
   });
 
   final List<Track> queue;
@@ -54,12 +57,18 @@ class PlayerUiState {
   final String? error;
   final bool autoPlayRadio;
 
+  /// Идёт загрузка потока на диск (режим обхода блокировок).
+  final bool downloading;
+
+  /// Прогресс загрузки от 0 до 1.
+  final double downloadProgress;
+
   Track? get current =>
       (index >= 0 && index < queue.length) ? queue[index] : null;
 
   bool get hasTrack => current != null;
   bool get isPlaying => playback.isPlaying;
-  bool get isLoading => resolving || playback.isLoading;
+  bool get isLoading => resolving || downloading || playback.isLoading;
 
   /// Треки, которые пойдут следующими (для панели очереди).
   List<Track> get upNext {
@@ -80,6 +89,8 @@ class PlayerUiState {
     String? error,
     bool clearError = false,
     bool? autoPlayRadio,
+    bool? downloading,
+    double? downloadProgress,
   }) {
     return PlayerUiState(
       queue: queue ?? this.queue,
@@ -90,6 +101,8 @@ class PlayerUiState {
       resolving: resolving ?? this.resolving,
       error: clearError ? null : (error ?? this.error),
       autoPlayRadio: autoPlayRadio ?? this.autoPlayRadio,
+      downloading: downloading ?? this.downloading,
+      downloadProgress: downloadProgress ?? this.downloadProgress,
     );
   }
 }
@@ -338,13 +351,44 @@ class PlayerController extends Notifier<PlayerUiState> {
       // загрузку надо отменить, иначе заиграет «не тот».
       if (state.current?.id != track.id) return;
 
+      // При обходе блокировок звук качает приложение: GStreamer про обход
+      // не знает и напрямую до googlevideo не дотянется.
+      if (ref.read(bypassActiveProvider)) {
+        state = state.copyWith(downloading: true, downloadProgress: 0);
+        final String path = await ref.read(streamDownloaderProvider).fetch(
+              resolved.url,
+              cacheKey: track.id,
+              onProgress: (double progress) {
+                if (state.current?.id == track.id) {
+                  state = state.copyWith(downloadProgress: progress);
+                }
+              },
+            );
+        if (state.current?.id != track.id) return;
+
+        await _engine.load(path, autoplay: true, isLocal: true);
+        state = state.copyWith(resolving: false, downloading: false);
+        return;
+      }
+
       await _engine.load(resolved.url.toString(), autoplay: true);
       state = state.copyWith(resolving: false);
     } on StreamResolutionException catch (error) {
-      state = state.copyWith(resolving: false, error: error.message);
+      state = state.copyWith(
+        resolving: false,
+        downloading: false,
+        error: error.message,
+      );
+    } on StreamDownloadException catch (error) {
+      state = state.copyWith(
+        resolving: false,
+        downloading: false,
+        error: error.message,
+      );
     } on Exception catch (error) {
       state = state.copyWith(
         resolving: false,
+        downloading: false,
         error: 'Ошибка воспроизведения: $error',
       );
     }

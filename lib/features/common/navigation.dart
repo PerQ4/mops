@@ -5,6 +5,7 @@ import '../artist/artist_screen.dart';
 import '../player/now_playing_screen.dart';
 import '../playlist/playlist_screen.dart';
 import '../settings/account_screen.dart';
+import '../settings/bypass_screen.dart';
 import '../settings/settings_screen.dart';
 
 /// Единая точка переходов.
@@ -67,4 +68,7 @@ abstract final class AppRoutes {
 
   static Future<void> account(BuildContext context) =>
       _push<void>(context, const AccountScreen());
+
+  static Future<void> bypass(BuildContext context) =>
+      _push<void>(context, const BypassScreen());
 }

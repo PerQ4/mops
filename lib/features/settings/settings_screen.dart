@@ -1,6 +1,7 @@
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 
+import '../../core/net/anti_dpi.dart';
 import '../../core/theme/seed_colors.dart';
 import '../../core/theme/ui_scaler.dart';
 import '../../data/local/app_settings.dart';
@@ -114,6 +115,22 @@ class SettingsScreen extends ConsumerWidget {
             subtitle: Text(settings.streamingLanguage),
             trailing: const Icon(Icons.chevron_right),
             onTap: () => _pickLanguage(context, controller, settings),
+          ),
+
+          const Divider(height: 24),
+
+          // ------------------------------------------------- обход блокировок
+          const _SectionHeader('Доступ к сети'),
+          ListTile(
+            leading: Icon(
+              settings.bypass.isEnabled
+                  ? Icons.shield
+                  : Icons.shield_outlined,
+            ),
+            title: const Text('Обход блокировок'),
+            subtitle: Text(_bypassLabel(settings)),
+            trailing: const Icon(Icons.chevron_right),
+            onTap: () => AppRoutes.bypass(context),
           ),
 
           const Divider(height: 24),
@@ -261,6 +278,16 @@ class SettingsScreen extends ConsumerWidget {
       label: (String v) => languages[v] ?? v,
     );
     if (result != null) await controller.setStreamingLanguage(result);
+  }
+
+  /// Подпись для пункта «Обход блокировок».
+  String _bypassLabel(AppSettings settings) {
+    final AntiDpiConfig config = settings.bypass;
+    final List<String> parts = <String>[];
+    if (config.fronting.enabled) parts.add('подмена хоста');
+    if (config.usesProxy) parts.add('прокси ${config.proxyKind.label}');
+    if (parts.isEmpty) return 'Выключено';
+    return parts.join(' · ');
   }
 
   /// Подпись для пункта «Масштаб интерфейса».

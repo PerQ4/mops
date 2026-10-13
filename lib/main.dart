@@ -4,6 +4,7 @@ import 'package:shared_preferences/shared_preferences.dart';
 
 import 'app.dart';
 import 'core/auth/token_store.dart';
+import 'core/net/bypass.dart';
 import 'core/theme/ui_scaler.dart';
 import 'data/local/app_settings.dart';
 import 'state/providers.dart';
@@ -38,6 +39,10 @@ Future<void> main() async {
     'логический размер: ${_engineLogicalSize()}; '
     'компенсация: ×${compensation.toStringAsFixed(3)}',
   );
+
+  // Обход блокировок провайдера (подмена хоста / прокси) нужно применить
+  // до первого сетевого запроса — до него приложение не дойдёт.
+  await BypassManager.instance.apply(settings.bypass);
 
   runApp(
     ProviderScope(

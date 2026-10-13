@@ -95,7 +95,11 @@ class AudioplayersEngine implements AudioEngine {
   }
 
   @override
-  Future<void> load(String url, {bool autoplay = true}) async {
+  Future<void> load(
+    String source, {
+    bool autoplay = true,
+    bool isLocal = false,
+  }) async {
     _emit(_state.copyWith(
       status: PlaybackStatus.loading,
       position: Duration.zero,
@@ -104,7 +108,11 @@ class AudioplayersEngine implements AudioEngine {
     ));
 
     try {
-      await _player.setSourceUrl(url);
+      if (isLocal) {
+        await _player.setSourceDeviceFile(source);
+      } else {
+        await _player.setSourceUrl(source);
+      }
       if (autoplay) {
         await _player.resume();
         // Часть платформ не отдаёт состояние сразу — выставляем сами.

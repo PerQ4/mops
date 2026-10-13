@@ -1,0 +1,365 @@
+import 'package:flutter/material.dart';
+import 'package:flutter/services.dart';
+import 'package:flutter_riverpod/flutter_riverpod.dart';
+
+import '../../core/net/anti_dpi.dart';
+import '../../core/net/fronting.dart';
+import '../../data/local/app_settings.dart';
+import '../../state/providers.dart';
+
+/// Настройки обхода блокировок провайдера.
+///
+/// Два способа, которые можно включать независимо:
+///
+///  * **Подмена хоста** — соединение идёт на разрешённый узел Google,
+///    а настоящее имя передаётся в заголовке `Host`. Не требует ничего, кроме
+///    самого приложения.
+///  * **Прокси** — если есть свой SOCKS5 или HTTP-прокси.
+class BypassScreen extends ConsumerStatefulWidget {
+  const BypassScreen({super.key});
+
+  @override
+  ConsumerState<BypassScreen> createState() => _BypassScreenState();
+}
+
+class _BypassScreenState extends ConsumerState<BypassScreen> {
+  final TextEditingController _frontHost = TextEditingController();
+  final TextEditingController _proxyHost = TextEditingController();
+  final TextEditingController _proxyPort = TextEditingController();
+  final TextEditingController _proxyUser = TextEditingController();
+  final TextEditingController _proxyPassword = TextEditingController();
+
+  ConnectivityReport? _report;
+  bool _checking = false;
+
+  @override
+  void initState() {
+    super.initState();
+    final AntiDpiConfig config = ref.read(settingsControllerProvider).bypass;
+    _frontHost.text = config.fronting.frontHost;
+    _proxyHost.text = config.proxyHost;
+    _proxyPort.text = config.proxyPort.toString();
+    _proxyUser.text = config.proxyUsername;
+    _proxyPassword.text = config.proxyPassword;
+  }
+
+  @override
+  void dispose() {
+    _frontHost.dispose();
+    _proxyHost.dispose();
+    _proxyPort.dispose();
+    _proxyUser.dispose();
+    _proxyPassword.dispose();
+    super.dispose();
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    final AppSettings settings = ref.watch(settingsControllerProvider);
+    final SettingsController controller =
+        ref.read(settingsControllerProvider.notifier);
+    final AntiDpiConfig config = settings.bypass;
+
+    final TextTheme text = Theme.of(context).textTheme;
+    final ColorScheme scheme = Theme.of(context).colorScheme;
+
+    return Scaffold(
+      appBar: AppBar(title: const Text('Обход блокировок')),
+      body: ListView(
+        padding: const EdgeInsets.only(bottom: 32),
+        children: <Widget>[
+          // ---------------------------------------------------- подмена хоста
+          SwitchListTile(
+            title: const Text('Подмена хоста (обход SNI)'),
+            subtitle: const Text(
+              'Провайдер видит только имя разрешённого узла Google, '
+              'а нужный домен передаётся в заголовке Host',
+            ),
+            value: config.fronting.enabled,
+            onChanged: controller.setFrontingEnabled,
+          ),
+
+          if (config.fronting.enabled)
+            Padding(
+              padding: const EdgeInsets.fromLTRB(16, 0, 16, 8),
+              child: TextField(
+                controller: _frontHost,
+                decoration: const InputDecoration(
+                  labelText: 'Узел подмены',
+                  helperText: 'Должен быть доступен без блокировки',
+                ),
+                onSubmitted: controller.setFrontHost,
+                onEditingComplete: () => controller.setFrontHost(_frontHost.text),
+              ),
+            ),
+
+          // ------------------------------------------------------------- прокси
+          const Divider(height: 24),
+          const _SectionHeader('Фрагментация TLS'),
+          ListTile(
+            title: const Text('Дробить первый пакет'),
+            subtitle: Text(config.fragmentation.label),
+            trailing: const Icon(Icons.chevron_right),
+            onTap: () => _pickFragmentation(controller),
+          ),
+          Padding(
+            padding: const EdgeInsets.fromLTRB(16, 0, 16, 8),
+            child: Text(
+              'Помогает не везде: если оборудование провайдера собирает поток '
+              'обратно, приём не сработает — тогда нужен прокси или системный '
+              'обход (zapret, GoodbyeDPI, VPN).',
+              style: text.bodySmall?.copyWith(color: scheme.onSurfaceVariant),
+            ),
+          ),
+
+          // ------------------------------------------------------------- прокси
+          const Divider(height: 24),
+          const _SectionHeader('Прокси (даёт всё, включая звук)'),
+          for (final ProxyKind kind in ProxyKind.values)
+            RadioListTile<ProxyKind>(
+              value: kind,
+              // ignore: deprecated_member_use
+              groupValue: config.proxyKind,
+              title: Text(kind.label),
+              // ignore: deprecated_member_use
+              onChanged: (ProxyKind? value) {
+                if (value != null) controller.setProxy(kind: value);
+              },
+            ),
+
+          if (config.usesProxy || config.proxyKind != ProxyKind.none)
+            Padding(
+              padding: const EdgeInsets.fromLTRB(16, 8, 16, 0),
+              child: Column(
+                children: <Widget>[
+                  Row(
+                    children: <Widget>[
+                      Expanded(
+                        flex: 3,
+                        child: TextField(
+                          controller: _proxyHost,
+                          decoration: const InputDecoration(
+                            labelText: 'Адрес прокси',
+                            hintText: '127.0.0.1',
+                          ),
+                          onEditingComplete: () => _saveProxy(controller),
+                        ),
+                      ),
+                      const SizedBox(width: 12),
+                      Expanded(
+                        flex: 2,
+                        child: TextField(
+                          controller: _proxyPort,
+                          keyboardType: TextInputType.number,
+                          inputFormatters: <TextInputFormatter>[
+                            FilteringTextInputFormatter.digitsOnly,
+                          ],
+                          decoration: const InputDecoration(
+                            labelText: 'Порт',
+                            hintText: '1080',
+                          ),
+                          onEditingComplete: () => _saveProxy(controller),
+                        ),
+                      ),
+                    ],
+                  ),
+                  const SizedBox(height: 12),
+                  TextField(
+                    controller: _proxyUser,
+                    decoration: const InputDecoration(labelText: 'Логин'),
+                    onEditingComplete: () => _saveProxy(controller),
+                  ),
+                  const SizedBox(height: 12),
+                  TextField(
+                    controller: _proxyPassword,
+                    obscureText: true,
+                    decoration: const InputDecoration(labelText: 'Пароль'),
+                    onEditingComplete: () => _saveProxy(controller),
+                  ),
+                  const SizedBox(height: 12),
+                  Align(
+                    alignment: Alignment.centerLeft,
+                    child: FilledButton.tonal(
+                      onPressed: () => _saveProxy(controller),
+                      child: const Text('Сохранить прокси'),
+                    ),
+                  ),
+                ],
+              ),
+            ),
+
+          // --------------------------------------------------------- проверка
+          const Divider(height: 24),
+          const _SectionHeader('Проверка'),
+          Padding(
+            padding: const EdgeInsets.symmetric(horizontal: 16),
+            child: FilledButton.icon(
+              onPressed: _checking ? null : _runCheck,
+              icon: _checking
+                  ? const SizedBox(
+                      width: 18,
+                      height: 18,
+                      child: CircularProgressIndicator(strokeWidth: 2),
+                    )
+                  : const Icon(Icons.network_check),
+              label: Text(_checking ? 'Проверяем…' : 'Проверить соединение'),
+            ),
+          ),
+
+          if (_report != null)
+            Padding(
+              padding: const EdgeInsets.fromLTRB(16, 16, 16, 0),
+              child: Card(
+                color: _report!.ok
+                    ? scheme.secondaryContainer
+                    : scheme.errorContainer,
+                child: Padding(
+                  padding: const EdgeInsets.all(16),
+                  child: Column(
+                    crossAxisAlignment: CrossAxisAlignment.start,
+                    children: <Widget>[
+                      Row(
+                        children: <Widget>[
+                          Icon(
+                            _report!.ok
+                                ? Icons.check_circle_outline
+                                : Icons.error_outline,
+                            color: _report!.ok
+                                ? scheme.onSecondaryContainer
+                                : scheme.onErrorContainer,
+                          ),
+                          const SizedBox(width: 12),
+                          Expanded(
+                            child: Text(
+                              _report!.summary,
+                              style: text.titleSmall?.copyWith(
+                                fontWeight: FontWeight.w700,
+                                color: _report!.ok
+                                    ? scheme.onSecondaryContainer
+                                    : scheme.onErrorContainer,
+                              ),
+                            ),
+                          ),
+                        ],
+                      ),
+                      const SizedBox(height: 8),
+                      for (final String line in _report!.details)
+                        Text(
+                          '• $line',
+                          style: text.bodySmall?.copyWith(
+                            color: _report!.ok
+                                ? scheme.onSecondaryContainer
+                                : scheme.onErrorContainer,
+                          ),
+                        ),
+                    ],
+                  ),
+                ),
+              ),
+            ),
+
+          const Divider(height: 24),
+          const _SectionHeader('Как это работает'),
+          Padding(
+            padding: const EdgeInsets.fromLTRB(16, 0, 16, 16),
+            child: Text(
+              'Провайдер обрывает соединение, увидев в первом пакете TLS имя '
+              'youtube.com. Подмена хоста подключается к другому узлу Google, '
+              'который не блокируется, и передаёт нужное имя в заголовке Host — '
+              'Google обслуживает такой запрос как обычно.\n\n'
+              'Сертификат проверяется по имени узла подмены, поэтому в качестве '
+              'него подходят только домены Google.\n\n'
+              'Звук при включённом обходе скачивается самим приложением и '
+              'проигрывается из кэша: GStreamer ходит в сеть напрямую и про '
+              'обход не знает.',
+              style: text.bodyMedium?.copyWith(
+                color: scheme.onSurfaceVariant,
+                height: 1.5,
+              ),
+            ),
+          ),
+        ],
+      ),
+    );
+  }
+
+  /// Выбор уровня дробления первого пакета.
+  Future<void> _pickFragmentation(SettingsController controller) async {
+    final FragmentationLevel current =
+        ref.read(settingsControllerProvider).bypass.fragmentation;
+
+    final FragmentationLevel? level = await showDialog<FragmentationLevel>(
+      context: context,
+      builder: (BuildContext dialogContext) {
+        final ColorScheme scheme = Theme.of(dialogContext).colorScheme;
+        return SimpleDialog(
+          title: const Text('Дробление первого пакета'),
+          children: <Widget>[
+            for (final FragmentationLevel value in FragmentationLevel.values)
+              ListTile(
+                title: Text(value.label),
+                selected: value == current,
+                trailing: value == current
+                    ? Icon(Icons.check, color: scheme.primary)
+                    : null,
+                onTap: () => Navigator.pop(dialogContext, value),
+              ),
+          ],
+        );
+      },
+    );
+    if (level == null) return;
+
+    final AntiDpiConfig config =
+        ref.read(settingsControllerProvider).bypass;
+    await controller.setBypass(config.copyWith(fragmentation: level));
+  }
+
+  void _saveProxy(SettingsController controller) {
+    controller.setProxy(
+      host: _proxyHost.text.trim(),
+      port: int.tryParse(_proxyPort.text.trim()) ?? 1080,
+      username: _proxyUser.text.trim(),
+      password: _proxyPassword.text,
+    );
+  }
+
+  Future<void> _runCheck() async {
+    setState(() {
+      _checking = true;
+      _report = null;
+    });
+
+    // Настройки могли измениться — сначала применяем их.
+    await ref
+        .read(settingsControllerProvider.notifier)
+        .setBypass(ref.read(settingsControllerProvider).bypass);
+
+    final ConnectivityReport report = await ConnectivityCheck.run();
+    if (!mounted) return;
+    setState(() {
+      _checking = false;
+      _report = report;
+    });
+  }
+}
+
+class _SectionHeader extends StatelessWidget {
+  const _SectionHeader(this.title);
+
+  final String title;
+
+  @override
+  Widget build(BuildContext context) {
+    return Padding(
+      padding: const EdgeInsets.fromLTRB(16, 12, 16, 8),
+      child: Text(
+        title,
+        style: Theme.of(context).textTheme.titleSmall?.copyWith(
+              color: Theme.of(context).colorScheme.primary,
+              fontWeight: FontWeight.w700,
+            ),
+      ),
+    );
+  }
+}

@@ -88,7 +88,11 @@ abstract class AudioEngine {
   PlaybackState get state;
 
   /// Загружает поток по URL. `autoplay` — начать воспроизведение сразу.
-  Future<void> load(String url, {bool autoplay = true});
+  ///
+  /// [isLocal] — [source] это путь к файлу на диске, а не сетевой адрес.
+  /// Нужно, когда поток сначала скачивается через приложение (например, при
+  /// обходе блокировок), а затем отдаётся движку как локальный файл.
+  Future<void> load(String source, {bool autoplay = true, bool isLocal = false});
 
   Future<void> play();
   Future<void> pause();

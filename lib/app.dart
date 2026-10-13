@@ -1,3 +1,5 @@
+import 'dart:async';
+
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import 'package:flutter_localizations/flutter_localizations.dart';
@@ -5,6 +7,9 @@ import 'package:flutter_riverpod/flutter_riverpod.dart';
 
 import 'core/theme/seed_colors.dart';
 import 'core/theme/ui_scaler.dart';
+import 'core/net/anti_dpi.dart';
+import 'core/net/bypass.dart';
+import 'core/net/fronting.dart';
 import 'data/local/app_settings.dart';
 import 'features/shell/app_shell.dart';
 import 'state/providers.dart';
@@ -15,16 +20,64 @@ import 'state/ui_scale.dart';
 ///
 /// Тема и настройки уже прочитаны из хранилища в `main()`, поэтому первый
 /// кадр сразу рисуется в правильных цветах — без «вспышки» светлой темы.
-class MopsApp extends ConsumerWidget {
+class MopsApp extends ConsumerStatefulWidget {
   const MopsApp({super.key});
 
   @override
-  Widget build(BuildContext context, WidgetRef ref) {
+  ConsumerState<MopsApp> createState() => _MopsAppState();
+}
+
+class _MopsAppState extends ConsumerState<MopsApp> {
+  @override
+  void initState() {
+    super.initState();
+    // Проверку удобства ради делаем после первого кадра, чтобы не задерживать
+    // запуск: она может занять несколько секунд.
+    WidgetsBinding.instance.addPostFrameCallback((_) {
+      unawaited(_autoConfigureBypass());
+    });
+  }
+
+  /// При первом запуске выясняет, нужен ли обход, и включает его.
+  ///
+  /// Пользователь не должен сам догадываться, что провайдер режет SNI.
+  /// Логика простая: если данные недоступны напрямую, но доступны с подменой
+  /// хоста — включаем подмену и запоминаем, что проверка выполнена.
+  Future<void> _autoConfigureBypass() async {
+    final AppSettings settings = ref.read(settingsControllerProvider);
+    if (settings.bypassProbed) return;
+    if (settings.bypass.isEnabled) return; // уже настроено пользователем
+
+    final SettingsController controller =
+        ref.read(settingsControllerProvider.notifier);
+    try {
+      final bool direct = await ConnectivityCheck.dataReachable(fronting: false);
+      if (!direct) {
+        final bool fronted = await ConnectivityCheck.dataReachable(fronting: true);
+        if (fronted) {
+          await controller.setFrontingEnabled(true);
+          debugPrint('[Bypass] провайдер блокирует домен — включена подмена хоста');
+        }
+      }
+    } on Object catch (error) {
+      debugPrint('[Bypass] проверка не удалась: $error');
+    } finally {
+      await controller.markBypassProbed();
+    }
+  }
+
+  @override
+  Widget build(BuildContext context) {
     final ({ThemeData light, ThemeData dark}) themes =
         ref.watch(themeDataProvider);
     final ThemeModePreference preference = ref.watch(
       settingsControllerProvider.select((s) => s.themeMode),
     );
+
+    // Смена настроек обхода должна применяться сразу, без перезапуска.
+    ref.listen(bypassProvider, (AntiDpiConfig? previous, AntiDpiConfig next) {
+      BypassManager.instance.apply(next);
+    });
 
     return MaterialApp(
       title: 'mOps',

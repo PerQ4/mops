@@ -5,9 +5,11 @@ import '../core/audio/audio_engine.dart';
 import '../core/audio/audioplayers_engine.dart';
 import '../core/auth/token_store.dart';
 import '../core/innertube/innertube_client.dart';
+import '../core/net/anti_dpi.dart';
 import '../core/theme/seed_colors.dart';
 import '../core/theme/ui_scaler.dart';
 import '../data/local/app_settings.dart';
+import '../data/sources/stream_downloader.dart';
 import '../data/sources/stream_resolver.dart';
 
 /// ---------------------------------------------------------------------------
@@ -106,6 +108,49 @@ class SettingsController extends Notifier<AppSettings> {
   /// `scale` — множитель или `0`, чтобы вернуть автоматический режим.
   Future<void> setUiScale(double scale) =>
       update((AppSettings s) => s.copyWith(uiScale: scale));
+
+  // ------------------------------------------------- обход блокировок
+
+  Future<void> setBypass(AntiDpiConfig config) =>
+      update((AppSettings s) => s.copyWith(bypass: config));
+
+  Future<void> setFrontingEnabled(bool enabled) => update(
+        (AppSettings s) =>
+            s.copyWith(bypass: s.bypass.copyWith(
+              fronting: s.bypass.fronting.copyWith(enabled: enabled),
+            )),
+      );
+
+  Future<void> setFrontHost(String host) => update(
+        (AppSettings s) => s.copyWith(
+          bypass: s.bypass.copyWith(
+            fronting: s.bypass.fronting.copyWith(frontHost: host.trim()),
+          ),
+        ),
+      );
+
+  /// Отмечает, что автопроверка обхода выполнена.
+  Future<void> markBypassProbed() =>
+      update((AppSettings s) => s.copyWith(bypassProbed: true));
+
+  Future<void> setProxy({
+    ProxyKind? kind,
+    String? host,
+    int? port,
+    String? username,
+    String? password,
+  }) =>
+      update(
+        (AppSettings s) => s.copyWith(
+          bypass: s.bypass.copyWith(
+            proxyKind: kind ?? s.bypass.proxyKind,
+            proxyHost: host ?? s.bypass.proxyHost,
+            proxyPort: port ?? s.bypass.proxyPort,
+            proxyUsername: username ?? s.bypass.proxyUsername,
+            proxyPassword: password ?? s.bypass.proxyPassword,
+          ),
+        ),
+      );
 }
 
 final NotifierProvider<SettingsController, AppSettings> settingsControllerProvider =
@@ -122,12 +167,31 @@ final Provider<DesktopScaleInfo> desktopScaleProvider =
     Provider<DesktopScaleInfo>((ref) => DesktopScaleInfo.none);
 
 /// Стандартные ступени масштаба для интерфейса настроек.
-///
 /// Мелкие значения нужны для компенсации: GTK3 на дробном масштабе отдаёт
 /// завышенный DPR, и интерфейс приходится уменьшать.
 const List<double> kUiScaleSteps = <double>[
   0.5, 0.625, 0.75, 0.8, 0.9, 1.0, 1.1, 1.25, 1.5, 1.75, 2.0,
 ];
+
+/// ---------------------------------------------------------------------------
+/// Обход блокировок
+/// ---------------------------------------------------------------------------
+
+/// Текущая конфигурация обхода. Отдельный провайдер нужен, чтобы слушать
+/// изменения одним `listen` и переприменять сетевые настройки.
+final Provider<AntiDpiConfig> bypassProvider = Provider<AntiDpiConfig>(
+  (ref) => ref.watch(
+    settingsControllerProvider.select((AppSettings s) => s.bypass),
+  ),
+);
+
+/// Активен ли сейчас какой-либо обход.
+///
+/// От этого зависит способ воспроизведения: при обходе поток скачивается
+/// через Dart (где обход и работает), а не отдаётся напрямую GStreamer.
+final Provider<bool> bypassActiveProvider = Provider<bool>(
+  (ref) => ref.watch(bypassProvider).isEnabled,
+);
 
 /// ---------------------------------------------------------------------------
 /// Сеть и аудио
@@ -165,6 +229,15 @@ final Provider<StreamResolver> streamResolverProvider =
   final StreamResolver resolver = YoutubeExplodeResolver();
   ref.onDispose(resolver.dispose);
   return resolver;
+});
+
+/// Загрузка потока на диск — нужна при обходе блокировок, когда звук качает
+/// приложение, а не GStreamer.
+final Provider<StreamDownloader> streamDownloaderProvider =
+    Provider<StreamDownloader>((ref) {
+  final StreamDownloader downloader = StreamDownloader();
+  ref.onDispose(downloader.dispose);
+  return downloader;
 });
 
 /// Аудиодвижок. Один на всё приложение.
