@@ -9,40 +9,56 @@ import '../../state/player_controller.dart';
 import '../../state/player_panel.dart';
 import '../../widgets/artwork.dart';
 import '../common/navigation.dart';
+import '../shell/destinations.dart';
+import '../../state/shell.dart';
 import 'lyrics_view.dart';
 import 'queue_list.dart';
 
-/// Плавающий «островок» плеера внизу экрана.
+/// Островки внизу экрана.
 ///
-/// Отдельная сущность, а не полоса во всю ширину: он парит над содержимым,
-/// не участвует в раскладке и поэтому ничего не сдвигает при появлении,
-/// открытии панели или смене трека. Оформлен как стеклянная капсула с тенью.
+/// Замысел: навигация и плеер — две отдельные «капсулы», которые стоят рядом
+/// и центрируются **общей группой**. Пока ничего не играет, остров навигации
+/// один и скруглён полностью. Когда появляется плеер, островки встают в ряд
+/// через небольшой зазор, а на стыке скругление уменьшается до пары пунктов —
+/// из-за этого пара читается как одна фигура, но остаётся двумя островами.
 ///
-/// Над островком раскрывается панель с очередью или текстом — как выдвижной
-/// ящик самого островка, без отдельной боковой колонки.
+/// Над группой раскрывается панель с очередью или текстом: она растёт вверх
+/// и ничего не сдвигает.
 class FloatingDock extends ConsumerWidget {
   const FloatingDock({super.key});
 
-  /// Высота капсулы.
-  static const double height = 64;
+  /// Высота островка.
+  static const double islandHeight = 64;
 
-  /// Максимальная ширина: на широком мониторе островок остаётся островком,
-  /// а не растягивается во всю ширину.
-  static const double maxWidth = 780;
+  /// Полное скругление — снаружи пары.
+  static const double outerRadius = islandHeight / 2;
 
-  /// Отступ от краёв — за счёт него он и «парит».
+  /// Минимальное скругление на стыке двух островков.
+  static const double joinRadius = 6;
+
+  /// Зазор между островками.
+  static const double gap = 8;
+
+  /// Отступ от краёв окна.
   static const double margin = 14;
 
-  /// Ширина панели-ящика над островком (чуть шире самого островка).
+  /// Ширина панели-ящика.
   static const double panelWidth = 420;
   static const double panelMaxHeight = 420;
 
   @override
   Widget build(BuildContext context, WidgetRef ref) {
-    final Track? track = ref.watch(
-      playerControllerProvider.select((PlayerUiState s) => s.current),
+    // Островок плеера виден всегда, пока в очереди есть трек, — в том числе
+    // на паузе. Прятать его при паузе не нужно: он же показывает состояние.
+    final bool hasTrack = ref.watch(
+      playerControllerProvider.select((PlayerUiState s) => s.current != null),
     );
-    if (track == null) return const SizedBox.shrink();
+    final bool wide = context.isExpandedLayout;
+
+    // На узком экране навигация остаётся нижней панелью, поэтому здесь только
+    // плеер. На широком обе части живут внизу и стоят рядом.
+    final bool showNav = wide;
+    if (!showNav && !hasTrack) return const SizedBox.shrink();
 
     return Padding(
       padding: const EdgeInsets.fromLTRB(margin, 0, margin, margin),
@@ -50,9 +66,25 @@ class FloatingDock extends ConsumerWidget {
         mainAxisSize: MainAxisSize.min,
         children: <Widget>[
           const _DockPanel(),
-          ConstrainedBox(
-            constraints: const BoxConstraints(maxWidth: maxWidth),
-            child: const _Island(),
+          Row(
+            mainAxisSize: MainAxisSize.min,
+            crossAxisAlignment: CrossAxisAlignment.end,
+            children: <Widget>[
+              if (showNav)
+                _NavIsland(joinedOnRight: hasTrack),
+              if (showNav && hasTrack)
+                const SizedBox(width: gap),
+              // Появление и исчезновение плеера анимируем размером: группа
+              // центрируется целиком, поэтому навигация плавно отъезжает.
+              AnimatedSize(
+                duration: const Duration(milliseconds: 260),
+                curve: Curves.easeOutCubic,
+                alignment: Alignment.centerRight,
+                child: hasTrack
+                    ? _PlayerIsland(joinedOnLeft: showNav)
+                    : const SizedBox.shrink(),
+              ),
+            ],
           ),
         ],
       ),
@@ -60,115 +92,123 @@ class FloatingDock extends ConsumerWidget {
   }
 }
 
-/// --------------------------------------------------------------- панель-ящик
+/// ------------------------------------------------------- остров навигации
 
-/// Раскрывающаяся часть островка: очередь или текст.
-///
-/// Свёрнута в ноль высоты, поэтому при открытии содержимое под ней не
-/// перестраивается — панель растёт вверх поверх страницы.
-class _DockPanel extends ConsumerWidget {
-  const _DockPanel();
+class _NavIsland extends ConsumerWidget {
+  const _NavIsland({required this.joinedOnRight});
+
+  /// Стоит ли справа островок плеера — тогда правые углы почти прямые.
+  final bool joinedOnRight;
 
   @override
   Widget build(BuildContext context, WidgetRef ref) {
-    final PlayerPanelMode mode = ref.watch(playerPanelProvider);
-    final Track? track = ref.watch(
-      playerControllerProvider.select((PlayerUiState s) => s.current),
-    );
+    final int index = ref.watch(shellIndexProvider);
     final ColorScheme scheme = Theme.of(context).colorScheme;
 
-    return AnimatedSize(
-      duration: const Duration(milliseconds: 240),
-      curve: Curves.easeOutCubic,
-      alignment: Alignment.bottomCenter,
-      child: mode == PlayerPanelMode.none || track == null
-          ? const SizedBox(width: FloatingDock.panelWidth)
-          : Padding(
-              padding: const EdgeInsets.only(bottom: 10),
-              child: SizedBox(
-                width: FloatingDock.panelWidth,
-                child: _DockSurface(
-                  radius: AppLayout.radiusXL,
-                  child: ConstrainedBox(
-                    constraints: const BoxConstraints(
-                      maxHeight: FloatingDock.panelMaxHeight,
-                    ),
-                    child: Column(
-                      mainAxisSize: MainAxisSize.min,
-                      children: <Widget>[
-                        _PanelHeader(mode: mode),
-                        Divider(height: 1, color: scheme.outlineVariant),
-                        Flexible(
-                          child: mode == PlayerPanelMode.lyrics
-                              ? LyricsView(
-                                  key: ValueKey<String>(
-                                    'dock-lyrics-${track.id}',
-                                  ),
-                                  videoId: track.id,
-                                )
-                              : const QueueList(),
+    return _DockSurface(
+      // У стыка скругление минимальное, снаружи — полное.
+      radius: BorderRadius.only(
+        topLeft: const Radius.circular(FloatingDock.outerRadius),
+        bottomLeft: const Radius.circular(FloatingDock.outerRadius),
+        topRight: Radius.circular(
+          joinedOnRight ? FloatingDock.joinRadius : FloatingDock.outerRadius,
+        ),
+        bottomRight: Radius.circular(
+          joinedOnRight ? FloatingDock.joinRadius : FloatingDock.outerRadius,
+        ),
+      ),
+      child: SizedBox(
+        height: FloatingDock.islandHeight,
+        child: Row(
+          mainAxisSize: MainAxisSize.min,
+          children: <Widget>[
+            const SizedBox(width: 8),
+            for (final ShellDestination d in ShellDestination.values)
+              _NavButton(
+                destination: d,
+                selected: ShellDestination.values.indexOf(d) == index,
+                onTap: () =>
+                    ref.read(shellIndexProvider.notifier).select(
+                          ShellDestination.values.indexOf(d),
                         ),
-                      ],
-                    ),
-                  ),
-                ),
               ),
+            const SizedBox(width: 4),
+            Container(
+              width: 1,
+              height: 24,
+              color: scheme.outlineVariant,
             ),
+            IconButton(
+              tooltip: 'Настройки',
+              iconSize: 22,
+              color: scheme.onSurfaceVariant,
+              icon: const Icon(Icons.settings_outlined),
+              onPressed: () => AppRoutes.settings(context),
+            ),
+            const SizedBox(width: 8),
+          ],
+        ),
+      ),
     );
   }
 }
 
-class _PanelHeader extends ConsumerWidget {
-  const _PanelHeader({required this.mode});
+class _NavButton extends StatelessWidget {
+  const _NavButton({
+    required this.destination,
+    required this.selected,
+    required this.onTap,
+  });
 
-  final PlayerPanelMode mode;
+  final ShellDestination destination;
+  final bool selected;
+  final VoidCallback onTap;
 
   @override
-  Widget build(BuildContext context, WidgetRef ref) {
+  Widget build(BuildContext context) {
     final ColorScheme scheme = Theme.of(context).colorScheme;
-    final PlayerPanelController controller =
-        ref.read(playerPanelProvider.notifier);
 
     return Padding(
-      padding: const EdgeInsets.fromLTRB(16, 8, 8, 4),
-      child: Row(
-        children: <Widget>[
-          IconButton(
-            tooltip: 'Очередь',
-            isSelected: mode == PlayerPanelMode.queue,
-            icon: const Icon(Icons.queue_music, size: 20),
-            selectedIcon: Icon(Icons.queue_music, size: 20, color: scheme.primary),
-            onPressed: () => controller.toggle(PlayerPanelMode.queue),
+      padding: const EdgeInsets.symmetric(horizontal: 2),
+      child: Tooltip(
+        message: destination.label,
+        child: InkWell(
+          onTap: onTap,
+          borderRadius: BorderRadius.circular(16),
+          child: AnimatedContainer(
+            duration: const Duration(milliseconds: 180),
+            padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 10),
+            decoration: BoxDecoration(
+              color: selected ? scheme.secondaryContainer : Colors.transparent,
+              borderRadius: BorderRadius.circular(16),
+            ),
+            child: Icon(
+              selected ? destination.selectedIcon : destination.icon,
+              size: 22,
+              color: selected
+                  ? scheme.onSecondaryContainer
+                  : scheme.onSurfaceVariant,
+            ),
           ),
-          IconButton(
-            tooltip: 'Текст песни',
-            isSelected: mode == PlayerPanelMode.lyrics,
-            icon: const Icon(Icons.lyrics_outlined, size: 20),
-            selectedIcon: Icon(Icons.lyrics, size: 20, color: scheme.primary),
-            onPressed: () => controller.toggle(PlayerPanelMode.lyrics),
-          ),
-          const Spacer(),
-          IconButton(
-            tooltip: 'Закрыть',
-            icon: const Icon(Icons.keyboard_arrow_down_rounded),
-            onPressed: controller.close,
-          ),
-        ],
+        ),
       ),
     );
   }
 }
 
-/// -------------------------------------------------------------- сам островок
+/// --------------------------------------------------------- островок плеера
 
-class _Island extends ConsumerStatefulWidget {
-  const _Island();
+class _PlayerIsland extends ConsumerStatefulWidget {
+  const _PlayerIsland({required this.joinedOnLeft});
+
+  /// Стоит ли слева остров навигации — тогда левые углы почти прямые.
+  final bool joinedOnLeft;
 
   @override
-  ConsumerState<_Island> createState() => _IslandState();
+  ConsumerState<_PlayerIsland> createState() => _PlayerIslandState();
 }
 
-class _IslandState extends ConsumerState<_Island> {
+class _PlayerIslandState extends ConsumerState<_PlayerIsland> {
   bool _hovered = false;
 
   @override
@@ -176,6 +216,7 @@ class _IslandState extends ConsumerState<_Island> {
     final PlayerUiState player = ref.watch(playerControllerProvider);
     final Track track = player.current!;
     final bool wide = context.isExpandedLayout;
+    final double radius = FloatingDock.outerRadius;
 
     return MouseRegion(
       onEnter: (_) => setState(() => _hovered = true),
@@ -185,22 +226,33 @@ class _IslandState extends ConsumerState<_Island> {
         curve: Curves.easeOut,
         transform: Matrix4.translationValues(0, _hovered ? -3 : 0, 0),
         child: _DockSurface(
-          radius: FloatingDock.height / 2,
-          // Сильную тень даём только под курсором: так островок заметно
-          // «поднимается», но в покое не отвлекает.
-          elevation: _hovered ? 18 : 10,
+          radius: BorderRadius.only(
+            topLeft: Radius.circular(
+              widget.joinedOnLeft ? FloatingDock.joinRadius : radius,
+            ),
+            bottomLeft: Radius.circular(
+              widget.joinedOnLeft ? FloatingDock.joinRadius : radius,
+            ),
+            topRight: const Radius.circular(FloatingDock.outerRadius),
+            bottomRight: const Radius.circular(FloatingDock.outerRadius),
+          ),
+          elevation: _hovered ? 16 : 8,
           child: SizedBox(
-            height: FloatingDock.height,
+            height: FloatingDock.islandHeight,
             child: Row(
+              mainAxisSize: MainAxisSize.min,
               children: <Widget>[
                 const SizedBox(width: 10),
                 _ArtworkWithProgress(track: track, player: player),
                 const SizedBox(width: 12),
-                Expanded(
+                // Ширина подписи ограничена: островок не должен растягиваться
+                // на всю ширину монитора.
+                SizedBox(
+                  width: wide ? 220 : 150,
                   child: _IslandTitles(track: track, player: player),
                 ),
                 _IslandControls(player: player, wide: wide),
-                const SizedBox(width: 6),
+                const SizedBox(width: 8),
               ],
             ),
           ),
@@ -210,7 +262,7 @@ class _IslandState extends ConsumerState<_Island> {
   }
 }
 
-/// Обложка с кольцом прогресса вокруг — вместо отдельной полосы перемотки.
+/// Обложка с кольцом прогресса — вместо отдельной полосы перемотки.
 class _ArtworkWithProgress extends StatelessWidget {
   const _ArtworkWithProgress({required this.track, required this.player});
 
@@ -222,6 +274,9 @@ class _ArtworkWithProgress extends StatelessWidget {
     final ColorScheme scheme = Theme.of(context).colorScheme;
     const double side = 44;
     const double ring = 3;
+    final List<String> variants = track.artworkFallbacks(
+      (side * MediaQuery.devicePixelRatioOf(context)).round(),
+    );
 
     return SizedBox(
       width: side + ring * 2,
@@ -229,7 +284,6 @@ class _ArtworkWithProgress extends StatelessWidget {
       child: Stack(
         alignment: Alignment.center,
         children: <Widget>[
-          // Кольцо: серый круг и дуга прогресса.
           SizedBox(
             width: side + ring * 2,
             height: side + ring * 2,
@@ -243,7 +297,9 @@ class _ArtworkWithProgress extends StatelessWidget {
             ),
           ),
           Artwork(
-            url: track.thumbnails.sized(128) ?? track.artwork,
+            url: variants.isEmpty ? null : variants.first,
+            fallbacks:
+                variants.length > 1 ? variants.sublist(1) : const <String>[],
             size: side,
             radius: BorderRadius.circular(side / 2),
           ),
@@ -274,7 +330,6 @@ class _IslandTitles extends StatelessWidget {
         : player.error ?? track.artistLine;
 
     return InkWell(
-      // Клик по подписи открывает полноэкранный плеер.
       onTap: () => AppRoutes.nowPlaying(context),
       borderRadius: BorderRadius.circular(AppLayout.radiusS),
       child: Padding(
@@ -339,13 +394,13 @@ class _IslandControls extends ConsumerWidget {
           ),
         IconButton(
           tooltip: 'Предыдущий',
-          iconSize: wide ? 26 : 24,
+          iconSize: 24,
           icon: const Icon(Icons.skip_previous_rounded),
           onPressed: player.queue.isEmpty ? null : controller.previous,
         ),
         IconButton.filled(
           tooltip: player.isPlaying ? 'Пауза' : 'Играть',
-          iconSize: wide ? 26 : 24,
+          iconSize: 24,
           icon: Icon(
             player.isPlaying ? Icons.pause_rounded : Icons.play_arrow_rounded,
           ),
@@ -353,7 +408,7 @@ class _IslandControls extends ConsumerWidget {
         ),
         IconButton(
           tooltip: 'Следующий',
-          iconSize: wide ? 26 : 24,
+          iconSize: 24,
           icon: const Icon(Icons.skip_next_rounded),
           onPressed: player.queue.isEmpty ? null : controller.next,
         ),
@@ -376,7 +431,6 @@ class _IslandControls extends ConsumerWidget {
             ),
             onPressed: controller.cycleRepeat,
           ),
-        const SizedBox(width: 2),
         IconButton(
           tooltip: 'Нравится',
           iconSize: 20,
@@ -414,12 +468,109 @@ class _IslandControls extends ConsumerWidget {
   }
 }
 
+/// --------------------------------------------------------------- панель-ящик
+
+/// Раскрывающаяся вверх часть: очередь или текст.
+class _DockPanel extends ConsumerWidget {
+  const _DockPanel();
+
+  @override
+  Widget build(BuildContext context, WidgetRef ref) {
+    final PlayerPanelMode mode = ref.watch(playerPanelProvider);
+    final Track? track = ref.watch(
+      playerControllerProvider.select((PlayerUiState s) => s.current),
+    );
+    final ColorScheme scheme = Theme.of(context).colorScheme;
+
+    return AnimatedSize(
+      duration: const Duration(milliseconds: 240),
+      curve: Curves.easeOutCubic,
+      alignment: Alignment.bottomCenter,
+      child: mode == PlayerPanelMode.none || track == null
+          ? const SizedBox(width: FloatingDock.panelWidth)
+          : Padding(
+              padding: const EdgeInsets.only(bottom: 10),
+              child: SizedBox(
+                width: FloatingDock.panelWidth,
+                child: _DockSurface(
+                  radius: BorderRadius.circular(AppLayout.radiusXL),
+                  child: ConstrainedBox(
+                    constraints: const BoxConstraints(
+                      maxHeight: FloatingDock.panelMaxHeight,
+                    ),
+                    child: Column(
+                      mainAxisSize: MainAxisSize.min,
+                      children: <Widget>[
+                        _PanelHeader(mode: mode),
+                        Divider(height: 1, color: scheme.outlineVariant),
+                        Flexible(
+                          child: mode == PlayerPanelMode.lyrics
+                              ? LyricsView(
+                                  key: ValueKey<String>(
+                                    'dock-lyrics-${track.id}',
+                                  ),
+                                  videoId: track.id,
+                                )
+                              : const QueueList(),
+                        ),
+                      ],
+                    ),
+                  ),
+                ),
+              ),
+            ),
+    );
+  }
+}
+
+class _PanelHeader extends ConsumerWidget {
+  const _PanelHeader({required this.mode});
+
+  final PlayerPanelMode mode;
+
+  @override
+  Widget build(BuildContext context, WidgetRef ref) {
+    final ColorScheme scheme = Theme.of(context).colorScheme;
+    final PlayerPanelController controller =
+        ref.read(playerPanelProvider.notifier);
+
+    return Padding(
+      padding: const EdgeInsets.fromLTRB(16, 8, 8, 4),
+      child: Row(
+        children: <Widget>[
+          IconButton(
+            tooltip: 'Очередь',
+            isSelected: mode == PlayerPanelMode.queue,
+            icon: const Icon(Icons.queue_music, size: 20),
+            selectedIcon:
+                Icon(Icons.queue_music, size: 20, color: scheme.primary),
+            onPressed: () => controller.toggle(PlayerPanelMode.queue),
+          ),
+          IconButton(
+            tooltip: 'Текст песни',
+            isSelected: mode == PlayerPanelMode.lyrics,
+            icon: const Icon(Icons.lyrics_outlined, size: 20),
+            selectedIcon: Icon(Icons.lyrics, size: 20, color: scheme.primary),
+            onPressed: () => controller.toggle(PlayerPanelMode.lyrics),
+          ),
+          const Spacer(),
+          IconButton(
+            tooltip: 'Закрыть',
+            icon: const Icon(Icons.keyboard_arrow_down_rounded),
+            onPressed: controller.close,
+          ),
+        ],
+      ),
+    );
+  }
+}
+
 /// ------------------------------------------------------------- подложка островка
 
 /// Поверхность островка: плотный цвет темы, скругление и мягкая тень.
 ///
 /// Без размытия и полупрозрачности — в ArchiveTune такой «стеклянности» нет,
-/// а размытие фона заметно нагружает отрисовку и даёт подтормаживания.
+/// а размытие фона заметно нагружает отрисовку.
 class _DockSurface extends StatelessWidget {
   const _DockSurface({
     required this.child,
@@ -428,19 +579,18 @@ class _DockSurface extends StatelessWidget {
   });
 
   final Widget child;
-  final double radius;
+  final BorderRadius radius;
   final double elevation;
 
   @override
   Widget build(BuildContext context) {
     final ColorScheme scheme = Theme.of(context).colorScheme;
-    final BorderRadius shape = BorderRadius.circular(radius);
     final bool isDark = scheme.brightness == Brightness.dark;
 
     return DecoratedBox(
       decoration: BoxDecoration(
         color: scheme.surfaceContainerHigh,
-        borderRadius: shape,
+        borderRadius: radius,
         boxShadow: <BoxShadow>[
           BoxShadow(
             color: scheme.shadow.withValues(alpha: isDark ? 0.5 : 0.18),
@@ -449,7 +599,7 @@ class _DockSurface extends StatelessWidget {
           ),
         ],
       ),
-      child: ClipRRect(borderRadius: shape, child: child),
+      child: ClipRRect(borderRadius: radius, child: child),
     );
   }
 }

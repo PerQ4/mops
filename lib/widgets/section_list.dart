@@ -71,7 +71,8 @@ class SectionListView extends ConsumerWidget {
     // чтобы не плодить лишние заголовки.
     final bool flat = sections.length == 1 && sections.first.title.isEmpty;
 
-    return ListView.builder(
+    return ContentWidth(
+      child: ListView.builder(
       padding: padding,
       itemCount: sections.length + (header != null ? 1 : 0),
       itemBuilder: (BuildContext context, int index) {
@@ -84,6 +85,7 @@ class SectionListView extends ConsumerWidget {
             ? _TrackRows(section: section, showTitle: false)
             : _Section(section: section, trackPreviewLimit: trackPreviewLimit);
       },
+      ),
     );
   }
 }
@@ -265,7 +267,8 @@ class TrackListView extends ConsumerWidget {
     );
     final List<Track> queue = playContext ?? tracks;
 
-    return ListView.builder(
+    return ContentWidth(
+      child: ListView.builder(
       padding: padding,
       itemCount: tracks.length + (header != null ? 1 : 0),
       itemBuilder: (BuildContext context, int index) {
@@ -287,6 +290,7 @@ class TrackListView extends ConsumerWidget {
               .playTrack(track, context: queue),
         );
       },
+      ),
     );
   }
 }

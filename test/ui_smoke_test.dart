@@ -267,8 +267,8 @@ void main() {
     expect(tester.takeException(), isNull);
     // Заголовок — название приложения, а не «Главная»: раздел виден в рейле.
     expect(find.text('mOps'), findsWidgets);
-    expect(find.byType(NavigationRail), findsOneWidget);
-    // На широком экране нижней навигации нет — её заменяет боковая.
+    // Навигация переехала вниз в островок, боковой колонки нет.
+    expect(find.byType(NavigationRail), findsNothing);
     expect(find.byType(NavigationBar), findsNothing);
     // Островок есть всегда, но без трека он ничего не показывает.
     expect(find.byType(FloatingDock), findsOneWidget);
@@ -285,9 +285,10 @@ void main() {
     await pump(tester, const MopsApp(), size: const Size(412, 880));
 
     expect(tester.takeException(), isNull);
+    // На узком экране навигация — обычная нижняя панель.
     expect(find.byType(NavigationBar), findsOneWidget);
     expect(find.byType(NavigationRail), findsNothing);
-    // Островок парит над нижней навигацией.
+    // Островок плеера парит над ней.
     expect(find.byType(FloatingDock), findsOneWidget);
 
     await expectLater(

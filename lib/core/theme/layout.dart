@@ -42,8 +42,11 @@ abstract final class AppLayout {
   static const double bottomNavHeight = 72;
   static const double miniPlayerHeight = 72;
 
-  /// Максимальная ширина контента, чтобы текст не растягивался на весь монитор.
-  static const double contentMaxWidth = 1120;
+  /// Максимальная ширина содержимого.
+  ///
+  /// Без ограничения на широком мониторе строки растягиваются на всю ширину,
+  /// и название трека оказывается в одном углу, а длительность — в другом.
+  static const double contentMaxWidth = 1200;
 
   // ----------------------------------------------------------------- элементы
 
@@ -95,4 +98,24 @@ extension LayoutContext on BuildContext {
   bool get isCompactLayout => AppLayout.isCompact(layoutWidth);
   bool get isMediumLayout => AppLayout.isMedium(layoutWidth);
   bool get isExpandedLayout => AppLayout.isExpanded(layoutWidth);
+}
+
+/// Ограничивает ширину содержимого и центрирует его.
+///
+/// Списки и карусели оборачиваются в этот виджет: так на широком окне они
+/// остаются читаемыми, а не растягиваются от края до края.
+class ContentWidth extends StatelessWidget {
+  const ContentWidth({super.key, required this.child});
+
+  final Widget child;
+
+  @override
+  Widget build(BuildContext context) {
+    return Center(
+      child: ConstrainedBox(
+        constraints: const BoxConstraints(maxWidth: AppLayout.contentMaxWidth),
+        child: child,
+      ),
+    );
+  }
 }
