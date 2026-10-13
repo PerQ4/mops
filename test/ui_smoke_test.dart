@@ -241,7 +241,7 @@ void main() {
           sharedPreferencesProvider.overrideWithValue(prefs),
           initialSettingsProvider.overrideWithValue(settings),
           initialSessionProvider.overrideWithValue(null),
-          desktopScaleProvider.overrideWithValue(1.0),
+          desktopScaleProvider.overrideWithValue(DesktopScaleInfo.none),
           audioEngineProvider.overrideWithValue(_FakeAudioEngine()),
           homeSectionsProvider.overrideWith((ref) => _fakeHome()),
           exploreSectionsProvider.overrideWith((ref) => _fakeHome()),

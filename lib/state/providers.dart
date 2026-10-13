@@ -5,7 +5,8 @@ import '../core/audio/audio_engine.dart';
 import '../core/audio/audioplayers_engine.dart';
 import '../core/auth/token_store.dart';
 import '../core/innertube/innertube_client.dart';
-import '../../core/theme/seed_colors.dart';
+import '../core/theme/seed_colors.dart';
+import '../core/theme/ui_scaler.dart';
 import '../data/local/app_settings.dart';
 import '../data/sources/stream_resolver.dart';
 
@@ -114,14 +115,18 @@ final NotifierProvider<SettingsController, AppSettings> settingsControllerProvid
 /// Масштаб интерфейса
 /// ---------------------------------------------------------------------------
 
-/// Масштаб, который сообщает оконная система. Переопределяется в `main()`.
+/// Масштаб, который просит оконная система. Переопределяется в `main()`.
 ///
 /// Значение `1.0` означает «система не просит масштабировать».
-final Provider<double> desktopScaleProvider = Provider<double>((ref) => 1.0);
+final Provider<DesktopScaleInfo> desktopScaleProvider =
+    Provider<DesktopScaleInfo>((ref) => DesktopScaleInfo.none);
 
 /// Стандартные ступени масштаба для интерфейса настроек.
+///
+/// Мелкие значения нужны для компенсации: GTK3 на дробном масштабе отдаёт
+/// завышенный DPR, и интерфейс приходится уменьшать.
 const List<double> kUiScaleSteps = <double>[
-  0.9, 1.0, 1.1, 1.25, 1.5, 1.75, 2.0,
+  0.5, 0.625, 0.75, 0.8, 0.9, 1.0, 1.1, 1.25, 1.5, 1.75, 2.0,
 ];
 
 /// ---------------------------------------------------------------------------

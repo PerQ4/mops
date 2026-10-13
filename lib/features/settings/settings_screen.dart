@@ -2,9 +2,11 @@ import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 
 import '../../core/theme/seed_colors.dart';
+import '../../core/theme/ui_scaler.dart';
 import '../../data/local/app_settings.dart';
 import '../../state/auth_controller.dart';
 import '../../state/providers.dart';
+import '../../state/ui_scale.dart';
 import '../common/navigation.dart';
 
 /// Настройки: внешний вид, воспроизведение, регион и аккаунт.
@@ -271,11 +273,17 @@ class SettingsScreen extends ConsumerWidget {
       return '${(settings.uiScale * 100).round()}%';
     }
 
-    final double desktop = ref.watch(desktopScaleProvider);
-    if (desktop <= 1.01) {
+    final DesktopScaleInfo desktop = ref.watch(desktopScaleProvider);
+    if (desktop.isDefault) {
       return 'Автоматически · система масштаб не задаёт';
     }
-    return 'Автоматически · система просит ${(desktop * 100).round()}%';
+
+    // Показываем не только источник, но и итог компенсации.
+    final double effective = resolveUiScale(context, ref);
+    final String note = (effective - 1.0).abs() < 0.05
+        ? 'компенсация не нужна'
+        : 'компенсация ${(effective * 100).round()}%';
+    return 'Автоматически · ${desktop.source} · $note';
   }
 
   Future<void> _pickUiScale(

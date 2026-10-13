@@ -9,6 +9,7 @@ import 'data/local/app_settings.dart';
 import 'features/shell/app_shell.dart';
 import 'state/providers.dart';
 import 'state/theme_providers.dart';
+import 'state/ui_scale.dart';
 
 /// Корневое приложение.
 ///
@@ -54,24 +55,7 @@ class MopsApp extends ConsumerWidget {
   }
 }
 
-/// Итоговый масштаб интерфейса.
-///
-/// Логика автоматического режима: если движок уже отдаёт увеличенный DPR,
-/// значит масштаб применила оконная система и повторять его не нужно —
-/// иначе интерфейс вырос бы дважды.
-double resolveUiScale(BuildContext context, WidgetRef ref) {
-  final double chosen = ref.watch(
-    settingsControllerProvider.select((s) => s.uiScale),
-  );
-  if (chosen > 0) return chosen;
-
-  final double desktop = ref.watch(desktopScaleProvider);
-  final double deviceDpr = MediaQuery.of(context).devicePixelRatio;
-
-  if (desktop <= 1.01) return 1.0;
-  if (deviceDpr > desktop * 0.95) return 1.0;
-  return desktop;
-}
+/// Итоговый масштаб интерфейса — см. `lib/state/ui_scale.dart`.
 
 /// Ограничивает системный масштаб текста: на десктопе он иногда даёт
 /// нечитаемо крупный интерфейс, а уменьшить его пользователь не может.
@@ -109,7 +93,11 @@ class _ScaleShortcuts extends ConsumerWidget {
         ref.read(settingsControllerProvider.notifier);
     final AppSettings settings = ref.watch(settingsControllerProvider);
 
-    final double current = settings.uiScale > 0 ? settings.uiScale : 1.0;
+    // В автоматическом режиме отсчёт идёт от фактического масштаба,
+    // иначе первое нажатие «сбросило» бы компенсацию к 100%.
+    final double current = settings.uiScale > 0
+        ? settings.uiScale
+        : resolveUiScale(context, ref);
 
     double step(double from, int direction) {
       final List<double> steps = kUiScaleSteps;
