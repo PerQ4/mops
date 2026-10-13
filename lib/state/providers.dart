@@ -11,6 +11,7 @@ import '../core/theme/ui_scaler.dart';
 import '../data/local/app_settings.dart';
 import '../data/sources/stream_downloader.dart';
 import '../data/sources/stream_resolver.dart';
+import 'auth_controller.dart';
 
 /// ---------------------------------------------------------------------------
 /// Базовая инициализация.
@@ -229,9 +230,22 @@ final Provider<InnerTubeClient> innerTubeProvider = Provider<InnerTubeClient>(
 );
 
 /// Получение ссылок на аудиопотоки.
+///
+/// Пересоздаётся при смене авторизации: заголовки вшиваются в клиент
+/// библиотеки, поэтому после входа поток начинает отдаваться целиком.
 final Provider<StreamResolver> streamResolverProvider =
     Provider<StreamResolver>((ref) {
-  final StreamResolver resolver = YoutubeExplodeResolver();
+  final AuthSession? session =
+      ref.watch(authControllerProvider.select((AuthState s) => s.session));
+
+  final Map<String, String> authHeaders =
+      AuthenticatedYoutubeClient.headersForSession(
+    cookieString: session?.cookieString,
+    bearerToken: session?.tokens?.accessToken,
+  );
+
+  final StreamResolver resolver =
+      YoutubeExplodeResolver(authHeaders: authHeaders);
   ref.onDispose(resolver.dispose);
   return resolver;
 });

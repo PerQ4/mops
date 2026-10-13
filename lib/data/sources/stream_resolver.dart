@@ -1,9 +1,57 @@
 import 'dart:async';
 
 import 'package:flutter/foundation.dart';
+import 'package:http/http.dart' as http;
 import 'package:youtube_explode_dart/youtube_explode_dart.dart';
 
 import '../local/app_settings.dart';
+
+/// HTTP-клиент YouTube с добавленной авторизацией.
+///
+/// Зачем: неавторизованному клиенту YouTube отдаёт поток с ограничением —
+/// сервер принимает только первые ~1 МБ трека, а на остальное отвечает 403.
+/// С выполненным входом условия выдачи другие, и поток отдаётся целиком.
+///
+/// Библиотека не умеет авторизоваться сама, но позволяет подменить заголовки,
+/// поэтому cookie (или токен) из настроек приложения добавляются к каждому
+/// её запросу.
+class AuthenticatedYoutubeClient extends YoutubeHttpClient {
+  AuthenticatedYoutubeClient(this.authHeaders, [http.Client? inner])
+      : super(inner);
+
+  final Map<String, String> authHeaders;
+
+  @override
+  Map<String, String> get headers => <String, String>{
+        ...super.headers,
+        ...authHeaders,
+      };
+
+  /// Заголовки авторизации для текущей сессии.
+  ///
+  /// Cookie из браузера содержит всё нужное, но страховочную cookie согласия
+  /// добавляем сами — без неё YouTube может показать страницу согласия
+  /// вместо данных.
+  static Map<String, String> headersForSession({
+    required String? cookieString,
+    required String? bearerToken,
+  }) {
+    final Map<String, String> result = <String, String>{};
+
+    final String cookies = cookieString?.trim() ?? '';
+    if (cookies.isNotEmpty) {
+      result['cookie'] = cookies.toUpperCase().contains('CONSENT=')
+          ? cookies
+          : 'CONSENT=YES+cb; $cookies';
+    }
+
+    final String token = bearerToken?.trim() ?? '';
+    if (token.isNotEmpty) {
+      result['authorization'] = 'Bearer $token';
+    }
+    return result;
+  }
+}
 
 /// Готовая к воспроизведению ссылка на аудиопоток.
 @immutable
@@ -51,8 +99,15 @@ class StreamResolutionException implements Exception {
 /// приложение не зависит от внешних бинарников вроде `yt-dlp` — важно для
 /// кроссплатформенности.
 class YoutubeExplodeResolver implements StreamResolver {
-  YoutubeExplodeResolver({YoutubeExplode? client})
-      : _client = client ?? YoutubeExplode();
+  YoutubeExplodeResolver({
+    YoutubeExplode? client,
+    Map<String, String> authHeaders = const <String, String>{},
+  }) : _client = client ??
+            YoutubeExplode(
+              // Авторизация поднимает лимит на выдачу потока: без неё
+              // медиасервер отдаёт только первые мегабайты трека.
+              httpClient: AuthenticatedYoutubeClient(authHeaders),
+            );
 
   final YoutubeExplode _client;
 

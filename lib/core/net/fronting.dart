@@ -34,14 +34,16 @@ class FrontingConfig {
   ///
   /// Список намеренно узкий: подменять чужие домены нельзя — сертификат
   /// проверяется по имени фронта, поэтому подходят только узлы Google.
-  /// Исключение — `googleapis.com`: он не блокируется, а подмена через
-  /// `www.google.com` для него может не сработать (другой backend).
+  ///
+  /// `googlevideo.com` здесь намеренно **отсутствует**: это медиасерверы,
+  /// у них собственный backend, и запрос через фронт-узел Google возвращает
+  /// 404. Подмена не только не помогает звуку, но и ломала бы его.
+  /// Медиаканал решается прокси или системным обходом (zapret, VPN).
   static const Set<String> frontedSuffixes = <String>{
     'youtube.com',
     'youtu.be',
     'ytimg.com',
     'ggpht.com',
-    'googlevideo.com',
     'googleusercontent.com',
     'youtube-nocookie.com',
   };

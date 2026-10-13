@@ -3,81 +3,73 @@ import 'dart:io';
 
 import 'package:path_provider/path_provider.dart';
 
-/// Скачивает аудиопоток через приложение на диск.
+import 'range_downloader.dart';
+
+/// Исключение живёт в загрузчике диапазонов — переэкспортируем,
+/// чтобы вызывающий код не зависел от расположения файлов.
+export 'range_downloader.dart' show StreamDownloadException;
+
+/// Скачивает аудиопоток через приложение в кэш.
 ///
 /// Зачем это нужно: обход блокировок реализован на уровне HTTP-клиента
 /// приложения (`dart:io`), а звук на Linux воспроизводит GStreamer — он ходит
-/// в сеть сам и про обход не знает. Поэтому при включённом обходе поток
-/// сначала скачивается сюда, а затем отдаётся движку как локальный файл.
+/// в сеть сам и про обход не знает. Поэтому при обходе поток сначала
+/// скачивается сюда, а затем отдаётся движку как локальный файл.
 ///
 /// Побочная выгода — прослушанные треки остаются в кэше и играют мгновенно.
+///
+/// Само скачивание живёт в [RangeDownloader]: медиасерверы YouTube отдают
+/// файл только по явному диапазону, и это правило вынесено в чистый Dart,
+/// чтобы его можно было проверить без запуска Flutter.
 class StreamDownloader {
-  StreamDownloader({HttpClient? client}) : _client = client ?? HttpClient();
+  StreamDownloader({
+    HttpClient? client,
+    this.directory,
+    RangeDownloader? downloader,
+  }) : _downloader = downloader ?? RangeDownloader(client: client);
 
-  final HttpClient _client;
+  final RangeDownloader _downloader;
+
+  /// Каталог кэша. Если не задан — берётся временный каталог приложения.
+  Directory? directory;
 
   /// Ограничение кэша, после которого старые треки удаляются.
   static const int maxCacheBytes = 700 * 1024 * 1024;
 
-  Directory? _cacheDir;
-
-  Future<Directory> _directory() async {
-    final Directory? cached = _cacheDir;
-    if (cached != null && cached.existsSync()) return cached;
+  Future<Directory> _resolveDirectory() async {
+    final Directory? existing = directory;
+    if (existing != null) {
+      if (!existing.existsSync()) await existing.create(recursive: true);
+      return existing;
+    }
 
     final Directory base = await getTemporaryDirectory();
     final Directory dir = Directory('${base.path}/mops_audio');
     if (!dir.existsSync()) await dir.create(recursive: true);
-    _cacheDir = dir;
+    directory = dir;
     return dir;
   }
 
   /// Возвращает путь к файлу с потоком.
   ///
-  /// Если файл уже скачан, сеть не используется. [onProgress] получает
-  /// значение от 0 до 1, когда сервер сообщает размер.
+  /// Если файл уже скачан, сеть не используется.
   Future<String> fetch(
     Uri url, {
     required String cacheKey,
     void Function(double progress)? onProgress,
   }) async {
-    final Directory dir = await _directory();
+    final Directory dir = await _resolveDirectory();
     final File file = File('${dir.path}/$cacheKey.audio');
 
-    // Уже скачано — отдаём сразу.
     if (file.existsSync() && await file.length() > 0) {
       onProgress?.call(1);
       return file.path;
     }
 
     final File partial = File('${file.path}.part');
-    final HttpClientRequest request = await _client.getUrl(url);
-    request.headers.set(HttpHeaders.userAgentHeader, _userAgent);
-
-    final HttpClientResponse response = await request.close();
-    if (response.statusCode != 200) {
-      await response.drain<void>();
-      throw StreamDownloadException(
-        'Сервер вернул HTTP ${response.statusCode} при загрузке трека.',
-      );
-    }
-
-    final int total = response.contentLength;
-    int received = 0;
-    final IOSink sink = partial.openWrite();
-
     try {
-      await for (final List<int> chunk in response) {
-        sink.add(chunk);
-        received += chunk.length;
-        if (total > 0) {
-          onProgress?.call((received / total).clamp(0.0, 1.0));
-        }
-      }
-      await sink.flush();
-      await sink.close();
+      await _downloader.downloadTo(url, partial, onProgress: onProgress);
     } on Object {
-      await sink.close();
       if (partial.existsSync()) await partial.delete();
       rethrow;
     }
@@ -92,8 +84,7 @@ class StreamDownloader {
   /// Удаляет старые файлы, если кэш превысил лимит.
   Future<void> _trimCache(Directory dir, {required String keep}) async {
     try {
-      final List<FileSystemEntity> entries = dir.listSync();
-      final List<File> files = entries.whereType<File>().toList();
+      final List<File> files = dir.listSync().whereType<File>().toList();
       int total = 0;
       for (final File file in files) {
         total += await file.length();
@@ -116,14 +107,14 @@ class StreamDownloader {
 
   /// Удаляет весь кэш аудио.
   Future<void> clearCache() async {
-    final Directory dir = await _directory();
+    final Directory dir = await _resolveDirectory();
     if (dir.existsSync()) await dir.delete(recursive: true);
-    _cacheDir = null;
+    directory = null;
   }
 
   /// Размер кэша в байтах.
   Future<int> cacheSize() async {
-    final Directory dir = await _directory();
+    final Directory dir = await _resolveDirectory();
     if (!dir.existsSync()) return 0;
     int total = 0;
     for (final FileSystemEntity entry in dir.listSync()) {
@@ -132,18 +123,5 @@ class StreamDownloader {
     return total;
   }
 
-  void dispose() => _client.close(force: true);
-
-  static const String _userAgent =
-      'Mozilla/5.0 (Windows NT 10.0; Win64; x64; rv:88.0) Gecko/20100101 Firefox/88.0';
-}
-
-/// Ошибка загрузки потока с понятным пользователю текстом.
-class StreamDownloadException implements Exception {
-  StreamDownloadException(this.message);
-
-  final String message;
-
-  @override
-  String toString() => message;
+  void dispose() => _downloader.dispose();
 }

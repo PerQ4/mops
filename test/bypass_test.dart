@@ -8,17 +8,29 @@ void main() {
   group('подмена хоста — выбор доменов', () {
     const FrontingConfig on = FrontingConfig(enabled: true);
 
-    test('подменяются домены YouTube и медиахостов', () {
+    test('подменяются домены YouTube', () {
       for (final String host in <String>[
         'youtube.com',
         'music.youtube.com',
         'www.youtube.com',
         'i.ytimg.com',
         'yt3.ggpht.com',
+        'lh3.googleusercontent.com',
+      ]) {
+        expect(on.shouldFront(host), isTrue, reason: 'не подменяется: $host');
+      }
+    });
+
+    test('медиахосты НЕ подменяются', () {
+      // У googlevideo собственный backend: запрос через фронт-узел Google
+      // возвращает 404. Подмена не только не помогает звуку, но и ломала бы
+      // его, поэтому медиахосты из списка исключены.
+      for (final String host in <String>[
+        'googlevideo.com',
         'rr1---sn-4g5e6nez.googlevideo.com',
         'redirector.googlevideo.com',
-              ]) {
-        expect(on.shouldFront(host), isTrue, reason: 'не подменяется: $host');
+      ]) {
+        expect(on.shouldFront(host), isFalse, reason: 'подменяется: $host');
       }
     });
 
