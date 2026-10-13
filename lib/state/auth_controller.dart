@@ -188,8 +188,8 @@ class AuthController extends Notifier<AuthState> {
     final CookieAuth auth = CookieAuth(trimmed);
     if (!auth.isUsable) {
       state = state.copyWith(
-        error: 'В cookie не найден SAPISID. Откройте music.youtube.com, '
-            'скопируйте все cookie и вставьте их сюда.',
+        error: 'В cookie не найден SAPISID — вход не выполнен. '
+            'Войдите в аккаунт Google или вставьте cookie вручную.',
       );
       return;
     }

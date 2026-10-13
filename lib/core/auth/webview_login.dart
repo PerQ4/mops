@@ -33,12 +33,18 @@ abstract final class WebviewLogin {
     }
   }
 
+  /// Адрес страницы входа Google.
+  ///
+  /// После входа Google возвращает на music.youtube.com, и панель закрывается
+  /// сама, как только появится SAPISID.
+  static const String signInUrl =
+      'https://accounts.google.com/ServiceLogin?service=youtube'
+      '&continue=https%3A%2F%2Fmusic.youtube.com%2F&hl=ru';
+
   /// Открывает панель входа и возвращает строку cookie.
   ///
   /// Бросает [WebviewLoginException], если вход отменён или cookie не получены.
-  static Future<String> openLogin({
-    String url = 'https://music.youtube.com/',
-  }) async {
+  static Future<String> openLogin({String url = signInUrl}) async {
     try {
       final String? cookies = await _channel.invokeMethod<String>(
         'openLogin',
