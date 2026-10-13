@@ -5,6 +5,7 @@ import '../core/audio/audio_engine.dart';
 import '../core/audio/audioplayers_engine.dart';
 import '../core/auth/token_store.dart';
 import '../core/innertube/innertube_client.dart';
+import '../../core/theme/seed_colors.dart';
 import '../data/local/app_settings.dart';
 import '../data/sources/stream_resolver.dart';
 
@@ -21,19 +22,19 @@ const String kSettingsKey = 'mops.settings.v1';
 
 final Provider<SharedPreferences> sharedPreferencesProvider =
     Provider<SharedPreferences>(
-  (Ref ref) => throw UnimplementedError(
+  (ref) => throw UnimplementedError(
     'sharedPreferencesProvider должен быть переопределён в main()',
   ),
 );
 
 /// Настройки, прочитанные из хранилища до первого кадра.
 final Provider<AppSettings> initialSettingsProvider = Provider<AppSettings>(
-  (Ref ref) => const AppSettings(),
+  (ref) => const AppSettings(),
 );
 
 /// Сохранённая сессия, прочитанная до первого кадра.
 final Provider<AuthSession?> initialSessionProvider = Provider<AuthSession?>(
-  (Ref ref) => null,
+  (ref) => null,
 );
 
 /// ---------------------------------------------------------------------------
@@ -100,17 +101,35 @@ class SettingsController extends Notifier<AppSettings> {
 
   Future<void> setLastSpeed(double speed) =>
       update((AppSettings s) => s.copyWith(lastSpeed: speed));
+
+  /// `scale` — множитель или `0`, чтобы вернуть автоматический режим.
+  Future<void> setUiScale(double scale) =>
+      update((AppSettings s) => s.copyWith(uiScale: scale));
 }
 
 final NotifierProvider<SettingsController, AppSettings> settingsControllerProvider =
     NotifierProvider<SettingsController, AppSettings>(SettingsController.new);
 
 /// ---------------------------------------------------------------------------
+/// Масштаб интерфейса
+/// ---------------------------------------------------------------------------
+
+/// Масштаб, который сообщает оконная система. Переопределяется в `main()`.
+///
+/// Значение `1.0` означает «система не просит масштабировать».
+final Provider<double> desktopScaleProvider = Provider<double>((ref) => 1.0);
+
+/// Стандартные ступени масштаба для интерфейса настроек.
+const List<double> kUiScaleSteps = <double>[
+  0.9, 1.0, 1.1, 1.25, 1.5, 1.75, 2.0,
+];
+
+/// ---------------------------------------------------------------------------
 /// Сеть и аудио
 /// ---------------------------------------------------------------------------
 
 final Provider<TokenStore> tokenStoreProvider = Provider<TokenStore>(
-  (Ref ref) => TokenStore(),
+  (ref) => TokenStore(),
 );
 
 /// Клиент InnerTube (внутренний API YouTube Music).
@@ -118,7 +137,7 @@ final Provider<TokenStore> tokenStoreProvider = Provider<TokenStore>(
 /// Пересоздаётся только при смене региона/языка: `select` не даёт реагировать
 /// на изменения остальных настроек.
 final Provider<InnerTubeClient> innerTubeProvider = Provider<InnerTubeClient>(
-  (Ref ref) {
+  (ref) {
     final String region = ref.watch(
       settingsControllerProvider.select((AppSettings s) => s.streamingRegion),
     );
@@ -137,7 +156,7 @@ final Provider<InnerTubeClient> innerTubeProvider = Provider<InnerTubeClient>(
 
 /// Получение ссылок на аудиопотоки.
 final Provider<StreamResolver> streamResolverProvider =
-    Provider<StreamResolver>((Ref ref) {
+    Provider<StreamResolver>((ref) {
   final StreamResolver resolver = YoutubeExplodeResolver();
   ref.onDispose(resolver.dispose);
   return resolver;
@@ -145,7 +164,7 @@ final Provider<StreamResolver> streamResolverProvider =
 
 /// Аудиодвижок. Один на всё приложение.
 final Provider<AudioEngine> audioEngineProvider = Provider<AudioEngine>(
-  (Ref ref) {
+  (ref) {
     final AudioEngine engine = AudioplayersEngine();
     ref.onDispose(engine.dispose);
     return engine;

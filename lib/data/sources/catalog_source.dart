@@ -135,17 +135,17 @@ class CatalogSource {
                 title.contains('трек')) {
               topTracks.add(track);
             }
-          case AlbumItem(:final Album album):
+          case AlbumItem(album: final Album album):
             if (title.contains('сингл') || title.contains('single')) {
               singles.add(album);
             } else if (title.contains('альбом') || title.contains('album')) {
               albums.add(album);
             }
-          case ArtistItem(:final Artist a):
+          case ArtistItem(artist: final Artist relatedArtist):
             if (title.contains('похож') ||
                 title.contains('related') ||
                 title.contains('fan')) {
-              related.add(a);
+              related.add(relatedArtist);
             }
           case PlaylistItem():
             break;

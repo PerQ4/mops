@@ -56,8 +56,9 @@ class Artwork extends StatelessWidget {
               height: _h,
               fit: fit,
               fadeInDuration: const Duration(milliseconds: 220),
-              placeholder: (BuildContext context, String _) => _placeholder(scheme),
-              errorWidget: (BuildContext context, String _, Object __) =>
+              placeholder: (BuildContext context, String url) =>
+                  _placeholder(scheme),
+              errorWidget: (BuildContext context, String url, Object error) =>
                   _placeholder(scheme, broken: true),
             ),
     );

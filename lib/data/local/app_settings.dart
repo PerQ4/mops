@@ -65,6 +65,7 @@ class AppSettings {
     this.oauthClientSecret = '',
     this.lastVolume = 1.0,
     this.lastSpeed = 1.0,
+    this.uiScale = 0.0,
   });
 
   final ThemeModePreference themeMode;
@@ -81,6 +82,11 @@ class AppSettings {
   final String oauthClientSecret;
   final double lastVolume;
   final double lastSpeed;
+
+  /// Масштаб интерфейса. `0` — автоматически (по масштабу рабочего стола).
+  final double uiScale;
+
+  bool get isUiScaleAuto => uiScale <= 0;
 
   int get safeSeedIndex =>
       (seedColorIndex >= 0 && seedColorIndex < kSeedColors.length) ? seedColorIndex : 0;
@@ -100,6 +106,7 @@ class AppSettings {
     String? oauthClientSecret,
     double? lastVolume,
     double? lastSpeed,
+    double? uiScale,
   }) {
     return AppSettings(
       themeMode: themeMode ?? this.themeMode,
@@ -116,6 +123,7 @@ class AppSettings {
       oauthClientSecret: oauthClientSecret ?? this.oauthClientSecret,
       lastVolume: lastVolume ?? this.lastVolume,
       lastSpeed: lastSpeed ?? this.lastSpeed,
+      uiScale: uiScale ?? this.uiScale,
     );
   }
 
@@ -134,6 +142,7 @@ class AppSettings {
         'oauthClientSecret': oauthClientSecret,
         'lastVolume': lastVolume,
         'lastSpeed': lastSpeed,
+        'uiScale': uiScale,
       };
 
   String encode() => jsonEncode(toJson());
@@ -154,6 +163,7 @@ class AppSettings {
       oauthClientSecret: json['oauthClientSecret'] as String? ?? '',
       lastVolume: (json['lastVolume'] as num?)?.toDouble() ?? 1.0,
       lastSpeed: (json['lastSpeed'] as num?)?.toDouble() ?? 1.0,
+      uiScale: (json['uiScale'] as num?)?.toDouble() ?? 0.0,
     );
   }
 

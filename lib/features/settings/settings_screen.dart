@@ -43,6 +43,13 @@ class SettingsScreen extends ConsumerWidget {
           ),
 
           ListTile(
+            title: const Text('Масштаб интерфейса'),
+            subtitle: Text(_uiScaleLabel(context, ref, settings)),
+            trailing: const Icon(Icons.chevron_right),
+            onTap: () => _pickUiScale(context, controller, settings),
+          ),
+
+          ListTile(
             title: const Text('Палитра'),
             subtitle: Text(settings.colorSource.label),
             trailing: const Icon(Icons.chevron_right),
@@ -252,6 +259,43 @@ class SettingsScreen extends ConsumerWidget {
       label: (String v) => languages[v] ?? v,
     );
     if (result != null) await controller.setStreamingLanguage(result);
+  }
+
+  /// Подпись для пункта «Масштаб интерфейса».
+  String _uiScaleLabel(
+    BuildContext context,
+    WidgetRef ref,
+    AppSettings settings,
+  ) {
+    if (!settings.isUiScaleAuto) {
+      return '${(settings.uiScale * 100).round()}%';
+    }
+
+    final double desktop = ref.watch(desktopScaleProvider);
+    if (desktop <= 1.01) {
+      return 'Автоматически · система масштаб не задаёт';
+    }
+    return 'Автоматически · система просит ${(desktop * 100).round()}%';
+  }
+
+  Future<void> _pickUiScale(
+    BuildContext context,
+    SettingsController controller,
+    AppSettings settings,
+  ) async {
+    // Ноль означает автоматический режим.
+    final List<double> values = <double>[0, ...kUiScaleSteps];
+
+    final double? result = await _showChoice<double>(
+      context,
+      title: 'Масштаб интерфейса',
+      current: settings.isUiScaleAuto ? 0 : settings.uiScale,
+      values: values,
+      label: (double value) => value == 0
+          ? 'Автоматически (как в системе)'
+          : '${(value * 100).round()}%',
+    );
+    if (result != null) await controller.setUiScale(result);
   }
 
   Future<T?> _showChoice<T>(

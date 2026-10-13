@@ -13,14 +13,12 @@ class ResolvedStream {
     required this.expiresAt,
     this.bitrateKbps,
     this.container,
-    this.duration,
     this.isLive = false,
   });
 
   final Uri url;
   final int? bitrateKbps;
   final String? container;
-  final Duration? duration;
   final bool isLive;
 
   /// Ссылки googlevideo живут несколько часов; после этого нужен перезапрос.
@@ -101,9 +99,8 @@ class YoutubeExplodeResolver implements StreamResolver {
 
       final ResolvedStream resolved = ResolvedStream(
         url: chosen.url,
-        bitrateKbps: chosen.bitrate.kiloBitsPerSecond,
+        bitrateKbps: chosen.bitrate.kiloBitsPerSecond.round(),
         container: chosen.container.name,
-        duration: manifest.duration,
         expiresAt: DateTime.now().add(const Duration(hours: 5)),
       );
       _cache[key] = resolved;

@@ -11,19 +11,19 @@ import 'catalog_providers.dart';
 import 'providers.dart';
 
 /// Режим повтора.
-enum RepeatMode {
+enum PlayerRepeatMode {
   off('Не повторять'),
   all('Повторять очередь'),
   one('Повторять трек');
 
-  const RepeatMode(this.label);
+  const PlayerRepeatMode(this.label);
 
   final String label;
 
-  RepeatMode get next => switch (this) {
-        RepeatMode.off => RepeatMode.all,
-        RepeatMode.all => RepeatMode.one,
-        RepeatMode.one => RepeatMode.off,
+  PlayerRepeatMode get next => switch (this) {
+        PlayerRepeatMode.off => PlayerRepeatMode.all,
+        PlayerRepeatMode.all => PlayerRepeatMode.one,
+        PlayerRepeatMode.one => PlayerRepeatMode.off,
       };
 }
 
@@ -34,7 +34,7 @@ class PlayerUiState {
     this.queue = const <Track>[],
     this.index = -1,
     this.shuffle = false,
-    this.repeat = RepeatMode.off,
+    this.repeat = PlayerRepeatMode.off,
     this.playback = PlaybackState.initial,
     this.resolving = false,
     this.error,
@@ -46,7 +46,7 @@ class PlayerUiState {
   /// Индекс текущего трека в [queue]; -1 — ничего не выбрано.
   final int index;
   final bool shuffle;
-  final RepeatMode repeat;
+  final PlayerRepeatMode repeat;
   final PlaybackState playback;
 
   /// Идёт получение ссылки на поток (между нажатием и звуком).
@@ -74,7 +74,7 @@ class PlayerUiState {
     List<Track>? queue,
     int? index,
     bool? shuffle,
-    RepeatMode? repeat,
+    PlayerRepeatMode? repeat,
     PlaybackState? playback,
     bool? resolving,
     String? error,
@@ -100,7 +100,10 @@ class PlayerUiState {
 /// получение ссылки на поток и передача её в [AudioEngine]. Тексты песен
 /// и метаданные сюда не входят — за них отвечают отдельные провайдеры.
 class PlayerController extends Notifier<PlayerUiState> {
-  late final AudioEngine _engine;
+  /// Движок берём через `ref` при каждом обращении: провайдер не меняется,
+  /// но так не нужен `late final`, который ломается при пересоздании нотификатора.
+  AudioEngine get _engine => ref.read(audioEngineProvider);
+
   StreamSubscription<PlaybackState>? _engineSub;
   final Random _random = Random();
 
@@ -109,7 +112,8 @@ class PlayerController extends Notifier<PlayerUiState> {
 
   @override
   PlayerUiState build() {
-    _engine = ref.watch(audioEngineProvider);
+    // Отписка от предыдущего движка (если нотификатор пересоздали).
+    _engineSub?.cancel();
 
     _engineSub = _engine.stateStream.listen((PlaybackState playback) {
       state = state.copyWith(playback: playback);
@@ -129,6 +133,7 @@ class PlayerController extends Notifier<PlayerUiState> {
 
     ref.onDispose(() {
       _engineSub?.cancel();
+      _engineSub = null;
     });
 
     return const PlayerUiState();
@@ -201,12 +206,17 @@ class PlayerController extends Notifier<PlayerUiState> {
     if (queue.isEmpty) unawaited(_engine.stop());
   }
 
+  /// Переставляет элемент очереди.
+  ///
+  /// [newIndex] — итоговая позиция: элемент [oldIndex] уже мысленно удалён
+  /// (такова семантика `onReorderItem`).
   void reorderQueue(int oldIndex, int newIndex) {
     if (oldIndex < 0 || oldIndex >= state.queue.length) return;
+
     final List<Track> queue = <Track>[...state.queue];
     final Track moved = queue.removeAt(oldIndex);
-    final int target = newIndex > oldIndex ? newIndex - 1 : newIndex;
-    queue.insert(target.clamp(0, queue.length), moved);
+    final int target = newIndex.clamp(0, queue.length);
+    queue.insert(target, moved);
 
     int currentIndex = state.index;
     if (oldIndex == state.index) {
@@ -341,7 +351,7 @@ class PlayerController extends Notifier<PlayerUiState> {
   }
 
   Future<void> _handleTrackEnded() async {
-    if (state.repeat == RepeatMode.one) {
+    if (state.repeat == PlayerRepeatMode.one) {
       await _engine.seek(Duration.zero);
       await _engine.play();
       return;
@@ -372,7 +382,7 @@ class PlayerController extends Notifier<PlayerUiState> {
     }
 
     // Конец очереди.
-    if (state.repeat == RepeatMode.all) {
+    if (state.repeat == PlayerRepeatMode.all) {
       _pushHistory(state.index);
       state = state.copyWith(index: 0, clearError: true);
       await _loadCurrent();
@@ -449,7 +459,7 @@ final NotifierProvider<PlayerController, PlayerUiState> playerControllerProvider
 
 /// Текущий трек — отдельный провайдер, чтобы интерфейс не перестраивался
 /// на каждое изменение позиции воспроизведения.
-final Provider<Track?> currentTrackProvider = Provider<Track?>((Ref ref) {
+final Provider<Track?> currentTrackProvider = Provider<Track?>((ref) {
   return ref.watch(
     playerControllerProvider.select((PlayerUiState s) => s.current),
   );

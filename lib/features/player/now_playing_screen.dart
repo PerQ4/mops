@@ -452,12 +452,12 @@ class _Controls extends ConsumerWidget {
           const SizedBox(width: 8),
           IconButton(
             tooltip: player.repeat.label,
-            isSelected: player.repeat != RepeatMode.off,
+            isSelected: player.repeat != PlayerRepeatMode.off,
             icon: Icon(
-              player.repeat == RepeatMode.one ? Icons.repeat_one : Icons.repeat,
+              player.repeat == PlayerRepeatMode.one ? Icons.repeat_one : Icons.repeat,
             ),
             selectedIcon: Icon(
-              player.repeat == RepeatMode.one ? Icons.repeat_one : Icons.repeat,
+              player.repeat == PlayerRepeatMode.one ? Icons.repeat_one : Icons.repeat,
               color: scheme.primary,
             ),
             onPressed: controller.cycleRepeat,

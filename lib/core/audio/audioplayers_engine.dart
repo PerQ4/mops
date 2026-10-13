@@ -31,9 +31,6 @@ class AudioplayersEngine implements AudioEngine {
   PlaybackState _state = PlaybackState.initial;
   bool _disposed = false;
 
-  /// Длительность из метаданных потока появляется не сразу.
-  Duration _lastKnownDuration = Duration.zero;
-
   @override
   Stream<PlaybackState> get stateStream => _controller.stream;
 
@@ -47,7 +44,6 @@ class AudioplayersEngine implements AudioEngine {
         _emit(_state.copyWith(position: position));
       }),
       _player.onDurationChanged.listen((Duration duration) {
-        _lastKnownDuration = duration;
         _emit(_state.copyWith(duration: duration));
       }),
       _player.onPlayerComplete.listen((_) {
@@ -100,7 +96,6 @@ class AudioplayersEngine implements AudioEngine {
 
   @override
   Future<void> load(String url, {bool autoplay = true}) async {
-    _lastKnownDuration = Duration.zero;
     _emit(_state.copyWith(
       status: PlaybackStatus.loading,
       position: Duration.zero,

@@ -9,50 +9,49 @@ import 'providers.dart';
 ///
 /// `FutureProvider`/`family` дают бесплатно кэширование, состояния загрузки
 /// и ошибок — в UI не нужно писать ни одной ручной проверки «а загрузилось ли».
+///
+/// Умышленно нет аннотаций типа: у семейств в Riverpod меняется имя класса
+/// между мажорными версиями, а вывод типов даёт то же самое и не ломается.
 
-final Provider<CatalogSource> catalogSourceProvider = Provider<CatalogSource>(
-  (Ref ref) => CatalogSource(ref.watch(innerTubeProvider)),
+final catalogSourceProvider = Provider<CatalogSource>(
+  (ref) => CatalogSource(ref.watch(innerTubeProvider)),
 );
 
-final Provider<LibrarySource> librarySourceProvider = Provider<LibrarySource>(
-  (Ref ref) => LibrarySource(ref.watch(innerTubeProvider)),
+final librarySourceProvider = Provider<LibrarySource>(
+  (ref) => LibrarySource(ref.watch(innerTubeProvider)),
 );
 
 /// Главная страница.
-final FutureProvider<List<BrowseSection>> homeSectionsProvider =
-    FutureProvider<List<BrowseSection>>((Ref ref) async {
+final homeSectionsProvider = FutureProvider<List<BrowseSection>>((ref) async {
   return ref.watch(catalogSourceProvider).home();
 });
 
 /// Раздел «Обзор».
-final FutureProvider<List<BrowseSection>> exploreSectionsProvider =
-    FutureProvider<List<BrowseSection>>((Ref ref) async {
+final exploreSectionsProvider =
+    FutureProvider<List<BrowseSection>>((ref) async {
   return ref.watch(catalogSourceProvider).explore();
 });
 
 /// Произвольный публичный раздел (чарты, настроения, подкасты).
-final FutureProviderFamily<List<BrowseSection>, String> browseSectionProvider =
-    FutureProvider.family<List<BrowseSection>, String>(
-  (Ref ref, String browseId) async {
-    return ref.watch(catalogSourceProvider).browseSection(browseId);
-  },
-);
+final browseSectionProvider =
+    FutureProvider.family<List<BrowseSection>, String>((ref, browseId) async {
+  return ref.watch(catalogSourceProvider).browseSection(browseId);
+});
 
 /// Страница альбома.
-final FutureProviderFamily<Album, String> albumProvider =
-    FutureProvider.family<Album, String>((Ref ref, String albumId) async {
+final albumProvider = FutureProvider.family<Album, String>((ref, albumId) async {
   return ref.watch(catalogSourceProvider).album(albumId);
 });
 
 /// Страница исполнителя.
-final FutureProviderFamily<Artist, String> artistProvider =
-    FutureProvider.family<Artist, String>((Ref ref, String artistId) async {
+final artistProvider =
+    FutureProvider.family<Artist, String>((ref, artistId) async {
   return ref.watch(catalogSourceProvider).artist(artistId);
 });
 
 /// Страница плейлиста.
-final FutureProviderFamily<Playlist, String> playlistProvider =
-    FutureProvider.family<Playlist, String>((Ref ref, String playlistId) async {
+final playlistProvider =
+    FutureProvider.family<Playlist, String>((ref, playlistId) async {
   return ref.watch(catalogSourceProvider).playlist(playlistId);
 });
 
@@ -60,27 +59,22 @@ final FutureProviderFamily<Playlist, String> playlistProvider =
 ///
 /// В ключ входит и запрос, и фильтр, поэтому переключение вкладок
 /// не сбрасывает уже загруженные результаты.
-final FutureProviderFamily<List<BrowseSection>, SearchQuery>
-    searchResultsProvider =
-    FutureProvider.family<List<BrowseSection>, SearchQuery>(
-  (Ref ref, SearchQuery query) async {
-    if (query.text.trim().isEmpty) return const <BrowseSection>[];
-    return ref.watch(catalogSourceProvider).search(
-          query.text,
-          filter: query.filter,
-        );
-  },
-);
+final searchResultsProvider =
+    FutureProvider.family<List<BrowseSection>, SearchQuery>((ref, query) async {
+  if (query.text.trim().isEmpty) return const <BrowseSection>[];
+  return ref
+      .watch(catalogSourceProvider)
+      .search(query.text, filter: query.filter);
+});
 
 /// Подсказки при вводе.
-final FutureProviderFamily<List<String>, String> searchSuggestionsProvider =
-    FutureProvider.family<List<String>, String>((Ref ref, String query) async {
+final searchSuggestionsProvider =
+    FutureProvider.family<List<String>, String>((ref, query) async {
   return ref.watch(catalogSourceProvider).searchSuggestions(query);
 });
 
 /// Текст песни.
-final FutureProviderFamily<Lyrics, String> lyricsProvider =
-    FutureProvider.family<Lyrics, String>((Ref ref, String videoId) async {
+final lyricsProvider = FutureProvider.family<Lyrics, String>((ref, videoId) async {
   return ref.watch(catalogSourceProvider).lyrics(videoId);
 });
 

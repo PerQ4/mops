@@ -24,7 +24,7 @@ class AppSchemes {
 final Map<String, AppSchemes> _artworkSchemeCache = <String, AppSchemes>{};
 
 /// Палитра из выбранного пользователем акцентного цвета.
-final Provider<AppSchemes> seedSchemesProvider = Provider<AppSchemes>((Ref ref) {
+final Provider<AppSchemes> seedSchemesProvider = Provider<AppSchemes>((ref) {
   final settings = ref.watch(settingsControllerProvider);
   final Color seed = kSeedColors[settings.safeSeedIndex].color;
   final bool expressive = settings.useMaterialExpressive;
@@ -48,7 +48,7 @@ final Provider<AppSchemes> seedSchemesProvider = Provider<AppSchemes>((Ref ref) 
 /// Возвращает `null`, если источник палитры отключён, трек не играет
 /// или из обложки не удалось собрать цвета.
 final FutureProvider<AppSchemes?> artworkSchemesProvider =
-    FutureProvider<AppSchemes?>((Ref ref) async {
+    FutureProvider<AppSchemes?>((ref) async {
   final settings = ref.watch(settingsControllerProvider);
   if (settings.colorSource != ColorSource.artwork) return null;
 
@@ -90,17 +90,16 @@ final FutureProvider<AppSchemes?> artworkSchemesProvider =
 });
 
 /// Итоговая пара схем: обложка, если доступна, иначе акцентный цвет.
-final Provider<AppSchemes> effectiveSchemesProvider = Provider<AppSchemes>((Ref ref) {
+final Provider<AppSchemes> effectiveSchemesProvider = Provider<AppSchemes>((ref) {
   final AppSchemes fallback = ref.watch(seedSchemesProvider);
-  final AsyncValue<AppSchemes?> fromArtwork =
-      ref.watch(artworkSchemesProvider);
+  final AsyncValue<AppSchemes?> fromArtwork = ref.watch(artworkSchemesProvider);
 
-  return fromArtwork.valueOrNull ?? fallback;
+  return fromArtwork.value ?? fallback;
 });
 
 /// Собранная [ThemeData] для светлой и тёмной темы.
 final Provider<({ThemeData light, ThemeData dark})> themeDataProvider =
-    Provider<({ThemeData light, ThemeData dark})>((Ref ref) {
+    Provider<({ThemeData light, ThemeData dark})>((ref) {
   final AppSchemes schemes = ref.watch(effectiveSchemesProvider);
   final bool expressive =
       ref.watch(settingsControllerProvider.select((s) => s.useMaterialExpressive));

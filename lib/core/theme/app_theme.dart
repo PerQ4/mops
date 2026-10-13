@@ -1,6 +1,6 @@
 import 'package:flutter/material.dart';
 
-import 'seed_colors.dart';
+
 
 /// Сборка темы Material 3 / Material 3 Expressive.
 ///

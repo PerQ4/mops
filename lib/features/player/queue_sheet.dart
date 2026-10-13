@@ -19,12 +19,16 @@ abstract final class QueueSheet {
         initialChildSize: 0.7,
         maxChildSize: 0.95,
         minChildSize: 0.35,
-        builder: (BuildContext context, ScrollController controller) =>
-            _QueueContent(scrollController: controller),
+        builder: _queueBuilder,
       ),
     );
   }
 }
+
+/// Ссылка на функцию — константа времени компиляции, поэтому
+/// `DraggableScrollableSheet` можно оставить `const`.
+Widget _queueBuilder(BuildContext context, ScrollController controller) =>
+    _QueueContent(scrollController: controller);
 
 class _QueueContent extends ConsumerWidget {
   const _QueueContent({required this.scrollController});
@@ -106,13 +110,11 @@ class _QueueContent extends ConsumerWidget {
           SliverToBoxAdapter(child: _GroupLabel('Далее — ${upNext.length}')),
           SliverReorderableList(
             itemCount: upNext.length,
-            onReorder: (int oldIndex, int newIndex) {
-              // Индексы upNext сдвинуты на (текущий + 1) в общем списке.
+            // onReorderItem отдаёт уже скорректированный индекс: элемент
+            // oldIndex мысленно удалён, поэтому вычитать единицу не нужно.
+            onReorderItem: (int oldIndex, int newIndex) {
               final int base = player.index + 1;
-              controller.reorderQueue(
-                oldIndex + base,
-                newIndex + base,
-              );
+              controller.reorderQueue(oldIndex + base, newIndex + base);
             },
             itemBuilder: (BuildContext context, int index) {
               final Track track = upNext[index];

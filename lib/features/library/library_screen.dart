@@ -8,7 +8,6 @@ import '../../state/player_controller.dart';
 import '../../widgets/async_views.dart';
 import '../../widgets/media_card.dart';
 import '../../widgets/section_list.dart';
-import '../../widgets/track_tile.dart';
 import '../common/navigation.dart';
 
 /// Личная коллекция: плейлисты, лайки, исполнители и подписки.

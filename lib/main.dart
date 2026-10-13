@@ -4,6 +4,7 @@ import 'package:shared_preferences/shared_preferences.dart';
 
 import 'app.dart';
 import 'core/auth/token_store.dart';
+import 'core/theme/ui_scaler.dart';
 import 'data/local/app_settings.dart';
 import 'state/providers.dart';
 
@@ -20,12 +21,18 @@ Future<void> main() async {
   // на мгновение увидел бы «гостевой» интерфейс.
   final AuthSession? session = await TokenStore().read();
 
+  // Масштаб, который просит оконная система (GDK/Qt). Применяется только
+  // если Flutter его ещё не учёл — см. resolveUiScale в app.dart.
+  final double desktopScale = detectDesktopScale();
+
   runApp(
     ProviderScope(
-      overrides: <Override>[
+      // Тип списка выводится сам: `Override` — деталь реализации Riverpod.
+      overrides: [
         sharedPreferencesProvider.overrideWithValue(prefs),
         initialSettingsProvider.overrideWithValue(settings),
         initialSessionProvider.overrideWithValue(session),
+        desktopScaleProvider.overrideWithValue(desktopScale),
       ],
       child: const MopsApp(),
     ),

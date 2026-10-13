@@ -31,12 +31,13 @@ class BearerAuth implements AuthProvider {
 
 /// Авторизация по cookie браузера (`SAPISIDHASH`).
 class CookieAuth implements AuthProvider {
-  CookieAuth(this.cookieString, {String origin = SapisidHash.defaultOrigin})
-      : _origin = origin,
-        _sapisid = SapisidHash.extractSapisid(cookieString);
+  CookieAuth(
+    this.cookieString, {
+    this.origin = SapisidHash.defaultOrigin,
+  }) : _sapisid = SapisidHash.extractSapisid(cookieString);
 
   final String cookieString;
-  final String _origin;
+  final String origin;
   final String? _sapisid;
 
   /// Достаточно ли cookie для подписи (есть ли `SAPISID`).
@@ -45,9 +46,10 @@ class CookieAuth implements AuthProvider {
   @override
   Map<String, String> get headers {
     final Map<String, String> result = <String, String>{'Cookie': cookieString};
-    if (isUsable) {
-      result['Authorization'] =
-          SapisidHash.build(_sapisid, origin: _origin);
+    // Локальная переменная нужна для promotion: поле-геттер Dart не уточняет.
+    final String? sapisid = _sapisid;
+    if (sapisid != null && sapisid.isNotEmpty) {
+      result['Authorization'] = SapisidHash.build(sapisid, origin: origin);
     }
     return result;
   }
@@ -93,11 +95,10 @@ class InnerTubeConfig {
 class InnerTubeClient {
   InnerTubeClient({
     http.Client? httpClient,
-    AuthProvider auth = const AnonymousAuth(),
+    this.auth = const AnonymousAuth(),
     this.locale = 'ru',
     this.region = 'RU',
-  })  : _http = httpClient ?? http.Client(),
-        _auth = auth;
+  }) : _http = httpClient ?? http.Client();
 
   static const String _origin = 'https://music.youtube.com';
   static const String _userAgent =
@@ -107,14 +108,16 @@ class InnerTubeClient {
   final String locale;
   final String region;
 
-  AuthProvider _auth;
+  /// Текущая стратегия авторизации.
+  AuthProvider auth;
+
   InnerTubeConfig? _config;
 
   /// Меняет стратегию авторизации (вход/выход) без пересоздания клиента.
-  void setAuth(AuthProvider auth) => _auth = auth;
+  void setAuth(AuthProvider value) => auth = value;
 
   /// Есть ли сейчас авторизация (не гостевая).
-  bool get hasAuth => _auth is! AnonymousAuth;
+  bool get hasAuth => auth is! AnonymousAuth;
 
   InnerTubeConfig? get config => _config;
 
@@ -204,7 +207,7 @@ class InnerTubeClient {
     };
 
     if (authenticated) {
-      headers.addAll(_auth.headers);
+      headers.addAll(auth.headers);
     }
 
     final Map<String, dynamic> payload = <String, dynamic>{
@@ -248,7 +251,6 @@ class InnerTubeClient {
       authenticated: authenticated,
     );
   }
-
   Future<Map<String, dynamic>> search(
     String query, {
     String? params,
@@ -270,7 +272,7 @@ class InnerTubeClient {
       'next',
       body: <String, dynamic>{
         'videoId': videoId,
-        if (playlistId != null) 'playlistId': playlistId,
+        'playlistId': ?playlistId,
         'isAudioOnly': true,
       },
       authenticated: authenticated,

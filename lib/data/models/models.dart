@@ -42,10 +42,13 @@ class AlbumRef {
 /// Утилиты выбора лучшей обложки.
 extension ThumbnailListX on List<Thumbnail> {
   /// Обложка максимального размера (или последняя доступная).
-  String? get best => _pick(int.maxFinite);
+  String? get best => _pick(_maxWidth);
 
   /// Обложка, подходящая под квадрат заданной стороны (для списков — меньше трафик).
   String? sized(int target) => _pick(target);
+
+  /// Заведомо больше любой реальной обложки YouTube.
+  static const int _maxWidth = 99999;
 
   String? _pick(int target) {
     if (isEmpty) return null;

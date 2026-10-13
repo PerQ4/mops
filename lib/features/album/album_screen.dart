@@ -7,6 +7,7 @@ import '../../state/catalog_providers.dart';
 import '../../state/player_controller.dart';
 import '../../widgets/async_views.dart';
 import '../../widgets/section_list.dart';
+import '../../widgets/track_tile.dart';
 
 /// Страница альбома: обложка, метаданные и список треков.
 class AlbumScreen extends ConsumerWidget {
