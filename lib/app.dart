@@ -34,35 +34,40 @@ class _MopsAppState extends ConsumerState<MopsApp> {
     // Проверку удобства ради делаем после первого кадра, чтобы не задерживать
     // запуск: она может занять несколько секунд.
     WidgetsBinding.instance.addPostFrameCallback((_) {
-      unawaited(_autoConfigureBypass());
+      unawaited(_verifyBypass());
     });
   }
 
-  /// При первом запуске выясняет, нужен ли обход, и включает его.
+  /// Проверяет, что выбранный способ доступа действительно работает.
   ///
-  /// Пользователь не должен сам догадываться, что провайдер режет SNI.
-  /// Логика простая: если данные недоступны напрямую, но доступны с подменой
-  /// хоста — включаем подмену и запоминаем, что проверка выполнена.
-  Future<void> _autoConfigureBypass() async {
-    final AppSettings settings = ref.read(settingsControllerProvider);
-    if (settings.bypassProbed) return;
-    if (settings.bypass.isEnabled) return; // уже настроено пользователем
+  /// Обход включён по умолчанию, поэтому обычно здесь ничего менять не нужно.
+  /// Проверка нужна для редких случаев: если подмена хоста через этот узел
+  /// почему-то не работает, а прямой доступ есть — отключаем её, чтобы
+  /// приложение не осталось без данных. Всё делается само, без участия
+  /// пользователя.
+  Future<void> _verifyBypass() async {
+    if (!ref.read(bypassAutoVerifyProvider)) return;
+
+    final AntiDpiConfig config = ref.read(settingsControllerProvider).bypass;
+
+    // Пользователь сам выключил обход или настроил прокси — не вмешиваемся.
+    if (!config.fronting.enabled || config.usesProxy) return;
 
     final SettingsController controller =
         ref.read(settingsControllerProvider.notifier);
+
     try {
+      if (await ConnectivityCheck.dataReachable(fronting: true)) return;
+
       final bool direct = await ConnectivityCheck.dataReachable(fronting: false);
-      if (!direct) {
-        final bool fronted = await ConnectivityCheck.dataReachable(fronting: true);
-        if (fronted) {
-          await controller.setFrontingEnabled(true);
-          debugPrint('[Bypass] провайдер блокирует домен — включена подмена хоста');
-        }
+      if (direct) {
+        await controller.setFrontingEnabled(false);
+        debugPrint(
+          '[Bypass] подмена хоста недоступна, а прямой доступ есть — выключена',
+        );
       }
     } on Object catch (error) {
       debugPrint('[Bypass] проверка не удалась: $error');
-    } finally {
-      await controller.markBypassProbed();
     }
   }
 

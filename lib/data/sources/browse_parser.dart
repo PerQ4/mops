@@ -71,6 +71,79 @@ class BrowseParser {
     );
   }
 
+  /// Разбирает строку `musicResponsiveListItemRenderer` любого вида.
+  ///
+  /// В одной и той же разметке строка может описывать трек, альбом, артиста
+  /// или плейлист: у трека есть видео-идентификатор, у остальных — ссылка
+  /// на страницу. Этот метод различает их сам.
+  static BrowseItem? responsiveAny(dynamic renderer) {
+    if (renderer is! Map) return null;
+
+    final Track? track = responsiveItem(renderer);
+    if (track != null) return TrackItem(track);
+
+    final String? browseId = _firstString(renderer, <List<String>>[
+      <String>['navigationEndpoint', 'browseEndpoint', 'browseId'],
+    ]);
+    if (browseId == null || browseId.isEmpty) return null;
+
+    final String title = _firstString(renderer, <List<String>>[
+          <String>['flexColumns', 'musicResponsiveListItemFlexColumnRenderer', 'text', 'runs', 'text'],
+          <String>['title', 'runs', 'text'],
+        ]) ??
+        '';
+    if (title.isEmpty) return null;
+
+    final String pageType = _firstString(renderer, <List<String>>[
+          <String>['navigationEndpoint', 'browseEndpoint',
+              'browseEndpointContextSupportedConfigs',
+              'browseEndpointContextMusicConfig', 'pageType'],
+        ]) ??
+        '';
+    final String subtitle = _byline(renderer);
+    final List<Thumbnail> thumbnails = _thumbnails(renderer);
+
+    if (pageType.contains('ARTIST') || browseId.startsWith('UC')) {
+      return ArtistItem(Artist(
+        id: browseId,
+        name: title,
+        thumbnails: thumbnails,
+        subscribers: subtitle.isEmpty ? null : subtitle,
+      ));
+    }
+    if (pageType.contains('ALBUM') || browseId.startsWith('MPRE')) {
+      return AlbumItem(Album(
+        id: browseId,
+        title: title,
+        artists: _artistsFromSubtitle(subtitle),
+        year: _extractYear(subtitle),
+        thumbnails: thumbnails,
+      ));
+    }
+    return PlaylistItem(Playlist(
+      id: browseId,
+      title: title,
+      author: subtitle.isEmpty ? null : subtitle,
+      thumbnails: thumbnails,
+    ));
+  }
+
+  /// Собирает текст второго столбца строки (исполнители, год, число треков).
+  static String _byline(dynamic renderer) {
+    final List<dynamic> columns =
+        traverseList(renderer, <String>['flexColumns']).whereType<Map>().toList();
+    if (columns.length < 2) return '';
+    final List<dynamic> runs = _runsOfColumn(columns, 1);
+    if (runs.isEmpty) return '';
+    return runs
+        .whereType<Map>()
+        .map(textOf)
+        .whereType<String>()
+        .map((String s) => s.trim())
+        .where((String s) => s.isNotEmpty && s != '•')
+        .join(' • ');
+  }
+
   /// Разбирает `musicTwoRowItemRenderer` — плитку альбома/плейлиста/артиста.
   static BrowseItem? twoRowItem(dynamic renderer) {
     if (renderer is! Map) return null;
@@ -146,8 +219,8 @@ class BrowseParser {
       if (item is! Map) continue;
       final dynamic responsive = item['musicResponsiveListItemRenderer'];
       if (responsive != null) {
-        final Track? track = responsiveItem(responsive);
-        if (track != null) items.add(TrackItem(track));
+        final BrowseItem? parsed = responsiveAny(responsive);
+        if (parsed != null) items.add(parsed);
         continue;
       }
       final dynamic twoRow = item['musicTwoRowItemRenderer'];
@@ -200,55 +273,224 @@ class BrowseParser {
     ]);
   }
 
-  /// Универсальный разбор секций: находит в ответе все полки и карусели.
+  /// Универсальный разбор секций.
   ///
-  /// Подходит и для главной, и для поиска, и для страницы исполнителя:
-  /// структура везде одна — `sectionListRenderer.contents`, внутри которого
-  /// лежат `musicShelfRenderer` и `musicCarouselShelfRenderer`
-  /// (иногда завёрнутые в `itemSectionRenderer.content`).
+  /// YouTube Music заворачивает списки по-разному: главная отдаёт карусели
+  /// и полки с заголовками, поиск — плоский список `itemSectionRenderer`
+  /// без заголовков, страница исполнителя смешивает оба вида. Здесь все
+  /// варианты приводятся к одному типу [BrowseSection].
   static List<BrowseSection> sectionsFrom(dynamic response) {
-    final List<BrowseSection> sections = <BrowseSection>[];
-
-    for (final dynamic carousel
-        in traverseList(response, <String>['musicCarouselShelfRenderer'])) {
-      final BrowseSection? section = shelf(carousel);
-      if (section != null) sections.add(section);
+    List<dynamic> entries = traverseList(
+      response,
+      <String>['sectionListRenderer', 'contents'],
+    );
+    if (entries.isEmpty) {
+      entries = traverseList(
+        response,
+        <String>['sectionListContinuation', 'contents'],
+      );
     }
 
-    for (final dynamic shelfRenderer
-        in traverseList(response, <String>['musicShelfRenderer'])) {
-      final BrowseSection? section = shelf(shelfRenderer);
-      if (section != null) sections.add(section);
-    }
+    // Ответ поиска: заголовков у секций нет, элементы идут подряд.
+    final bool isSearch =
+        traverseList(response, <String>['tabbedSearchResultsRenderer'])
+            .isNotEmpty;
 
-    return sections;
-  }
-
-  /// Секции главной страницы / раздела (в порядке отображения).
-  static List<BrowseSection> homeSections(dynamic response) {
     final List<BrowseSection> sections = <BrowseSection>[];
+    final List<BrowseItem> loose = <BrowseItem>[];
 
-    for (final dynamic renderer
-        in traverseList(response, <String>['sectionListRenderer', 'contents'])) {
-      if (renderer is! Map) continue;
+    for (final dynamic entry in entries) {
+      if (entry is! Map) continue;
 
-      final dynamic carousel = renderer['musicCarouselShelfRenderer'];
+      final dynamic carousel = entry['musicCarouselShelfRenderer'];
       if (carousel != null) {
         final BrowseSection? section = shelf(carousel);
         if (section != null) sections.add(section);
         continue;
       }
 
-      final dynamic shelfRenderer = renderer['musicShelfRenderer'];
+      final dynamic shelfRenderer = entry['musicShelfRenderer'];
       if (shelfRenderer != null) {
+        final BrowseSection? section = shelf(shelfRenderer);
+        if (section != null) sections.add(section);
+        continue;
+      }
+
+      final dynamic card = entry['musicCardShelfRenderer'];
+      if (card != null) {
+        final BrowseItem? item = cardShelf(card);
+        if (item != null) {
+          sections.add(BrowseSection(
+            title: isSearch ? 'Лучший результат' : 'Выделено',
+            items: <BrowseItem>[item],
+          ));
+        }
+        continue;
+      }
+
+      final dynamic itemSection = entry['itemSectionRenderer'];
+      if (itemSection != null) {
+        final List<BrowseItem> items = itemsOf(itemSection['contents']);
+        if (items.isEmpty) continue;
+
+        final String? title = _itemSectionTitle(itemSection);
+        if (title == null || title.isEmpty) {
+          // Без заголовка: у поиска такие элементы образуют один общий список.
+          loose.addAll(items);
+        } else {
+          sections.add(BrowseSection(title: title, items: items));
+        }
+      }
+    }
+
+    if (loose.isNotEmpty) {
+      sections.add(BrowseSection(title: 'Результаты', items: loose));
+    }
+
+    // Если разметка незнакома — откатываемся на поиск полок где угодно.
+    if (sections.isEmpty) {
+      for (final dynamic carousel
+          in traverseList(response, <String>['musicCarouselShelfRenderer'])) {
+        final BrowseSection? section = shelf(carousel);
+        if (section != null) sections.add(section);
+      }
+      for (final dynamic shelfRenderer
+          in traverseList(response, <String>['musicShelfRenderer'])) {
         final BrowseSection? section = shelf(shelfRenderer);
         if (section != null) sections.add(section);
       }
     }
 
-    // Если разметка изменилась — откатываемся на универсальный разбор.
-    return sections.isEmpty ? sectionsFrom(response) : sections;
+    return sections;
   }
+
+  /// Заголовок `itemSectionRenderer` — в разных ответах лежит по-разному.
+  static String? _itemSectionTitle(dynamic itemSection) {
+    return _firstString(itemSection, <List<String>>[
+          <String>['header', 'musicHeaderRenderer', 'title', 'runs', 'text'],
+          <String>['header', 'itemSectionHeaderRenderer', 'title', 'runs', 'text'],
+          <String>['header', 'title', 'runs', 'text'],
+          <String>['header', 'title', 'simpleText'],
+        ]) ??
+        textOf(traverse(itemSection, <String>['header', 'title']));
+  }
+
+  /// «Лучший результат» поиска: может быть треком, альбомом, артистом.
+  static BrowseItem? cardShelf(dynamic renderer) {
+    if (renderer is! Map) return null;
+
+    final String title = _firstString(renderer, <List<String>>[
+          <String>['title', 'runs', 'text'],
+          <String>['title', 'simpleText'],
+        ]) ??
+        '';
+    if (title.isEmpty) return null;
+
+    // Трек: у элемента есть watchEndpoint с videoId.
+    final String? videoId = _firstString(renderer, <List<String>>[
+      <String>['onTap', 'watchEndpoint', 'videoId'],
+    ]);
+    if (videoId != null && videoId.isNotEmpty) {
+      final List<dynamic> runs =
+          traverseList(renderer, <String>['subtitle', 'runs']);
+      return TrackItem(Track(
+        id: videoId,
+        title: title,
+        artists: _artistsFromRuns(runs),
+        thumbnails: _thumbnails(renderer),
+        duration: _durationFromRuns(runs) ?? Duration.zero,
+      ));
+    }
+
+    // Иначе это страница: определяем тип по префиксу идентификатора.
+    final String browseId = _firstString(renderer, <List<String>>[
+          <String>['onTap', 'browseEndpoint', 'browseId'],
+          <String>['navigationEndpoint', 'browseEndpoint', 'browseId'],
+        ]) ??
+        '';
+    final String subtitle = _firstString(renderer, <List<String>>[
+          <String>['subtitle', 'runs', 'text'],
+        ]) ??
+        '';
+
+    if (browseId.startsWith('UC')) {
+      return ArtistItem(Artist(
+        id: browseId,
+        name: title,
+        thumbnails: _thumbnails(renderer),
+      ));
+    }
+    if (browseId.startsWith('MPRE')) {
+      return AlbumItem(Album(
+        id: browseId,
+        title: title,
+        artists: _artistsFromSubtitle(subtitle),
+        year: _extractYear(subtitle),
+        thumbnails: _thumbnails(renderer),
+      ));
+    }
+    return PlaylistItem(Playlist(
+      id: browseId,
+      title: title,
+      author: subtitle,
+      thumbnails: _thumbnails(renderer),
+    ));
+  }
+
+  /// Разбирает список элементов любого вида (треки и «плитки» вперемешку).
+  static List<BrowseItem> itemsOf(dynamic contents) {
+    final List<BrowseItem> items = <BrowseItem>[];
+    if (contents is! List) return items;
+
+    for (final dynamic item in contents) {
+      if (item is! Map) continue;
+
+      final dynamic responsive = item['musicResponsiveListItemRenderer'];
+      if (responsive != null) {
+        final BrowseItem? parsed = responsiveAny(responsive);
+        if (parsed != null) items.add(parsed);
+        continue;
+      }
+      final dynamic twoRow = item['musicTwoRowItemRenderer'];
+      if (twoRow != null) {
+        final BrowseItem? parsed = twoRowItem(twoRow);
+        if (parsed != null) items.add(parsed);
+      }
+    }
+    return items;
+  }
+
+  static List<ArtistRef> _artistsFromRuns(List<dynamic> runs) {
+    final List<ArtistRef> artists = <ArtistRef>[];
+    for (final dynamic run in runs) {
+      if (run is! Map) continue;
+      final String? name = textOf(run);
+      if (name == null || name.trim() == '•' || name.trim().isEmpty) continue;
+      final String? id = traverseString(run, <String>[
+        'navigationEndpoint',
+        'browseEndpoint',
+        'browseId',
+      ]);
+      if (id == null) continue;
+      artists.add(ArtistRef(name: name.trim(), id: id));
+    }
+    return artists;
+  }
+
+  static Duration? _durationFromRuns(List<dynamic> runs) {
+    for (final dynamic run in runs) {
+      final Duration? parsed = parseDurationText(textOf(run));
+      if (parsed != null) return parsed;
+    }
+    return null;
+  }
+
+  /// Секции главной страницы / раздела (в порядке отображения).
+  ///
+  /// Разметка главной и поиска отличается только обёртками, поэтому разбор
+  /// идёт общим кодом.
+  static List<BrowseSection> homeSections(dynamic response) =>
+      sectionsFrom(response);
 
   /// Текст заголовка страницы (для альбома, плейлиста, исполнителя).
   static String? pageTitle(dynamic response) {
@@ -347,42 +589,100 @@ class BrowseParser {
 
   static List<ArtistRef> _artistsFromColumns(List<dynamic> columns) {
     // Столбец №1 (индекс 1) — байлайн: «Исполнитель • Альбом • 3:45».
-    if (columns.length < 2) return const <ArtistRef>[];
-    final Map? column = columns[1] as Map?;
-    final dynamic runs = traverse(column, <String>[
-      'musicResponsiveListItemFlexColumnRenderer',
-      'text',
-      'runs',
-    ]);
-    if (runs is! List) return const <ArtistRef>[];
+    final List<dynamic> runs = _runsOfColumn(columns, 1);
+    if (runs.isEmpty) return const <ArtistRef>[];
 
     final List<ArtistRef> artists = <ArtistRef>[];
     for (final dynamic run in runs) {
       if (run is! Map) continue;
       final String? text = textOf(run);
-      if (text == null || text.trim().isEmpty) continue;
+      if (text == null) continue;
+
+      final String trimmed = text.trim();
+      if (trimmed.isEmpty) continue;
       // Разделители между сущностями — «•».
-      if (text.trim() == '•') continue;
-      final String? artistId = traverseString(run, <String>[
+      if (trimmed == '•') continue;
+      // Длительность и год исполнителями не являются.
+      if (parseDurationText(trimmed) != null) continue;
+      if (RegExp(r'^(19|20)\d{2}$').hasMatch(trimmed)) continue;
+      // Служебные подписи YouTube.
+      if (_artistStopWords.contains(trimmed.toLowerCase())) continue;
+
+      // Ссылка на исполнителя есть не всегда: часто это просто текст.
+      // Тогда тоже считаем его исполнителем — иначе имя теряется.
+      final String? browseId = traverseString(run, <String>[
         'navigationEndpoint',
         'browseEndpoint',
         'browseId',
       ]);
-      if (artistId == null) continue; // не ссылка — значит это альбом или длительность
-      artists.add(ArtistRef(name: text.trim(), id: artistId));
+      final String pageType = traverseString(run, <String>[
+            'navigationEndpoint',
+            'browseEndpoint',
+            'browseEndpointContextSupportedConfigs',
+            'browseEndpointContextMusicConfig',
+            'pageType',
+          ]) ??
+          '';
+
+      // Альбомы, плейлисты и прочие страницы — не исполнители.
+      if (_isNonArtistPage(browseId, pageType)) continue;
+
+      artists.add(ArtistRef(name: trimmed, id: browseId));
     }
     return artists;
   }
 
-  static AlbumRef? _albumFromColumns(List<dynamic> columns) {
-    if (columns.length < 2) return null;
-    final Map? column = columns[1] as Map?;
-    final dynamic runs = traverse(column, <String>[
+  /// Отличает страницу исполнителя от альбома, плейлиста и прочих сущностей.
+  static bool _isNonArtistPage(String? browseId, String pageType) {
+    if (pageType.contains('ALBUM') ||
+        pageType.contains('PLAYLIST') ||
+        pageType.contains('PODCAST') ||
+        pageType.contains('TRACK')) {
+      return true;
+    }
+    if (browseId == null || browseId.isEmpty) return false;
+    // Альбомы YouTube Music начинаются с MPRE, плейлисты — с VL/PL/RD.
+    return browseId.startsWith('MPRE') ||
+        browseId.startsWith('VL') ||
+        browseId.startsWith('PL') ||
+        browseId.startsWith('RD');
+  }
+
+  /// Достаёт список «runs» из столбца строки.
+  ///
+  /// Важно: берём именно `traverseList`, а не `traverse`. Обход ответов
+  /// «разворачивает» список на последнем шаге, поэтому `traverse` вернул бы
+  /// один элемент, а не весь список, и разбор молча терял бы данные.
+  static List<dynamic> _runsOfColumn(List<dynamic> columns, int index) {
+    if (columns.length <= index) return const <dynamic>[];
+    return traverseList(columns[index], <String>[
       'musicResponsiveListItemFlexColumnRenderer',
       'text',
       'runs',
     ]);
-    if (runs is! List) return null;
+  }
+
+  /// Слова, которые YouTube ставит на место исполнителя.
+  static const Set<String> _artistStopWords = <String>{
+    'композиция',
+    'видео',
+    'песня',
+    'трек',
+    'альбом',
+    'сингл',
+    'мини-альбом',
+    'сборник',
+    'подкаст',
+    'song',
+    'video',
+    'album',
+    'single',
+    'ep',
+  };
+
+  static AlbumRef? _albumFromColumns(List<dynamic> columns) {
+    final List<dynamic> runs = _runsOfColumn(columns, 1);
+    if (runs.isEmpty) return null;
 
     for (final dynamic run in runs) {
       if (run is! Map) continue;
@@ -401,13 +701,8 @@ class BrowseParser {
   }
 
   static Duration? _firstDuration(List<dynamic> columns) {
-    for (final dynamic column in columns) {
-      final dynamic runs = traverse(column, <String>[
-        'musicResponsiveListItemFlexColumnRenderer',
-        'text',
-        'runs',
-      ]);
-      if (runs is! List) continue;
+    for (int index = 0; index < columns.length; index++) {
+      final List<dynamic> runs = _runsOfColumn(columns, index);
       for (final dynamic run in runs) {
         final String? text = textOf(run);
         final Duration? parsed = parseDurationText(text);

@@ -17,8 +17,7 @@ void main() {
         'yt3.ggpht.com',
         'rr1---sn-4g5e6nez.googlevideo.com',
         'redirector.googlevideo.com',
-        'lh3.googleusercontent.com',
-      ]) {
+              ]) {
         expect(on.shouldFront(host), isTrue, reason: 'не подменяется: $host');
       }
     });
@@ -40,8 +39,16 @@ void main() {
       expect(on.shouldFront(FrontingConfig.defaultFrontHost), isFalse);
     });
 
-    test('при выключенной подмене ничего не меняется', () {
-      const FrontingConfig off = FrontingConfig();
+    test('подмена включена по умолчанию', () {
+      // Пользователю не нужно ничего включать: на заблокированной сети
+      // без этого приложение не работает.
+      const FrontingConfig byDefault = FrontingConfig();
+      expect(byDefault.enabled, isTrue);
+      expect(byDefault.shouldFront('music.youtube.com'), isTrue);
+    });
+
+    test('подмену можно выключить', () {
+      const FrontingConfig off = FrontingConfig(enabled: false);
       expect(off.shouldFront('music.youtube.com'), isFalse);
     });
 
@@ -53,10 +60,11 @@ void main() {
   });
 
   group('конфигурация обхода', () {
-    test('по умолчанию обход выключен', () {
+    test('по умолчанию включена подмена хоста', () {
       const AntiDpiConfig config = AntiDpiConfig();
-      expect(config.isEnabled, isFalse);
-      expect(config.isEnabled, isFalse);
+      expect(config.isEnabled, isTrue);
+      expect(config.fronting.enabled, isTrue);
+      expect(config.usesProxy, isFalse);
     });
 
     test('подмена хоста включается отдельно от прокси', () {
@@ -72,7 +80,6 @@ void main() {
         proxyHost: '',
       );
       expect(config.usesProxy, isFalse);
-      expect(config.isEnabled, isFalse);
     });
 
     test('SOCKS5 требует локального узла, HTTP — нет', () {

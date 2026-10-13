@@ -68,6 +68,57 @@ class _BypassScreenState extends ConsumerState<BypassScreen> {
       body: ListView(
         padding: const EdgeInsets.only(bottom: 32),
         children: <Widget>[
+          // --------------------------------------------------------- статус
+          Padding(
+            padding: const EdgeInsets.fromLTRB(16, 16, 16, 8),
+            child: Card(
+              color: config.isEnabled
+                  ? scheme.secondaryContainer
+                  : scheme.surfaceContainerHighest,
+              child: Padding(
+                padding: const EdgeInsets.all(16),
+                child: Row(
+                  children: <Widget>[
+                    Icon(
+                      config.isEnabled ? Icons.shield : Icons.shield_outlined,
+                      color: config.isEnabled
+                          ? scheme.onSecondaryContainer
+                          : scheme.onSurfaceVariant,
+                    ),
+                    const SizedBox(width: 12),
+                    Expanded(
+                      child: Column(
+                        crossAxisAlignment: CrossAxisAlignment.start,
+                        children: <Widget>[
+                          Text(
+                            config.isEnabled
+                                ? 'Обход работает — настраивать ничего не нужно'
+                                : 'Обход выключен',
+                            style: text.titleSmall?.copyWith(
+                              fontWeight: FontWeight.w700,
+                              color: config.isEnabled
+                                  ? scheme.onSecondaryContainer
+                                  : scheme.onSurfaceVariant,
+                            ),
+                          ),
+                          const SizedBox(height: 4),
+                          Text(
+                            _statusLine(config),
+                            style: text.bodySmall?.copyWith(
+                              color: config.isEnabled
+                                  ? scheme.onSecondaryContainer
+                                  : scheme.onSurfaceVariant,
+                            ),
+                          ),
+                        ],
+                      ),
+                    ),
+                  ],
+                ),
+              ),
+            ),
+          ),
+
           // ---------------------------------------------------- подмена хоста
           SwitchListTile(
             title: const Text('Подмена хоста (обход SNI)'),
@@ -322,6 +373,18 @@ class _BypassScreenState extends ConsumerState<BypassScreen> {
       username: _proxyUser.text.trim(),
       password: _proxyPassword.text,
     );
+  }
+
+  /// Короткая строка о том, что происходит сейчас.
+  String _statusLine(AntiDpiConfig config) {
+    if (config.usesProxy) {
+      return 'Прокси ${config.proxyKind.label} · ${config.proxyHost}:${config.proxyPort}';
+    }
+    if (config.fronting.enabled) {
+      return 'Включена по умолчанию. Данные идут через ${config.fronting.frontHost}. '
+          'Для звука нужен прокси или системный обход.';
+    }
+    return 'Ничего не используется: приложение ходит в сеть напрямую.';
   }
 
   Future<void> _runCheck() async {

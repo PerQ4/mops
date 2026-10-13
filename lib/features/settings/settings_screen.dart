@@ -283,11 +283,13 @@ class SettingsScreen extends ConsumerWidget {
   /// Подпись для пункта «Обход блокировок».
   String _bypassLabel(AppSettings settings) {
     final AntiDpiConfig config = settings.bypass;
-    final List<String> parts = <String>[];
-    if (config.fronting.enabled) parts.add('подмена хоста');
-    if (config.usesProxy) parts.add('прокси ${config.proxyKind.label}');
-    if (parts.isEmpty) return 'Выключено';
-    return parts.join(' · ');
+    if (config.usesProxy) {
+      return 'Прокси ${config.proxyKind.label} · ${config.proxyHost}:${config.proxyPort}';
+    }
+    if (config.fronting.enabled) {
+      return 'Включён автоматически · подмена хоста';
+    }
+    return 'Выключен';
   }
 
   /// Подпись для пункта «Масштаб интерфейса».

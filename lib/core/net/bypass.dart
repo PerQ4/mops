@@ -22,20 +22,27 @@ class BypassManager {
   static final BypassManager instance = BypassManager._();
 
   FragmentingRelay? _relay;
-  AntiDpiConfig _applied = const AntiDpiConfig();
+
+  /// Что применено сейчас. `null` — ещё ничего не применялось.
+  ///
+  /// Важно отличать «не применялось» от «применены настройки по умолчанию»:
+  /// иначе первый вызов `apply` с конфигурацией по умолчанию был бы пропущен
+  /// как «уже применённый», и обход не установился бы вовсе.
+  AntiDpiConfig? _applied;
 
   /// Что применяется сейчас.
-  AntiDpiConfig get applied => _applied;
+  AntiDpiConfig get applied => _applied ?? const AntiDpiConfig();
 
   /// Активен ли обход.
-  bool get isActive => _applied.fronting.enabled || _applied.usesProxy;
+  bool get isActive => _applied?.isEnabled ?? false;
 
   /// Порт локального узла (для SOCKS5), если он поднят.
   int? get relayPort => _relay?.port;
 
   /// Применяет конфигурацию. Можно вызывать повторно при смене настроек.
   Future<void> apply(AntiDpiConfig config) async {
-    if (_sameAs(config)) return;
+    final AntiDpiConfig? previous = _applied;
+    if (previous != null && _sameAs(previous, config)) return;
 
     // Снимаем прошлое состояние, чтобы не накладывать обходы друг на друга.
     await _teardown();
@@ -50,12 +57,12 @@ class BypassManager {
 
     if (config.usesProxy && config.proxyKind == ProxyKind.http) {
       // HTTP-прокси (в том числе CONNECT для HTTPS) dart:io умеет сам.
-      chain = _ProxyOverrides(_applied);
+      chain = _ProxyOverrides(config);
     } else if (config.usesProxy && config.proxyKind == ProxyKind.socks5) {
       // SOCKS5 dart:io не умеет — поднимаем локальный узел и ходим через него.
-      final FragmentingRelay relay = await FragmentingRelay.start(_applied);
+      final FragmentingRelay relay = await FragmentingRelay.start(config);
       _relay = relay;
-      chain = _SocksOverrides(_applied, relay.port);
+      chain = _SocksOverrides(config, relay.port);
     }
 
     if (config.fronting.enabled) {
@@ -65,15 +72,15 @@ class BypassManager {
     HttpOverrides.global = chain;
   }
 
-  bool _sameAs(AntiDpiConfig other) {
-    return _applied.fronting.enabled == other.fronting.enabled &&
-        _applied.fronting.frontHost == other.fronting.frontHost &&
-        _applied.proxyKind == other.proxyKind &&
-        _applied.proxyHost == other.proxyHost &&
-        _applied.proxyPort == other.proxyPort &&
-        _applied.proxyUsername == other.proxyUsername &&
-        _applied.proxyPassword == other.proxyPassword &&
-        _applied.fragmentation == other.fragmentation;
+  bool _sameAs(AntiDpiConfig a, AntiDpiConfig b) {
+    return a.fronting.enabled == b.fronting.enabled &&
+        a.fronting.frontHost == b.fronting.frontHost &&
+        a.proxyKind == b.proxyKind &&
+        a.proxyHost == b.proxyHost &&
+        a.proxyPort == b.proxyPort &&
+        a.proxyUsername == b.proxyUsername &&
+        a.proxyPassword == b.proxyPassword &&
+        a.fragmentation == b.fragmentation;
   }
 
   Future<void> _teardown() async {

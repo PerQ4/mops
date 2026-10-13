@@ -17,13 +17,16 @@ import 'dart:io';
 /// Приём называется domain fronting и не требует ни прокси, ни VPN.
 class FrontingConfig {
   const FrontingConfig({
-    this.enabled = false,
+    this.enabled = true,
     this.frontHost = defaultFrontHost,
   });
 
   /// Узел, имя которого не блокируется и который обслуживает Google.
   static const String defaultFrontHost = 'www.google.com';
 
+  /// Включено по умолчанию: на незаблокированной сети подмена безвредна,
+  /// а на заблокированной — без неё приложение не работает вовсе.
+  /// Пользователю не нужно ничего настраивать.
   final bool enabled;
   final String frontHost;
 
@@ -31,6 +34,8 @@ class FrontingConfig {
   ///
   /// Список намеренно узкий: подменять чужие домены нельзя — сертификат
   /// проверяется по имени фронта, поэтому подходят только узлы Google.
+  /// Исключение — `googleapis.com`: он не блокируется, а подмена через
+  /// `www.google.com` для него может не сработать (другой backend).
   static const Set<String> frontedSuffixes = <String>{
     'youtube.com',
     'youtu.be',
@@ -39,7 +44,6 @@ class FrontingConfig {
     'googlevideo.com',
     'googleusercontent.com',
     'youtube-nocookie.com',
-    'googleapis.com',
   };
 
   /// Нужно ли подменять хост для этого адреса.
@@ -398,12 +402,14 @@ abstract final class ConnectivityCheck {
   static Future<bool> _mediaReachable() async {
     SecureSocket? socket;
     try {
+      // Важно: `timeout` самого connect покрывает только установку TCP.
+      // Рукопожатие нужно ограничивать отдельно — иначе при блокировке
+      // (когда сервер просто не отвечает) ожидание будет бесконечным.
       socket = await SecureSocket.connect(
         mediaHost,
         443,
-        timeout: const Duration(seconds: 8),
         onBadCertificate: (X509Certificate _) => true,
-      );
+      ).timeout(const Duration(seconds: 8));
       return true;
     } on Object {
       return false;

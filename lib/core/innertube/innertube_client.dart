@@ -115,6 +115,41 @@ class InnerTubeClient {
   final String locale;
   final String region;
 
+  /// Cookie, полученные от YouTube (VISITOR_INFO1_LIVE, SOCS и прочие).
+  ///
+  /// Реальный веб-клиент их присылает, и YouTube отвечает более полной
+  /// разметкой. Без них, например, результаты поиска приходят «компактными»,
+  /// без имени исполнителя.
+  final Map<String, String> _cookies = <String, String>{};
+
+  String get _cookieHeader {
+    if (_cookies.isEmpty) return 'SOCS=CAI';
+    return _cookies.entries
+        .map((MapEntry<String, String> e) => '${e.key}=${e.value}')
+        .join('; ');
+  }
+
+  /// Запоминает cookie из ответа.
+  ///
+  /// Несколько значений приходят одной строкой, разделённой запятыми,
+  /// но `Expires` тоже содержит запятую — поэтому делим только перед
+  /// началом следующей пары «имя=значение».
+  void _captureCookies(http.BaseResponse response) {
+    final String? raw = response.headers['set-cookie'];
+    if (raw == null || raw.isEmpty) return;
+
+    for (final String part
+        in raw.split(RegExp(r',\s*(?=[A-Za-z0-9_\-]+=)'))) {
+      final String pair = part.split(';').first.trim();
+      final int eq = pair.indexOf('=');
+      if (eq <= 0) continue;
+      final String name = pair.substring(0, eq).trim();
+      final String value = pair.substring(eq + 1).trim();
+      if (name.isEmpty) continue;
+      _cookies[name] = value;
+    }
+  }
+
   /// Текущая стратегия авторизации.
   AuthProvider auth;
 
@@ -139,9 +174,10 @@ class InnerTubeClient {
         'Accept':
             'text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8',
         'Accept-Language': '$locale,en;q=0.9',
-        'Cookie': 'SOCS=CAI',
+        'Cookie': _cookieHeader,
       },
-    );
+    ).timeout(const Duration(seconds: 20));
+    _captureCookies(res);
 
     if (res.statusCode != 200) {
       throw InnerTubeException(
@@ -222,6 +258,7 @@ class InnerTubeClient {
       'X-YouTube-Client-Version': cfg.clientVersion,
       'X-YouTube-Utc-Offset':
           (-DateTime.now().timeZoneOffset.inMinutes).toString(),
+      'Cookie': _cookieHeader,
     };
 
     if (authenticated) {
@@ -236,6 +273,8 @@ class InnerTubeClient {
     final http.Response res = await _http
         .post(uri, headers: headers, body: jsonEncode(payload))
         .timeout(const Duration(seconds: 30));
+
+    _captureCookies(res);
 
     if (res.statusCode < 200 || res.statusCode >= 300) {
       throw InnerTubeException(

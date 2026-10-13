@@ -218,13 +218,11 @@ void main() {
   });
 
   // Тёмная тема лучше показывает Expressive-палитру.
-  // `bypassProbed` выставлен, чтобы тест не ходил в сеть за автопроверкой.
   const AppSettings settings = AppSettings(
     themeMode: ThemeModePreference.dark,
     colorSource: ColorSource.seed,
     seedColorIndex: 1,
     useMaterialExpressive: true,
-    bypassProbed: true,
   );
 
   /// Собирает приложение с подставными данными и указанным размером окна.
@@ -248,6 +246,8 @@ void main() {
           initialSettingsProvider.overrideWithValue(settings),
           initialSessionProvider.overrideWithValue(null),
           desktopScaleProvider.overrideWithValue(DesktopScaleInfo.none),
+          // Проверка обхода ходит в сеть — в тестах она не нужна.
+          bypassAutoVerifyProvider.overrideWithValue(false),
           audioEngineProvider.overrideWithValue(_FakeAudioEngine()),
           homeSectionsProvider.overrideWith((ref) => _fakeHome()),
           exploreSectionsProvider.overrideWith((ref) => _fakeHome()),

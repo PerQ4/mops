@@ -68,7 +68,6 @@ class AppSettings {
     this.lastSpeed = 1.0,
     this.uiScale = 0.0,
     this.bypass = const AntiDpiConfig(),
-    this.bypassProbed = false,
   });
 
   final ThemeModePreference themeMode;
@@ -92,9 +91,6 @@ class AppSettings {
   /// Обход блокировок провайдера (подмена хоста, прокси).
   final AntiDpiConfig bypass;
 
-  /// Выполнялась ли автопроверка необходимости обхода.
-  final bool bypassProbed;
-
   bool get isUiScaleAuto => uiScale <= 0;
 
   int get safeSeedIndex =>
@@ -117,7 +113,6 @@ class AppSettings {
     double? lastSpeed,
     double? uiScale,
     AntiDpiConfig? bypass,
-    bool? bypassProbed,
   }) {
     return AppSettings(
       themeMode: themeMode ?? this.themeMode,
@@ -136,7 +131,6 @@ class AppSettings {
       lastSpeed: lastSpeed ?? this.lastSpeed,
       uiScale: uiScale ?? this.uiScale,
       bypass: bypass ?? this.bypass,
-      bypassProbed: bypassProbed ?? this.bypassProbed,
     );
   }
 
@@ -157,7 +151,6 @@ class AppSettings {
         'lastSpeed': lastSpeed,
         'uiScale': uiScale,
         'bypass': bypass.toJson(),
-        'bypassProbed': bypassProbed,
       };
 
   String encode() => jsonEncode(toJson());
@@ -182,7 +175,6 @@ class AppSettings {
       bypass: json['bypass'] is Map<String, dynamic>
           ? AntiDpiConfig.fromJson(json['bypass'] as Map<String, dynamic>)
           : const AntiDpiConfig(),
-      bypassProbed: json['bypassProbed'] as bool? ?? false,
     );
   }
 

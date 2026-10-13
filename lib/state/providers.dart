@@ -129,10 +129,6 @@ class SettingsController extends Notifier<AppSettings> {
         ),
       );
 
-  /// Отмечает, что автопроверка обхода выполнена.
-  Future<void> markBypassProbed() =>
-      update((AppSettings s) => s.copyWith(bypassProbed: true));
-
   Future<void> setProxy({
     ProxyKind? kind,
     String? host,
@@ -192,6 +188,11 @@ final Provider<AntiDpiConfig> bypassProvider = Provider<AntiDpiConfig>(
 final Provider<bool> bypassActiveProvider = Provider<bool>(
   (ref) => ref.watch(bypassProvider).isEnabled,
 );
+
+/// Нужно ли при запуске проверять работоспособность обхода.
+///
+/// В тестах выключается: проверка ходит в сеть, а тестам нужна предсказуемость.
+final Provider<bool> bypassAutoVerifyProvider = Provider<bool>((ref) => true);
 
 /// ---------------------------------------------------------------------------
 /// Сеть и аудио

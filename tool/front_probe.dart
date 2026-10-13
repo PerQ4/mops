@@ -1,21 +1,22 @@
-// Сквозная проверка обхода блокировок настоящим клиентом приложения.
+// Сквозная проверка обхода блокировок настоящим кодом приложения.
 //
-// Запуск: dart run tool/front_probe.dart
+// Запуск: dart run tool/front_probe.dart [запрос]
 //
-// Проверяет именно тот код, что работает в приложении: InnerTubeClient
-// с включённым обходом должен получить конфигурацию, главную страницу,
-// результаты поиска и текст песни.
+// Проверяет ровно тот путь, которым пользуется интерфейс: InnerTubeClient,
+// разбор ответов и слой каталога. Запускается обычным `dart run`, без
+// тестовой подмены сети, поэтому результат отражает реальность.
 import 'dart:io';
 
 import 'package:mops/core/innertube/innertube_client.dart';
-import 'package:mops/core/innertube/renderer.dart';
 import 'package:mops/core/net/anti_dpi.dart';
 import 'package:mops/core/net/bypass.dart';
 import 'package:mops/core/net/fronting.dart';
+import 'package:mops/data/models/models.dart';
+import 'package:mops/data/sources/catalog_source.dart';
 
-const String _apiVersionFallback = '1.20240101.01.00';
+Future<void> main(List<String> args) async {
+  final String query = args.isNotEmpty ? args.first : 'radiohead';
 
-Future<void> main() async {
   stdout.writeln('=== Диагностика ===');
   final ConnectivityReport report = await ConnectivityCheck.run();
   stdout.writeln('  ${report.ok ? "✓" : "✗"} ${report.summary}');
@@ -23,98 +24,63 @@ Future<void> main() async {
     stdout.writeln('    · $line');
   }
 
-  stdout.writeln('\n=== Включаем обход (подмена хоста) ===');
-  await BypassManager.instance.apply(
-    const AntiDpiConfig(fronting: FrontingConfig(enabled: true)),
-  );
-  stdout.writeln('  обход активен: ${BypassManager.instance.isActive}');
+  stdout.writeln('\n=== Настройки по умолчанию ===');
+  const AntiDpiConfig defaults = AntiDpiConfig();
+  stdout.writeln('  обход включён по умолчанию: ${defaults.isEnabled}');
+  await BypassManager.instance.apply(defaults);
+  stdout.writeln('  применён                  : ${BypassManager.instance.isActive}');
 
   final InnerTubeClient client = InnerTubeClient(locale: 'ru', region: 'RU');
+  final CatalogSource catalog = CatalogSource(client);
 
   try {
-    stdout.writeln('\n=== Конфигурация InnerTube ===');
-    final InnerTubeConfig config = await client.bootstrap();
-    stdout.writeln('  ключ         : ${config.apiKey.substring(0, 10)}…');
-    stdout.writeln('  clientVersion: ${config.clientVersion}');
-    stdout.writeln('  visitorData  : ${config.visitorData.isEmpty ? "нет" : "получен"}');
-
     stdout.writeln('\n=== Главная страница ===');
-    final Map<String, dynamic> home = await client.browse('FEmusic_home');
-    final List<dynamic> carousels =
-        traverseList(home, <String>['musicCarouselShelfRenderer']);
-    final List<dynamic> shelves =
-        traverseList(home, <String>['musicShelfRenderer']);
-    final List<dynamic> tiles =
-        traverseList(home, <String>['musicTwoRowItemRenderer']);
-    stdout.writeln('  каруселей: ${carousels.length}, '
-        'полок: ${shelves.length}, плиток: ${tiles.length}');
-    final List<String> titles = traverseStrings(
-      home,
-      <String>[
-        'musicCarouselShelfRenderer',
-        'header',
-        'musicCarouselShelfHeaderRenderer',
-        'title',
-        'runs',
-        'text',
-      ],
-    );
-    for (final String title in titles.take(5)) {
-      stdout.writeln('    • $title');
+    final List<BrowseSection> sections = await catalog.home();
+    stdout.writeln('  секций: ${sections.length}');
+    for (final BrowseSection section in sections.take(6)) {
+      stdout.writeln('    • ${section.title} — ${section.items.length}');
+    }
+    if (sections.isEmpty) {
+      stdout.writeln('  ПУСТО — вероятна ошибка');
+      exitCode = 1;
     }
 
-    stdout.writeln('\n=== Поиск «radiohead» ===');
-    final Map<String, dynamic> search = await client.search(
-      'radiohead',
-      params: 'Eg-KAQwIARAAGAAgACgAMABqChAEEAMQCRAFEAo=',
-    );
-    final List<dynamic> songs =
-        traverseList(search, <String>['musicResponsiveListItemRenderer']);
-    stdout.writeln('  найдено треков: ${songs.length}');
-    for (final dynamic song in songs.take(3)) {
-      final String? title = traverseString(song, <String>[
-        'flexColumns',
-        'musicResponsiveListItemFlexColumnRenderer',
-        'text',
-        'runs',
-        'text',
-      ]);
-      final String? videoId =
-          traverseString(song, <String>['playlistItemData', 'videoId']) ??
-              traverseString(song, <String>[
-                'overlay',
-                'musicItemThumbnailOverlayRenderer',
-                'content',
-                'musicPlayButtonRenderer',
-                'playNavigationEndpoint',
-                'watchEndpoint',
-                'videoId',
-              ]);
-      stdout.writeln('    • $title  [$videoId]');
+    stdout.writeln('\n=== Поиск «$query» ===');
+    final List<BrowseSection> found = await catalog.search(query);
+    stdout.writeln('  секций: ${found.length}');
+    int tracks = 0;
+    for (final BrowseSection section in found.take(6)) {
+      final int trackCount =
+          section.items.whereType<TrackItem>().length;
+      tracks += trackCount;
+      stdout.writeln('    • ${section.title} — ${section.items.length} '
+          '(треков: $trackCount)');
+    }
+    final List<Track> allTracks = found
+        .expand((BrowseSection s) => s.items.whereType<TrackItem>())
+        .map((TrackItem item) => item.track)
+        .toList();
+    for (final Track track in allTracks.take(5)) {
+      stdout.writeln('      – ${track.title} · ${track.artistLine} '
+          '[${track.id}]');
+    }
+    if (tracks == 0) {
+      stdout.writeln('  треков не найдено — вероятна ошибка');
+      exitCode = 1;
     }
 
     stdout.writeln('\n=== Текст песни ===');
-    if (songs.isNotEmpty) {
-      final String? videoId =
-          traverseString(songs.first, <String>['playlistItemData', 'videoId']) ??
-              traverseString(songs.first, <String>[
-                'overlay',
-                'musicItemThumbnailOverlayRenderer',
-                'content',
-                'musicPlayButtonRenderer',
-                'playNavigationEndpoint',
-                'watchEndpoint',
-                'videoId',
-              ]);
-      if (videoId != null) {
-        final Map<String, dynamic> next = await client.next(videoId);
-        final List<dynamic> tabs =
-            traverseList(next, <String>['tabs', 'tabRenderer']);
-        stdout.writeln('  вкладок в «далее»: ${tabs.length}');
-      }
+    if (allTracks.isNotEmpty) {
+      final Lyrics lyrics = await catalog.lyrics(allTracks.first.id);
+      stdout.writeln('  синхронизирован: ${lyrics.isSynced}, '
+          'пусто: ${lyrics.isEmpty}');
     }
 
-    stdout.writeln('\nИТОГ: приложение получает данные через обход.');
+    stdout.writeln(
+      exitCode == 0
+          ? '\nИТОГ: приложение получает данные через обход без настройки.'
+          : '\nИТОГ: что-то не работает.',
+    );
   } on Object catch (error, stack) {
     stdout.writeln('\nОШИБКА: $error');
     stdout.writeln(stack.toString().split('\n').take(5).join('\n'));
@@ -123,8 +89,5 @@ Future<void> main() async {
     client.dispose();
     await BypassManager.instance.dispose();
   }
-
-  // Используется ниже как запасное значение версии клиента.
-  stdout.writeln('(запасная версия клиента: $_apiVersionFallback)');
   exit(exitCode);
 }
