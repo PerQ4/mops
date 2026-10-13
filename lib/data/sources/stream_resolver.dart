@@ -5,6 +5,7 @@ import 'package:http/http.dart' as http;
 import 'package:youtube_explode_dart/youtube_explode_dart.dart';
 
 import '../local/app_settings.dart';
+import 'youtube_clients.dart';
 
 /// HTTP-клиент YouTube с добавленной авторизацией.
 ///
@@ -124,8 +125,10 @@ class YoutubeExplodeResolver implements StreamResolver {
     if (cached != null && !cached.isExpired) return cached;
 
     try {
-      final StreamManifest manifest =
-          await _client.videos.streamsClient.getManifest(videoId);
+      // Пробуем клиенты, которым не нужен ни вход, ни PO-токен: у клиента
+      // по умолчанию YouTube всё чаще их требует.
+      final StreamManifest manifest = await _client.videos.streamsClient
+          .getManifest(videoId, ytClients: YoutubeClients.playbackOrder());
 
       final List<AudioOnlyStreamInfo> audio = manifest.audioOnly.toList();
       if (audio.isEmpty) {

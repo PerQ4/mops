@@ -235,6 +235,7 @@ class InnerTubeClient {
     Map<String, dynamic> body = const <String, dynamic>{},
     Map<String, String> query = const <String, String>{},
     bool authenticated = false,
+    Map<String, String> extraHeaders = const <String, String>{},
   }) async {
     final InnerTubeConfig cfg = await bootstrap();
 
@@ -247,7 +248,7 @@ class InnerTubeClient {
       },
     );
 
-    final Map<String, String> headers = <String, String>{
+    final Map<String, String> built = <String, String>{
       'User-Agent': _userAgent,
       'Accept': '*/*',
       'Accept-Language': '$locale,en;q=0.9',
@@ -260,6 +261,10 @@ class InnerTubeClient {
           (-DateTime.now().timeZoneOffset.inMinutes).toString(),
       'Cookie': _cookieHeader,
     };
+
+    // Дополнительные заголовки вызывающего перекрывают стандартные: так можно
+    // подставить профиль другого клиента YouTube.
+    final Map<String, String> headers = <String, String>{...built, ...extraHeaders};
 
     if (authenticated) {
       headers.addAll(auth.headers);
