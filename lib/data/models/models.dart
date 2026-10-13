@@ -1,5 +1,7 @@
 import 'package:meta/meta.dart';
 
+import '../../core/utils/artwork_urls.dart';
+
 /// Обложка в конкретном размере.
 @immutable
 class Thumbnail {
@@ -98,6 +100,24 @@ class Track {
       artists.isEmpty ? 'Неизвестный исполнитель' : artists.map((ArtistRef a) => a.name).join(', ');
 
   String? get artwork => thumbnails.best;
+
+  /// Крупная обложка для открытого вида: размер переписывается в адресе,
+  /// поэтому картинка не растягивается из мелкого превью.
+  String? artworkLarge(int size) => artworkAt(size);
+
+  /// Обложка запрошенного размера.
+  String? artworkAt(int size) {
+    final String? url = thumbnails.best;
+    if (url == null) return null;
+    return upgradeArtwork(url, size);
+  }
+
+  /// Запасные варианты — если максимального превью у видео нет.
+  List<String> artworkFallbacks(int size) {
+    final String? url = thumbnails.best;
+    if (url == null) return const <String>[];
+    return artworkVariants(url, size);
+  }
 
   Track copyWith({bool? played}) => Track(
         id: id,

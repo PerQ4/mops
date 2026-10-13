@@ -3,16 +3,18 @@ import 'dart:io';
 import 'package:cached_network_image/cached_network_image.dart';
 import 'package:flutter/material.dart';
 
-import '../data/models/models.dart';
 
-/// Обложка с дисковым кэшем и аккуратным плейсхолдером.
+/// Обложка с кэшем, заглушкой и запасными ссылками.
 ///
-/// Единственное место, где приложение знает про `cached_network_image` —
-/// при необходимости бэкенд кэша меняется здесь.
-class Artwork extends StatelessWidget {
+/// Запасные ссылки важны: у части видео нет максимального превью
+/// (`maxresdefault`), и сервер отвечает 404. Без отката такая обложка
+/// показывалась бы заглушкой, поэтому при ошибке виджет пробует следующий
+/// вариант из списка — от большего к меньшему.
+class Artwork extends StatefulWidget {
   const Artwork({
     super.key,
     required this.url,
+    this.fallbacks = const <String>[],
     this.size,
     this.width,
     this.height,
@@ -22,95 +24,104 @@ class Artwork extends StatelessWidget {
     this.icon,
   });
 
-  /// URL обложки; `null` — показываем заглушку.
+  /// Основная ссылка; `null` — показываем заглушку.
   final String? url;
 
-  /// Квадратная сторона (если не заданы отдельные width/height).
+  /// Варианты на случай, если основная ссылка недоступна.
+  final List<String> fallbacks;
+
   final double? size;
   final double? width;
   final double? height;
-
-  /// Скругление. По умолчанию — «мягкий квадрат» из темы.
   final BorderRadius? radius;
   final BoxFit fit;
   final Object? heroTag;
-
-  /// Иконка-заглушка (для плейлистов/артистов уместна другая).
   final IconData? icon;
 
-  double? get _w => width ?? size;
-  double? get _h => height ?? size;
+  /// Все ссылки по порядку: основная и запасные, начиная с текущей.
+  List<String> get _variants => <String>[
+        if (url != null && url!.isNotEmpty) url!,
+        ...fallbacks.where((String f) => f.isNotEmpty && f != url),
+      ];
+
+  @override
+  State<Artwork> createState() => _ArtworkState();
+}
+
+class _ArtworkState extends State<Artwork> {
+  /// Индекс текущей пробуемой ссылки.
+  int _attempt = 0;
+
+  @override
+  void didUpdateWidget(covariant Artwork oldWidget) {
+    super.didUpdateWidget(oldWidget);
+    // Сменилась обложка — начинаем пробовать заново с первой ссылки.
+    if (oldWidget.url != widget.url) _attempt = 0;
+  }
 
   @override
   Widget build(BuildContext context) {
     final ColorScheme scheme = Theme.of(context).colorScheme;
-    final BorderRadius shape = radius ?? BorderRadius.circular(12);
+    final BorderRadius shape =
+        widget.radius ?? BorderRadius.circular(12);
+    final double? w = widget.width ?? widget.size;
+    final double? h = widget.height ?? widget.size;
+
+    final List<String> variants = widget._variants;
+    final bool hasImage = variants.isNotEmpty && _attempt < variants.length;
 
     Widget image = ClipRRect(
       borderRadius: shape,
-      child: (url == null || url!.isEmpty)
-          ? _placeholder(scheme)
-          : CachedNetworkImage(
-              imageUrl: url!,
-              width: _w,
-              height: _h,
-              fit: fit,
-              fadeInDuration: const Duration(milliseconds: 220),
-              placeholder: (BuildContext context, String url) =>
+      child: hasImage
+          ? CachedNetworkImage(
+              imageUrl: variants[_attempt],
+              width: w,
+              height: h,
+              fit: widget.fit,
+              fadeInDuration: const Duration(milliseconds: 150),
+              placeholder: (BuildContext context, String _) =>
                   _placeholder(scheme),
-              errorWidget: (BuildContext context, String url, Object error) =>
-                  _placeholder(scheme, broken: true),
-            ),
+              errorWidget: (BuildContext context, String url, Object error) {
+                // Переходим к следующему варианту, если он есть.
+                if (_attempt + 1 < variants.length) {
+                  WidgetsBinding.instance.addPostFrameCallback((_) {
+                    if (mounted) setState(() => _attempt++);
+                  });
+                }
+                // Все варианты исчерпаны — вот это уже «битая картинка».
+                return _placeholder(
+                  scheme,
+                  broken: _attempt + 1 >= variants.length,
+                );
+              },
+            )
+          // Ссылки нет вовсе — это не «битая картинка», а обычная заглушка.
+          : _placeholder(scheme),
     );
 
-    if (heroTag != null) {
-      image = Hero(tag: heroTag!, child: image);
+    if (widget.heroTag != null) {
+      image = Hero(tag: widget.heroTag!, child: image);
     }
     return image;
   }
 
   Widget _placeholder(ColorScheme scheme, {bool broken = false}) {
+    final double side = widget.size ?? widget.width ?? widget.height ?? 48;
     return Container(
-      width: _w,
-      height: _h,
+      width: widget.width ?? widget.size,
+      height: widget.height ?? widget.size,
       color: scheme.surfaceContainerHighest,
       alignment: Alignment.center,
       child: Icon(
-        broken ? Icons.broken_image_outlined : (icon ?? Icons.music_note),
-        size: (_w ?? _h ?? 48) * 0.4,
+        broken ? Icons.broken_image_outlined : (widget.icon ?? Icons.music_note),
+        size: side * 0.36,
         color: scheme.onSurfaceVariant,
       ),
     );
   }
 }
 
-/// Обложка трека с учётом размера в списке.
-class TrackArtwork extends StatelessWidget {
-  const TrackArtwork({
-    super.key,
-    required this.track,
-    this.size = 52,
-    this.radius = 12,
-  });
-
-  final Track track;
-  final double size;
-  final double radius;
-
-  @override
-  Widget build(BuildContext context) {
-    return Artwork(
-      url: track.thumbnails.sized((size * 2).round()),
-      size: size,
-      radius: BorderRadius.circular(radius),
-    );
-  }
-}
-
-/// Открывает изображение так, чтобы из него можно было собрать палитру.
-///
-/// Возвращает `ImageProvider` для `ColorScheme.fromImageProvider`.
-/// Поддерживает и сетевые обложки, и локальные файлы.
+/// Приводит ссылку к `ImageProvider` — например, для палитры из обложки.
 ImageProvider artworkProvider(String url) {
   if (url.startsWith('http://') || url.startsWith('https://')) {
     return CachedNetworkImageProvider(url);

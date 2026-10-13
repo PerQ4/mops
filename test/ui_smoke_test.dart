@@ -18,7 +18,7 @@ import 'package:mops/core/theme/seed_colors.dart';
 import 'package:mops/core/theme/ui_scaler.dart';
 import 'package:mops/data/local/app_settings.dart';
 import 'package:mops/data/models/models.dart';
-import 'package:mops/features/player/now_playing_panel.dart';
+import 'package:mops/features/player/floating_dock.dart';
 import 'package:mops/features/player/now_playing_screen.dart';
 import 'package:mops/features/settings/settings_screen.dart';
 import 'package:mops/features/shell/app_shell.dart';
@@ -270,8 +270,8 @@ void main() {
     expect(find.byType(NavigationRail), findsOneWidget);
     // На широком экране нижней навигации нет — её заменяет боковая.
     expect(find.byType(NavigationBar), findsNothing);
-    // И плеер показан постоянно, а не отдельным экраном.
-    expect(find.byType(NowPlayingPanel), findsOneWidget);
+    // Островок есть всегда, но без трека он ничего не показывает.
+    expect(find.byType(FloatingDock), findsOneWidget);
     // Треки идут списком, а не каруселью.
     expect(find.text('Let It Happen'), findsWidgets);
 
@@ -287,7 +287,8 @@ void main() {
     expect(tester.takeException(), isNull);
     expect(find.byType(NavigationBar), findsOneWidget);
     expect(find.byType(NavigationRail), findsNothing);
-    expect(find.byType(NowPlayingPanel), findsNothing);
+    // Островок парит над нижней навигацией.
+    expect(find.byType(FloatingDock), findsOneWidget);
 
     await expectLater(
       find.byType(MaterialApp),
@@ -295,7 +296,7 @@ void main() {
     );
   });
 
-  testWidgets('Панель плеера показывает очередь и качество потока',
+  testWidgets('Островок показывает трек и раскрывает очередь',
       (WidgetTester tester) async {
     await pump(
       tester,
@@ -305,16 +306,22 @@ void main() {
     );
 
     expect(tester.takeException(), isNull);
-    expect(find.byType(NowPlayingPanel), findsOneWidget);
-    // Название трека и качество потока из состояния плеера.
+    expect(find.byType(FloatingDock), findsOneWidget);
     expect(find.text('Everything In Its Right Place'), findsWidgets);
-    expect(find.text('WEBM 147'), findsOneWidget);
-    // Под управлением по умолчанию — очередь.
-    expect(find.text('Очередь'), findsWidgets);
 
     await expectLater(
       find.byType(MaterialApp),
-      matchesGoldenFile('goldens/03_player_panel.png'),
+      matchesGoldenFile('goldens/03_dock.png'),
+    );
+
+    // Панель очереди растёт вверх из островка и не сдвигает содержимое.
+    await tester.tap(find.byIcon(Icons.queue_music));
+    await tester.pumpAndSettle();
+    expect(tester.takeException(), isNull);
+
+    await expectLater(
+      find.byType(MaterialApp),
+      matchesGoldenFile('goldens/04_dock_queue.png'),
     );
   });
 
@@ -330,7 +337,7 @@ void main() {
 
     await expectLater(
       find.byType(MaterialApp),
-      matchesGoldenFile('goldens/04_settings.png'),
+      matchesGoldenFile('goldens/05_settings.png'),
     );
   });
 
@@ -347,7 +354,7 @@ void main() {
 
     await expectLater(
       find.byType(MaterialApp),
-      matchesGoldenFile('goldens/05_now_playing.png'),
+      matchesGoldenFile('goldens/06_now_playing.png'),
     );
   });
 
@@ -361,7 +368,7 @@ void main() {
     expect(tester.takeException(), isNull);
     await expectLater(
       find.byType(MaterialApp),
-      matchesGoldenFile('goldens/06_settings_wide.png'),
+      matchesGoldenFile('goldens/07_settings_wide.png'),
     );
   });
 

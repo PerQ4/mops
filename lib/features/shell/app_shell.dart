@@ -7,8 +7,7 @@ import '../common/navigation.dart';
 import '../explore/explore_screen.dart';
 import '../home/home_screen.dart';
 import '../library/library_screen.dart';
-import '../player/now_playing_panel.dart';
-import '../player/player_bar.dart';
+import '../player/floating_dock.dart';
 import '../search/search_screen.dart';
 
 /// Разделы верхнего уровня.
@@ -27,14 +26,12 @@ enum ShellDestination {
 
 /// Каркас приложения.
 ///
-/// Раскладок ровно две, и переключение происходит в одной точке:
+/// Плеер — плавающий островок поверх содержимого, он не занимает место в
+/// раскладке. Поэтому переключение разделов, открытие очереди и смена
+/// раскладки ничего не сдвигают: меняется только навигация.
 ///
-///  * **узкая** — нижняя навигация и компактная панель плеера над ней;
-///  * **широкая** — боковая навигация и постоянная панель плеера справа.
-///
-/// Ширина боковой панели фиксирована, поэтому при изменении размера окна
-/// она не «дёргается». Экраны живут в [IndexedStack] — позиция прокрутки и
-/// загруженные данные сохраняются при переключении разделов.
+///  * **узкая** — нижняя навигация, островок парит над ней;
+///  * **широкая** — боковая навигация фиксированной ширины, островок внизу.
 class AppShell extends ConsumerStatefulWidget {
   const AppShell({super.key});
 
@@ -60,6 +57,17 @@ class _AppShellState extends ConsumerState<AppShell> {
       LibraryScreen(),
     ];
 
+    // Островок лежит поверх содержимого и не участвует в его раскладке.
+    final Widget content = Stack(
+      children: <Widget>[
+        IndexedStack(index: _index, children: pages),
+        const Align(
+          alignment: Alignment.bottomCenter,
+          child: FloatingDock(),
+        ),
+      ],
+    );
+
     if (expanded) {
       return Scaffold(
         body: Row(
@@ -70,39 +78,25 @@ class _AppShellState extends ConsumerState<AppShell> {
               extended: AppLayout.useExtendedRail(width),
             ),
             const VerticalDivider(width: 1),
-            Expanded(
-              child: IndexedStack(index: _index, children: pages),
-            ),
-            const VerticalDivider(width: 1),
-            const SizedBox(
-              width: AppLayout.playerPanelWidth,
-              child: NowPlayingPanel(),
-            ),
+            Expanded(child: content),
           ],
         ),
       );
     }
 
     return Scaffold(
-      body: IndexedStack(index: _index, children: pages),
-      bottomNavigationBar: Column(
-        mainAxisSize: MainAxisSize.min,
-        children: <Widget>[
-          const PlayerBar(),
-          NavigationBar(
-            height: AppLayout.bottomNavHeight,
-            selectedIndex: _index,
-            onDestinationSelected: (int value) =>
-                setState(() => _index = value),
-            destinations: <NavigationDestination>[
-              for (final ShellDestination d in ShellDestination.values)
-                NavigationDestination(
-                  icon: Icon(d.icon),
-                  selectedIcon: Icon(d.selectedIcon),
-                  label: d.label,
-                ),
-            ],
-          ),
+      body: content,
+      bottomNavigationBar: NavigationBar(
+        height: AppLayout.bottomNavHeight,
+        selectedIndex: _index,
+        onDestinationSelected: (int value) => setState(() => _index = value),
+        destinations: <NavigationDestination>[
+          for (final ShellDestination d in ShellDestination.values)
+            NavigationDestination(
+              icon: Icon(d.icon),
+              selectedIcon: Icon(d.selectedIcon),
+              label: d.label,
+            ),
         ],
       ),
     );
@@ -128,7 +122,8 @@ class _NavigationRail extends StatelessWidget {
       minWidth: AppLayout.railWidth,
       minExtendedWidth: AppLayout.railExtendedWidth,
       extended: extended,
-      labelType: extended ? NavigationRailLabelType.none : NavigationRailLabelType.all,
+      labelType:
+          extended ? NavigationRailLabelType.none : NavigationRailLabelType.all,
       selectedIndex: index,
       onDestinationSelected: onSelect,
       destinations: <NavigationRailDestination>[

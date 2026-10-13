@@ -14,7 +14,7 @@ BINARY="$PROJECT/build/linux/x64/release/bundle/mops"
 if [ "${1:-}" = "release" ]; then
   if [ ! -x "$BINARY" ]; then
     echo "Релиза ещё нет — собираю…"
-    (cd "$PROJECT" && "$FLUTTER_BIN" build linux --release)
+    (cd "$PROJECT" && "$FLUTTER_BIN" build linux --release --no-tree-shake-icons)
   fi
   exec "$BINARY"
 fi
@@ -26,4 +26,4 @@ if [ ! -x "$FLUTTER_BIN" ]; then
 fi
 
 cd "$PROJECT"
-exec "$FLUTTER_BIN" run -d linux
+exec "$FLUTTER_BIN" run -d linux --no-tree-shake-icons

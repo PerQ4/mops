@@ -19,11 +19,28 @@ class QueueList extends ConsumerWidget {
 
   @override
   Widget build(BuildContext context, WidgetRef ref) {
-    final PlayerUiState player = ref.watch(playerControllerProvider);
+    // Следим только за составом очереди и текущим треком. Позиция
+    // воспроизведения меняется несколько раз в секунду, и если смотреть на
+    // неё, весь список перестраивался бы на каждом тике — это и подтормаживало.
+    final (List<Track> queue, int currentIndex, bool isPlaying) = ref.watch(
+      playerControllerProvider.select(
+        (PlayerUiState s) => (s.queue, s.index, s.isPlaying),
+      ),
+    );
     final PlayerController controller =
         ref.read(playerControllerProvider.notifier);
 
-    if (player.queue.isEmpty) {
+    final Track? current = (currentIndex >= 0 && currentIndex < queue.length)
+        ? queue[currentIndex]
+        : null;
+    final List<Track> upNext = (currentIndex < 0 || queue.isEmpty)
+        ? queue
+        : queue.sublist(currentIndex + 1);
+    final List<Track> played = currentIndex <= 0
+        ? const <Track>[]
+        : queue.sublist(0, currentIndex);
+
+    if (queue.isEmpty) {
       return const EmptyState(
         icon: Icons.queue_music,
         title: 'Очередь пуста',
@@ -31,8 +48,7 @@ class QueueList extends ConsumerWidget {
       );
     }
 
-    final List<Track> upNext = player.upNext;
-    final int playedCount = player.played.length;
+    final int playedCount = played.length;
 
     return CustomScrollView(
       controller: scrollController,
@@ -66,13 +82,13 @@ class QueueList extends ConsumerWidget {
           ),
         ),
 
-        if (player.current != null) ...<Widget>[
+        if (current != null) ...<Widget>[
           const SliverToBoxAdapter(child: _GroupLabel('Сейчас играет')),
           SliverToBoxAdapter(
             child: TrackTile(
-              track: player.current!,
+              track: current,
               isCurrent: true,
-              isPlaying: player.isPlaying,
+              isPlaying: isPlaying,
               onTap: () {},
             ),
           ),
@@ -91,7 +107,7 @@ class QueueList extends ConsumerWidget {
             itemCount: upNext.length,
             // onReorderItem отдаёт уже скорректированный индекс.
             onReorderItem: (int oldIndex, int newIndex) {
-              final int base = player.index + 1;
+              final int base = currentIndex + 1;
               controller.reorderQueue(oldIndex + base, newIndex + base);
             },
             itemBuilder: (BuildContext context, int index) {
@@ -100,9 +116,9 @@ class QueueList extends ConsumerWidget {
                 key: ValueKey<String>('${track.id}-$index'),
                 index: index,
                 track: track,
-                onTap: () => controller.jumpTo(player.index + 1 + index),
+                onTap: () => controller.jumpTo(currentIndex + 1 + index),
                 onRemove: () =>
-                    controller.removeFromQueue(player.index + 1 + index),
+                    controller.removeFromQueue(currentIndex + 1 + index),
               );
             },
           ),
@@ -114,7 +130,7 @@ class QueueList extends ConsumerWidget {
             itemCount: playedCount,
             itemBuilder: (BuildContext context, int index) {
               return TrackTile(
-                track: player.played[index],
+                track: played[index],
                 isDimmed: true,
                 onTap: () => controller.jumpTo(index),
               );

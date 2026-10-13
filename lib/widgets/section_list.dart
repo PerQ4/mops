@@ -255,8 +255,14 @@ class TrackListView extends ConsumerWidget {
 
   @override
   Widget build(BuildContext context, WidgetRef ref) {
-    final PlayerUiState player = ref.watch(playerControllerProvider);
-    final String? currentId = player.current?.id;
+    // Следим только за тем, что влияет на вид строки. Позиция
+    // воспроизведения меняется несколько раз в секунду — если смотреть и на
+    // неё, весь список перестраивался бы на каждом тике.
+    final (String? currentId, bool isPlaying) = ref.watch(
+      playerControllerProvider.select(
+        (PlayerUiState s) => (s.current?.id, s.isPlaying),
+      ),
+    );
     final List<Track> queue = playContext ?? tracks;
 
     return ListView.builder(
@@ -275,7 +281,7 @@ class TrackListView extends ConsumerWidget {
           track: track,
           leadingNumber: showNumbers ? index + 1 : null,
           isCurrent: isCurrent,
-          isPlaying: isCurrent && player.isPlaying,
+          isPlaying: isCurrent && isPlaying,
           onTap: () => ref
               .read(playerControllerProvider.notifier)
               .playTrack(track, context: queue),

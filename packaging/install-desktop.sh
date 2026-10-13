@@ -28,7 +28,10 @@ else
     exit 1
   fi
   echo "  собираю (это может занять минуту)…"
-  (cd "$PROJECT" && "$FLUTTER_BIN" build linux --release)
+  (cd "$PROJECT" && # --no-tree-shake-icons: иконки лежат в enum и кортежах, и штатное
+  # «вырезание» неиспользуемых иконок удаляет их из шрифта — в запущенном
+  # приложении они показывались бы пустыми квадратами.
+  "$FLUTTER_BIN" build linux --release --no-tree-shake-icons)
 fi
 
 echo

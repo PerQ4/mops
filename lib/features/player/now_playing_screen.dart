@@ -1,9 +1,8 @@
-import 'dart:ui';
-
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 
 import '../../core/theme/layout.dart';
+import '../../core/utils/artwork_urls.dart';
 import '../../core/utils/format.dart';
 import '../../data/models/models.dart';
 import '../../state/auth_controller.dart';
@@ -42,7 +41,7 @@ class _NowPlayingScreenState extends ConsumerState<NowPlayingScreen> {
           : Stack(
               children: <Widget>[
                 // Фон: размытая обложка, плавно переходящая в тёмную панель.
-                Positioned.fill(child: _BlurredBackdrop(track: track)),
+                Positioned.fill(child: _ArtworkBackdrop(track: track)),
                 SafeArea(
                   child: Column(
                     children: <Widget>[
@@ -80,27 +79,29 @@ class _NowPlayingScreenState extends ConsumerState<NowPlayingScreen> {
   }
 }
 
-class _BlurredBackdrop extends StatelessWidget {
-  const _BlurredBackdrop({required this.track});
+/// Фон: сама обложка во всю площадь, притемнённая к низу.
+///
+/// Без размытия — так дешевле для отрисовки и ближе к ArchiveTune, где
+/// виден настоящий рисунок, а не «стекло».
+class _ArtworkBackdrop extends StatelessWidget {
+  const _ArtworkBackdrop({required this.track});
 
   final Track track;
 
   @override
   Widget build(BuildContext context) {
     final ColorScheme scheme = Theme.of(context).colorScheme;
-    final String? url = track.thumbnails.sized(512) ?? track.artwork;
+    final List<String> variants = track.artworkFallbacks(kArtworkLarge);
 
     return Stack(
       fit: StackFit.expand,
       children: <Widget>[
-        if (url != null)
-          ImageFiltered(
-            imageFilter: ImageFilter.blur(sigmaX: 40, sigmaY: 40),
-            child: Artwork(
-              url: url,
-              fit: BoxFit.cover,
-              radius: BorderRadius.zero,
-            ),
+        if (variants.isNotEmpty)
+          Artwork(
+            url: variants.first,
+            fallbacks: variants.length > 1 ? variants.sublist(1) : const <String>[],
+            fit: BoxFit.cover,
+            radius: BorderRadius.zero,
           ),
         DecoratedBox(
           decoration: BoxDecoration(
@@ -108,11 +109,11 @@ class _BlurredBackdrop extends StatelessWidget {
               begin: Alignment.topCenter,
               end: Alignment.bottomCenter,
               colors: <Color>[
-                scheme.surface.withValues(alpha: 0.45),
-                scheme.surface.withValues(alpha: 0.8),
+                scheme.surface.withValues(alpha: 0.55),
+                scheme.surface.withValues(alpha: 0.85),
                 scheme.surface,
               ],
-              stops: const <double>[0.25, 0.62, 0.95],
+              stops: const <double>[0.2, 0.6, 0.92],
             ),
           ),
         ),
@@ -121,6 +122,7 @@ class _BlurredBackdrop extends StatelessWidget {
   }
 }
 
+/// Обложка в открытом виде — крупная и резкая.
 class _ArtworkStage extends StatelessWidget {
   const _ArtworkStage({required this.track});
 
@@ -128,6 +130,8 @@ class _ArtworkStage extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
+    final List<String> variants = track.artworkFallbacks(kArtworkLarge);
+
     return Padding(
       padding: const EdgeInsets.all(AppLayout.gutter),
       child: Center(
@@ -139,7 +143,10 @@ class _ArtworkStage extends StatelessWidget {
               width: side,
               height: side,
               child: Artwork(
-                url: track.thumbnails.sized(1024) ?? track.artwork,
+                url: variants.isEmpty ? null : variants.first,
+                fallbacks: variants.length > 1
+                    ? variants.sublist(1)
+                    : const <String>[],
                 radius: BorderRadius.circular(AppLayout.radiusXL),
               ),
             );

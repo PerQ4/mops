@@ -182,6 +182,11 @@ class _Leading extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     final ColorScheme scheme = Theme.of(context).colorScheme;
+    // Обложку просим под плотность экрана: ссылка переписывается на нужный
+    // размер, поэтому картинка не растягивается из мелкого превью.
+    final int physical =
+        (size * MediaQuery.devicePixelRatioOf(context)).round();
+    final List<String> variants = track.artworkFallbacks(physical);
 
     return Opacity(
       opacity: isDimmed ? 0.5 : 1,
@@ -189,7 +194,9 @@ class _Leading extends StatelessWidget {
         alignment: Alignment.center,
         children: <Widget>[
           Artwork(
-            url: track.thumbnails.sized((size * 2).round()),
+            url: variants.isEmpty ? null : variants.first,
+            fallbacks:
+                variants.length > 1 ? variants.sublist(1) : const <String>[],
             size: size,
             radius: BorderRadius.circular(AppLayout.trackArtworkRadius),
           ),

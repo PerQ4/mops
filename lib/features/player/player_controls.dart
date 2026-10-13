@@ -217,6 +217,53 @@ class PlayerTransportBar extends ConsumerWidget {
   }
 }
 
+/// Только слайдер громкости с одной иконкой — для широкой полосы плеера,
+/// где места мало и кнопки «выключить звук» было бы слишком много.
+class PlayerVolumeBarSliderOnly extends ConsumerWidget {
+  const PlayerVolumeBarSliderOnly({super.key});
+
+  @override
+  Widget build(BuildContext context, WidgetRef ref) {
+    final double volume = ref.watch(
+      playerControllerProvider.select((PlayerUiState s) => s.playback.volume),
+    );
+    final PlayerController controller =
+        ref.read(playerControllerProvider.notifier);
+    final ColorScheme scheme = Theme.of(context).colorScheme;
+
+    return Row(
+      children: <Widget>[
+        IconButton(
+          tooltip: volume > 0 ? 'Выключить звук' : 'Включить звук',
+          iconSize: 18,
+          icon: Icon(
+            volume == 0
+                ? Icons.volume_off_rounded
+                : volume < 0.5
+                    ? Icons.volume_down_rounded
+                    : Icons.volume_up_rounded,
+          ),
+          color: scheme.onSurfaceVariant,
+          onPressed: () => controller.setVolume(volume == 0 ? 1.0 : 0.0),
+        ),
+        Expanded(
+          child: SliderTheme(
+            data: SliderTheme.of(context).copyWith(
+              trackHeight: 3,
+              thumbShape: const RoundSliderThumbShape(enabledThumbRadius: 6),
+              overlayShape: const RoundSliderOverlayShape(overlayRadius: 14),
+            ),
+            child: Slider(
+              value: volume.clamp(0.0, 1.0),
+              onChanged: controller.setVolume,
+            ),
+          ),
+        ),
+      ],
+    );
+  }
+}
+
 /// Громкость: иконка «выключить» и слайдер.
 class PlayerVolumeBar extends ConsumerWidget {
   const PlayerVolumeBar({super.key, required this.player});
