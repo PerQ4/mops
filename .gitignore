@@ -36,3 +36,6 @@ Thumbs.db
 
 # Flutter SDK downloaded during setup
 flutter-dl/
+
+# Картинки различий golden-тестов
+test/failures/

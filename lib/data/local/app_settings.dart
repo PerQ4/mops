@@ -27,6 +27,36 @@ enum AudioQuality {
       );
 }
 
+/// Откуда брать ссылку на поток.
+///
+/// YouTube выдаёт поток разным клиентам по-разному: одним он требует
+/// PO-токен, другим — вход. Профили ниже проверены на живых запросах
+/// и не требуют ни того, ни другого.
+enum StreamSource {
+  /// Сначала Android VR, затем iOS.
+  auto('Автоматически', 'Сначала Android VR, затем iOS'),
+
+  /// Клиент очков Oculus.
+  androidVr('Android VR', 'Клиент очков — самый устойчивый'),
+
+  /// Клиент iPhone.
+  ios('iOS', 'Клиент iPhone — запасной вариант'),
+
+  /// Клиент библиотеки по умолчанию.
+  library('Клиент библиотеки', 'YouTube всё чаще требует для него PO-токен');
+
+  const StreamSource(this.label, this.description);
+
+  final String label;
+  final String description;
+
+  static StreamSource fromName(String? name) =>
+      StreamSource.values.firstWhere(
+        (StreamSource c) => c.name == name,
+        orElse: () => StreamSource.auto,
+      );
+}
+
 /// Все настройки приложения. Сериализуется в JSON и хранится в
 /// shared_preferences одной строкой — так меньше кода и атомарная запись.
 class AppSettings {
@@ -36,6 +66,7 @@ class AppSettings {
     this.seedColorIndex = 0,
     this.useMaterialExpressive = true,
     this.audioQuality = AudioQuality.high,
+    this.streamClient = StreamSource.auto,
     this.showLyricsInPlayer = true,
     this.autoPlayNext = true,
     this.streamingRegion = 'RU',
@@ -54,6 +85,10 @@ class AppSettings {
   final int seedColorIndex;
   final bool useMaterialExpressive;
   final AudioQuality audioQuality;
+
+  /// Клиент YouTube, у которого запрашивается ссылка на поток.
+  final StreamSource streamClient;
+
   final bool showLyricsInPlayer;
   final bool autoPlayNext;
   final String streamingRegion;
@@ -87,6 +122,7 @@ class AppSettings {
     int? seedColorIndex,
     bool? useMaterialExpressive,
     AudioQuality? audioQuality,
+    StreamSource? streamClient,
     bool? showLyricsInPlayer,
     bool? autoPlayNext,
     String? streamingRegion,
@@ -105,6 +141,7 @@ class AppSettings {
       seedColorIndex: seedColorIndex ?? this.seedColorIndex,
       useMaterialExpressive: useMaterialExpressive ?? this.useMaterialExpressive,
       audioQuality: audioQuality ?? this.audioQuality,
+      streamClient: streamClient ?? this.streamClient,
       showLyricsInPlayer: showLyricsInPlayer ?? this.showLyricsInPlayer,
       autoPlayNext: autoPlayNext ?? this.autoPlayNext,
       streamingRegion: streamingRegion ?? this.streamingRegion,
@@ -125,6 +162,7 @@ class AppSettings {
         'seedColorIndex': seedColorIndex,
         'useMaterialExpressive': useMaterialExpressive,
         'audioQuality': audioQuality.name,
+        'streamClient': streamClient.name,
         'showLyricsInPlayer': showLyricsInPlayer,
         'autoPlayNext': autoPlayNext,
         'streamingRegion': streamingRegion,
@@ -147,6 +185,7 @@ class AppSettings {
       seedColorIndex: (json['seedColorIndex'] as num?)?.toInt() ?? 0,
       useMaterialExpressive: json['useMaterialExpressive'] as bool? ?? true,
       audioQuality: AudioQuality.fromName(json['audioQuality'] as String?),
+      streamClient: StreamSource.fromName(json['streamClient'] as String?),
       showLyricsInPlayer: json['showLyricsInPlayer'] as bool? ?? true,
       autoPlayNext: json['autoPlayNext'] as bool? ?? true,
       streamingRegion: json['streamingRegion'] as String? ?? 'RU',

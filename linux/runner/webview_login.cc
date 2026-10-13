@@ -11,18 +11,23 @@
 //
 // Почему так: страницу входа Google нельзя пройти программно, а часть нужных
 // cookie помечена HttpOnly — из JavaScript их не видно. Поэтому открывается
-// настоящее окно WebKit, а cookie забираются у менеджера cookie браузера.
+// настоящий WebKit, а cookie забираются у менеджера cookie браузера.
 //
-// Окно закрывается само, как только на music.youtube.com появляется SAPISID —
-// то есть вход действительно выполнен. На случай, если этого не произошло,
-// в шапке есть кнопка «Готово».
+// Панель показывается поверх интерфейса приложения, в том же окне: Flutter
+// рисует в собственном нативном окне, поэтому панель кладётся в GtkEventBox —
+// он тоже получает своё окно и оказывается выше.
+//
+// Панель закрывается сама, как только на music.youtube.com появляется
+// SAPISID — то есть вход действительно выполнен. На случай, если этого не
+// произошло, в шапке есть кнопки «Готово» и «Отмена», а также работает Esc.
 
 namespace {
 
 constexpr char kChannelName[] = "mops/webview_login";
 constexpr char kHomeUrl[] = "https://music.youtube.com/";
 
-GtkWindow* g_window = nullptr;
+GtkOverlay* g_overlay = nullptr;
+GtkWidget* g_panel = nullptr;
 WebKitWebView* g_view = nullptr;
 FlMethodCall* g_pending_call = nullptr;
 
@@ -38,17 +43,21 @@ void respond_with_error(FlMethodCall* call, const std::string& message) {
                                nullptr);
 }
 
-// Приводит окно и вызов в исходное состояние.
+// Убирает панель и сбрасывает состояние.
+//
+// Указатели обнуляются до уничтожения виджета: обработчик "destroy" не должен
+// пытаться ответить на уже закрытый вызов.
 void reset_state() {
   if (g_pending_call != nullptr) {
     g_object_unref(g_pending_call);
     g_pending_call = nullptr;
   }
-  if (g_window != nullptr) {
-    gtk_widget_destroy(GTK_WIDGET(g_window));
-    g_window = nullptr;
+  if (g_panel != nullptr) {
+    GtkWidget* panel = g_panel;
+    g_panel = nullptr;
+    g_view = nullptr;
+    gtk_widget_destroy(panel);
   }
-  g_view = nullptr;
 }
 
 // Собирает строку cookie из списка WebKit.
@@ -130,20 +139,40 @@ void finish_login() {
                                         on_cookies_for_finish, nullptr);
 }
 
+// Закрывает панель, сообщая об отмене входа.
+void cancel_login() {
+  FlMethodCall* call = g_pending_call;
+  g_pending_call = nullptr;
+  if (call != nullptr) {
+    respond_with_error(call, "Вход отменён.");
+    g_object_unref(call);
+  }
+  reset_state();
+}
+
 void on_done_clicked(GtkButton* /*button*/, gpointer /*data*/) {
   finish_login();
 }
 
-// Закрытие окна крестиком: отвечаем ошибкой, чтобы Dart не ждал вечно.
-void on_window_destroy(GtkWidget* /*widget*/, gpointer /*data*/) {
-  FlMethodCall* call = g_pending_call;
-  if (call != nullptr) {
-    g_pending_call = nullptr;
-    respond_with_error(call, "Вход отменён.");
-    g_object_unref(call);
+void on_cancel_clicked(GtkButton* /*button*/, gpointer /*data*/) {
+  cancel_login();
+}
+
+// Страховка: если панель уничтожили снаружи, вызов не должен «зависнуть».
+void on_panel_destroy(GtkWidget* /*widget*/, gpointer /*data*/) {
+  if (g_pending_call != nullptr) {
+    cancel_login();
   }
-  g_window = nullptr;
-  g_view = nullptr;
+}
+
+// Esc закрывает панель.
+gboolean on_key_press(GtkWidget* /*widget*/, GdkEventKey* event,
+                      gpointer /*data*/) {
+  if (event->keyval == GDK_KEY_Escape) {
+    cancel_login();
+    return TRUE;
+  }
+  return FALSE;
 }
 
 // Проверка после загрузки: вход мог уже состояться.
@@ -157,9 +186,9 @@ void on_cookies_for_check(GObject* source, GAsyncResult* result,
     g_error_free(error);
   }
 
-  // Если вход уже выполнен, окно закрывается само.
+  // Если вход уже выполнен, панель закрывается сама.
   if (g_pending_call != nullptr && has_sapisid(cookie_string)) {
-    on_done_clicked(nullptr, nullptr);
+    finish_login();
   }
 }
 
@@ -183,32 +212,44 @@ void on_load_changed(WebKitWebView* view, WebKitLoadEvent event,
                                         on_cookies_for_check, nullptr);
 }
 
-void open_window(const std::string& url) {
-  if (g_window != nullptr) {
-    gtk_window_present(g_window);
+void open_panel(const std::string& url) {
+  if (g_overlay == nullptr) {
+    return;
+  }
+  if (g_panel != nullptr) {
+    gtk_widget_grab_focus(GTK_WIDGET(g_view));
     return;
   }
 
-  g_window = GTK_WINDOW(gtk_window_new(GTK_WINDOW_TOPLEVEL));
-  gtk_window_set_title(g_window, "Вход в YouTube Music");
-  gtk_window_set_default_size(g_window, 1000, 760);
-  gtk_window_set_transient_for(g_window, nullptr);
+  // GtkEventBox даёт панели собственное окно: Flutter рисует в отдельном
+  // нативном окне, и без этого панель оказалась бы под ним.
+  GtkWidget* panel = gtk_event_box_new();
+  g_panel = panel;
+
+  GtkWidget* box = gtk_box_new(GTK_ORIENTATION_VERTICAL, 0);
+  gtk_container_add(GTK_CONTAINER(panel), box);
 
   GtkHeaderBar* header = GTK_HEADER_BAR(gtk_header_bar_new());
   gtk_header_bar_set_title(header, "Вход в YouTube Music");
   gtk_header_bar_set_subtitle(
-      header, "Войдите в аккаунт Google — окно закроется само");
-  gtk_header_bar_set_show_close_button(header, TRUE);
+      header, "Войдите в аккаунт — панель закроется сама");
+  gtk_header_bar_set_show_close_button(header, FALSE);
 
   GtkWidget* done_button = gtk_button_new_with_label("Готово");
-  gtk_widget_set_tooltip_text(
-      done_button, "Забрать cookie и закрыть окно");
-  g_signal_connect(done_button, "clicked", G_CALLBACK(on_done_clicked), nullptr);
+  gtk_widget_set_tooltip_text(done_button,
+                              "Забрать cookie и закрыть панель");
+  g_signal_connect(done_button, "clicked", G_CALLBACK(on_done_clicked),
+                   nullptr);
   gtk_header_bar_pack_end(header, done_button);
-  gtk_window_set_titlebar(g_window, GTK_WIDGET(header));
+
+  GtkWidget* cancel_button = gtk_button_new_with_label("Отмена");
+  g_signal_connect(cancel_button, "clicked", G_CALLBACK(on_cancel_clicked),
+                   nullptr);
+  gtk_header_bar_pack_start(header, cancel_button);
+  gtk_box_pack_start(GTK_BOX(box), GTK_WIDGET(header), FALSE, FALSE, 0);
 
   // Свой контекст с постоянным хранилищем cookie: так вход переживает
-  // перезапуск окна.
+  // перезапуск панели.
   WebKitWebContext* context = webkit_web_context_new();
   WebKitCookieManager* manager = webkit_web_context_get_cookie_manager(context);
   webkit_cookie_manager_set_accept_policy(manager,
@@ -216,16 +257,31 @@ void open_window(const std::string& url) {
 
   g_view = WEBKIT_WEB_VIEW(webkit_web_view_new_with_context(context));
   g_object_unref(context);
+  gtk_box_pack_start(GTK_BOX(box), GTK_WIDGET(g_view), TRUE, TRUE, 0);
 
   g_signal_connect(g_view, "load-changed", G_CALLBACK(on_load_changed),
                    nullptr);
-  g_signal_connect(g_window, "destroy", G_CALLBACK(on_window_destroy), nullptr);
+  g_signal_connect(panel, "destroy", G_CALLBACK(on_panel_destroy), nullptr);
+  g_signal_connect(panel, "key-press-event", G_CALLBACK(on_key_press), nullptr);
+  gtk_widget_add_events(panel, GDK_KEY_PRESS_MASK);
 
-  gtk_container_add(GTK_CONTAINER(g_window), GTK_WIDGET(g_view));
+  // Панель занимает всю площадь окна и перекрывает интерфейс приложения.
+  gtk_widget_set_hexpand(panel, TRUE);
+  gtk_widget_set_vexpand(panel, TRUE);
+  gtk_widget_set_halign(panel, GTK_ALIGN_FILL);
+  gtk_widget_set_valign(panel, GTK_ALIGN_FILL);
+
+  gtk_overlay_add_overlay(g_overlay, panel);
+  gtk_widget_show_all(panel);
+
   webkit_web_view_load_uri(g_view, url.c_str());
+  gtk_widget_grab_focus(GTK_WIDGET(g_view));
 
-  gtk_widget_show_all(GTK_WIDGET(g_window));
-  gtk_window_present(g_window);
+  // Нативное окно панели должно оказаться поверх окна Flutter.
+  GdkWindow* panel_window = gtk_widget_get_window(panel);
+  if (panel_window != nullptr) {
+    gdk_window_raise(panel_window);
+  }
 }
 
 void method_call_cb(FlMethodChannel* /*channel*/, FlMethodCall* method_call,
@@ -233,14 +289,14 @@ void method_call_cb(FlMethodChannel* /*channel*/, FlMethodCall* method_call,
   const gchar* method = fl_method_call_get_name(method_call);
 
   if (g_strcmp0(method, "isAvailable") == 0) {
-    g_autoptr(FlValue) value = fl_value_new_bool(TRUE);
+    g_autoptr(FlValue) value = fl_value_new_bool(g_overlay != nullptr);
     fl_method_call_respond_success(method_call, value, nullptr);
     return;
   }
 
   if (g_strcmp0(method, "openLogin") == 0) {
     if (g_pending_call != nullptr) {
-      respond_with_error(method_call, "Окно входа уже открыто.");
+      respond_with_error(method_call, "Панель входа уже открыта.");
       return;
     }
 
@@ -254,8 +310,13 @@ void method_call_cb(FlMethodChannel* /*channel*/, FlMethodCall* method_call,
       }
     }
 
+    if (g_overlay == nullptr) {
+      respond_with_error(method_call, "Окно приложения не готово к показу входа.");
+      return;
+    }
+
     g_pending_call = FL_METHOD_CALL(g_object_ref(method_call));
-    open_window(url);
+    open_panel(url);
     // Ответ отправим позже — когда вход завершится.
     return;
   }
@@ -271,6 +332,8 @@ void method_call_cb(FlMethodChannel* /*channel*/, FlMethodCall* method_call,
 }
 
 }  // namespace
+
+void webview_login_set_host(GtkOverlay* overlay) { g_overlay = overlay; }
 
 void webview_login_register(FlBinaryMessenger* messenger) {
   g_autoptr(FlStandardMethodCodec) codec = fl_standard_method_codec_new();

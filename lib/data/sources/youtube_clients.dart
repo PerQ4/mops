@@ -1,5 +1,7 @@
 import 'package:youtube_explode_dart/youtube_explode_dart.dart';
 
+import '../local/app_settings.dart';
+
 /// Профили клиентов YouTube для получения потока.
 ///
 /// Библиотека по умолчанию использует `androidSdkless` — клиент, которому
@@ -84,11 +86,25 @@ abstract final class YoutubeClients {
     );
   }
 
-  /// Список клиентов в порядке попыток.
-  static List<YoutubeApiClient> playbackOrder() => <YoutubeApiClient>[
-        androidVr(),
-        ios(),
-      ];
+  /// Список клиентов в порядке попыток (по умолчанию — автоматически).
+  static List<YoutubeApiClient> playbackOrder() => forChoice(StreamSource.auto);
+
+  /// Клиенты для выбранного в настройках варианта.
+  ///
+  /// Пустой список означает «клиент библиотеки по умолчанию»: библиотека
+  /// сама подставит его, если список не передан.
+  static List<YoutubeApiClient> forChoice(StreamSource choice) {
+    switch (choice) {
+      case StreamSource.auto:
+        return <YoutubeApiClient>[androidVr(), ios()];
+      case StreamSource.androidVr:
+        return <YoutubeApiClient>[androidVr()];
+      case StreamSource.ios:
+        return <YoutubeApiClient>[ios()];
+      case StreamSource.library:
+        return <YoutubeApiClient>[];
+    }
+  }
 
   /// Пользовательский агент веб-клиента — для запросов обложек и прочего.
   static String get webUserAgent => _webUserAgent;

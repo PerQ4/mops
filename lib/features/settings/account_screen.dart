@@ -209,8 +209,8 @@ class _SignedOutView extends ConsumerWidget {
         ],
 
         // ------------------------------------------- вход во встроенном браузере
-        // Самый простой путь: открывается настоящее окно входа Google,
-        // cookie забираются автоматически.
+        // Самый простой путь: поверх интерфейса открывается настоящая страница
+        // входа Google, cookie забираются автоматически.
         const _WebviewLoginCard(),
         const SizedBox(height: 16),
 
@@ -486,8 +486,8 @@ class _DeviceCodeBlock extends StatelessWidget {
 /// Вход во встроенном браузере.
 ///
 /// Показывается только там, где браузер доступен (сейчас это Linux).
-/// Открывает окно WebKit со страницей входа Google; как только вход выполнен,
-/// окно закрывается само, а cookie попадают в сессию приложения.
+/// Открывает поверх интерфейса страницу входа Google; как только вход
+/// выполнен, панель закрывается сама, а cookie попадают в сессию приложения.
 class _WebviewLoginCard extends ConsumerStatefulWidget {
   const _WebviewLoginCard();
 
@@ -527,9 +527,9 @@ class _WebviewLoginCardState extends ConsumerState<_WebviewLoginCard> {
             ),
             const SizedBox(height: 8),
             Text(
-              'Откроется окно входа Google. Как только вы войдёте, оно закроется '
-              'само, а приложение заберёт cookie — ничего копировать вручную '
-              'не нужно.',
+              'Откроется страница входа Google поверх приложения. Как только вы '
+              'войдёте, она закроется сама, а приложение заберёт cookie — '
+              'ничего копировать вручную не нужно.',
               style: text.bodyMedium?.copyWith(color: scheme.onSurfaceVariant),
             ),
             const SizedBox(height: 16),

@@ -12,11 +12,12 @@ class WebviewLoginException implements Exception {
 
 /// Вход в аккаунт во встроенном браузере.
 ///
-/// На Linux окно построено на WebKitGTK (см. `linux/runner/webview_login.cc`).
+/// На Linux панель построена на WebKitGTK (см. `linux/runner/webview_login.cc`)
+/// и открывается поверх интерфейса, в том же окне приложения.
 /// Такой вход нужен потому, что страницу Google нельзя пройти программно, а
 /// часть нужных cookie помечена HttpOnly и из JavaScript недоступна.
 ///
-/// Окно закрывается само, как только на music.youtube.com появляется SAPISID,
+/// Панель закрывается сама, как только на music.youtube.com появляется SAPISID,
 /// то есть вход действительно выполнен.
 abstract final class WebviewLogin {
   static const MethodChannel _channel = MethodChannel('mops/webview_login');
@@ -32,7 +33,7 @@ abstract final class WebviewLogin {
     }
   }
 
-  /// Открывает окно входа и возвращает строку cookie.
+  /// Открывает панель входа и возвращает строку cookie.
   ///
   /// Бросает [WebviewLoginException], если вход отменён или cookie не получены.
   static Future<String> openLogin({
@@ -58,7 +59,7 @@ abstract final class WebviewLogin {
     }
   }
 
-  /// Закрывает окно входа, если оно открыто.
+  /// Закрывает панель входа, если она открыта.
   static Future<void> close() async {
     try {
       await _channel.invokeMethod<bool>('close');

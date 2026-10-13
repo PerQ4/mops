@@ -76,6 +76,9 @@ class SettingsController extends Notifier<AppSettings> {
   Future<void> setAudioQuality(AudioQuality quality) =>
       update((AppSettings s) => s.copyWith(audioQuality: quality));
 
+  Future<void> setStreamClient(StreamSource client) =>
+      update((AppSettings s) => s.copyWith(streamClient: client));
+
   Future<void> setShowLyrics(bool value) =>
       update((AppSettings s) => s.copyWith(showLyricsInPlayer: value));
 
@@ -235,14 +238,22 @@ final Provider<StreamResolver> streamResolverProvider =
   final AuthSession? session =
       ref.watch(authControllerProvider.select((AuthState s) => s.session));
 
+  // Смена клиента в настройках должна пересоздать резолвер: профиль
+  // вшивается в него при создании.
+  final StreamSource clientChoice = ref.watch(
+    settingsControllerProvider.select((AppSettings s) => s.streamClient),
+  );
+
   final Map<String, String> authHeaders =
       AuthenticatedYoutubeClient.headersForSession(
     cookieString: session?.cookieString,
     bearerToken: session?.tokens?.accessToken,
   );
 
-  final StreamResolver resolver =
-      YoutubeExplodeResolver(authHeaders: authHeaders);
+  final StreamResolver resolver = YoutubeExplodeResolver(
+    authHeaders: authHeaders,
+    clientChoice: clientChoice,
+  );
   ref.onDispose(resolver.dispose);
   return resolver;
 });

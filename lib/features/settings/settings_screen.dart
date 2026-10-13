@@ -84,6 +84,14 @@ class SettingsScreen extends ConsumerWidget {
             onTap: () => _pickAudioQuality(context, controller, settings),
           ),
 
+          ListTile(
+            leading: const Icon(Icons.cloud_download_outlined),
+            title: const Text('Источник потока'),
+            subtitle: Text(settings.streamClient.description),
+            trailing: const Icon(Icons.chevron_right),
+            onTap: () => _pickStreamClient(context, controller, settings),
+          ),
+
           SwitchListTile(
             title: const Text('Автовоспроизведение'),
             subtitle: const Text(
@@ -210,6 +218,21 @@ class SettingsScreen extends ConsumerWidget {
       label: (AudioQuality v) => v.label,
     );
     if (result != null) await controller.setAudioQuality(result);
+  }
+
+  Future<void> _pickStreamClient(
+    BuildContext context,
+    SettingsController controller,
+    AppSettings settings,
+  ) async {
+    final StreamSource? result = await _showChoice<StreamSource>(
+      context,
+      title: 'Источник потока',
+      current: settings.streamClient,
+      values: StreamSource.values,
+      label: (StreamSource v) => v.label,
+    );
+    if (result != null) await controller.setStreamClient(result);
   }
 
   Future<void> _pickRegion(

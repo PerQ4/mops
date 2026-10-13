@@ -65,8 +65,15 @@ static void my_application_activate(GApplication* application) {
   // for transparent.
   gdk_rgba_parse(&background_color, "#000000");
   fl_view_set_background_color(view, &background_color);
+
+  // Интерфейс Flutter кладём в GtkOverlay: поверх него показывается панель
+  // входа в аккаунт, поэтому отдельное окно для браузера не нужно.
+  GtkWidget* overlay = gtk_overlay_new();
+  gtk_widget_show(overlay);
+  gtk_container_add(GTK_CONTAINER(window), overlay);
+
   gtk_widget_show(GTK_WIDGET(view));
-  gtk_container_add(GTK_CONTAINER(window), GTK_WIDGET(view));
+  gtk_container_add(GTK_CONTAINER(overlay), GTK_WIDGET(view));
 
   // Show the window when Flutter renders.
   // Requires the view to be realized so we can start rendering.
@@ -77,6 +84,7 @@ static void my_application_activate(GApplication* application) {
   fl_register_plugins(FL_PLUGIN_REGISTRY(view));
 
   // Встроенный браузер для входа в аккаунт YouTube Music.
+  webview_login_set_host(GTK_OVERLAY(overlay));
   webview_login_register(
       fl_engine_get_binary_messenger(fl_view_get_engine(view)));
 

@@ -103,6 +103,7 @@ class YoutubeExplodeResolver implements StreamResolver {
   YoutubeExplodeResolver({
     YoutubeExplode? client,
     Map<String, String> authHeaders = const <String, String>{},
+    this.clientChoice = StreamSource.auto,
   }) : _client = client ??
             YoutubeExplode(
               // Авторизация поднимает лимит на выдачу потока: без неё
@@ -112,6 +113,9 @@ class YoutubeExplodeResolver implements StreamResolver {
 
   final YoutubeExplode _client;
 
+  /// Какой клиент YouTube использовать для получения ссылки.
+  final StreamSource clientChoice;
+
   /// Кэш: видео-ссылки живут часами, а `getManifest` — довольно дорогая операция.
   final Map<String, ResolvedStream> _cache = <String, ResolvedStream>{};
 
@@ -120,15 +124,20 @@ class YoutubeExplodeResolver implements StreamResolver {
     String videoId, {
     required AudioQuality quality,
   }) async {
-    final String key = '$videoId:${quality.name}';
+    final String key = '$videoId:${quality.name}:${clientChoice.name}';
     final ResolvedStream? cached = _cache[key];
     if (cached != null && !cached.isExpired) return cached;
 
     try {
-      // Пробуем клиенты, которым не нужен ни вход, ни PO-токен: у клиента
-      // по умолчанию YouTube всё чаще их требует.
+      // Клиент выбирается в настройках. Пустой список означает клиент
+      // библиотеки по умолчанию — тогда список не передаём вовсе.
+      final List<YoutubeApiClient> clients =
+          YoutubeClients.forChoice(clientChoice);
       final StreamManifest manifest = await _client.videos.streamsClient
-          .getManifest(videoId, ytClients: YoutubeClients.playbackOrder());
+          .getManifest(
+        videoId,
+        ytClients: clients.isEmpty ? null : clients,
+      );
 
       final List<AudioOnlyStreamInfo> audio = manifest.audioOnly.toList();
       if (audio.isEmpty) {
