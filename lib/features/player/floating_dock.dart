@@ -168,19 +168,29 @@ class _NavButton extends StatelessWidget {
   Widget build(BuildContext context) {
     final ColorScheme scheme = Theme.of(context).colorScheme;
 
+    // Скругление выделения должно быть концентрично внешнему: иначе
+    // «таблетка» внутри капсулы выглядит чужеродно. Внутренний радиус —
+    // внешний минус вертикальный отступ.
+    const double inset = 10;
+    final BorderRadius pillRadius =
+        BorderRadius.circular(FloatingDock.outerRadius - inset);
+
     return Padding(
       padding: const EdgeInsets.symmetric(horizontal: 2),
       child: Tooltip(
         message: destination.label,
         child: InkWell(
           onTap: onTap,
-          borderRadius: BorderRadius.circular(16),
+          borderRadius: pillRadius,
           child: AnimatedContainer(
             duration: const Duration(milliseconds: 180),
-            padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 10),
+            padding: const EdgeInsets.symmetric(
+              horizontal: 14,
+              vertical: inset,
+            ),
             decoration: BoxDecoration(
               color: selected ? scheme.secondaryContainer : Colors.transparent,
-              borderRadius: BorderRadius.circular(16),
+              borderRadius: pillRadius,
             ),
             child: Icon(
               selected ? destination.selectedIcon : destination.icon,
@@ -221,12 +231,8 @@ class _PlayerIslandState extends ConsumerState<_PlayerIsland> {
     return MouseRegion(
       onEnter: (_) => setState(() => _hovered = true),
       onExit: (_) => setState(() => _hovered = false),
-      child: AnimatedContainer(
-        duration: const Duration(milliseconds: 180),
-        curve: Curves.easeOut,
-        transform: Matrix4.translationValues(0, _hovered ? -3 : 0, 0),
-        child: _DockSurface(
-          radius: BorderRadius.only(
+      child: _DockSurface(
+        radius: BorderRadius.only(
             topLeft: Radius.circular(
               widget.joinedOnLeft ? FloatingDock.joinRadius : radius,
             ),
@@ -257,7 +263,6 @@ class _PlayerIslandState extends ConsumerState<_PlayerIsland> {
             ),
           ),
         ),
-      ),
     );
   }
 }
@@ -288,9 +293,11 @@ class _ArtworkWithProgress extends StatelessWidget {
             width: side + ring * 2,
             height: side + ring * 2,
             child: CircularProgressIndicator(
+              // Пока длительность неизвестна, кольцо остаётся пустым:
+              // «бегущий» индикатор здесь дублировал бы кнопку загрузки.
               value: player.playback.duration > Duration.zero
                   ? player.playback.progress
-                  : null,
+                  : 0,
               strokeWidth: ring,
               color: scheme.primary,
               backgroundColor: scheme.onSurface.withValues(alpha: 0.12),
@@ -303,12 +310,6 @@ class _ArtworkWithProgress extends StatelessWidget {
             size: side,
             radius: BorderRadius.circular(side / 2),
           ),
-          if (player.isLoading)
-            SizedBox(
-              width: side - 8,
-              height: side - 8,
-              child: const CircularProgressIndicator(strokeWidth: 2),
-            ),
         ],
       ),
     );
@@ -398,13 +399,27 @@ class _IslandControls extends ConsumerWidget {
           icon: const Icon(Icons.skip_previous_rounded),
           onPressed: player.queue.isEmpty ? null : controller.previous,
         ),
-        IconButton.filled(
-          tooltip: player.isPlaying ? 'Пауза' : 'Играть',
-          iconSize: 24,
-          icon: Icon(
-            player.isPlaying ? Icons.pause_rounded : Icons.play_arrow_rounded,
-          ),
-          onPressed: controller.togglePlayPause,
+        // Один индикатор загрузки на весь островок: пока идёт подготовка,
+        // вместо иконки воспроизведения показываем круг. Раньше их было
+        // несколько сразу — и в кольце, и поверх обложки, и здесь.
+        SizedBox(
+          width: 40,
+          height: 40,
+          child: player.isLoading
+              ? const Padding(
+                  padding: EdgeInsets.all(9),
+                  child: CircularProgressIndicator(strokeWidth: 2.5),
+                )
+              : IconButton.filled(
+                  tooltip: player.isPlaying ? 'Пауза' : 'Играть',
+                  iconSize: 24,
+                  icon: Icon(
+                    player.isPlaying
+                        ? Icons.pause_rounded
+                        : Icons.play_arrow_rounded,
+                  ),
+                  onPressed: controller.togglePlayPause,
+                ),
         ),
         IconButton(
           tooltip: 'Следующий',
