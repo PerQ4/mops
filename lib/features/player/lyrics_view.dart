@@ -5,6 +5,7 @@ import '../../data/models/models.dart';
 import '../../state/catalog_providers.dart';
 import '../../state/player_controller.dart';
 import '../../widgets/async_views.dart';
+import '../../widgets/empty_state.dart';
 
 /// Текст песни: синхронизированный (с автопрокруткой) или обычный.
 class LyricsView extends ConsumerWidget {
@@ -26,7 +27,7 @@ class LyricsView extends ConsumerWidget {
     return lyrics.when(
       data: (Lyrics data) {
         if (data.isEmpty) {
-          return EmptyView(
+          return EmptyState(
             icon: Icons.lyrics_outlined,
             title: 'Текста нет',
             subtitle: 'Для этого трека YouTube Music не предоставил текст.',
@@ -40,7 +41,8 @@ class LyricsView extends ConsumerWidget {
       },
       loading: () => const Center(child: CircularProgressIndicator()),
       error: (Object error, StackTrace _) =>
-          ErrorView(error: error, compact: true),
+          ErrorState(
+          message: describeError(error), compact: true),
     );
   }
 }

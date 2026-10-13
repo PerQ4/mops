@@ -1,6 +1,7 @@
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 
+import '../../core/theme/layout.dart';
 import '../../data/models/models.dart';
 import '../../state/auth_controller.dart';
 import '../../state/library_providers.dart';
@@ -9,6 +10,7 @@ import '../../widgets/async_views.dart';
 import '../../widgets/media_card.dart';
 import '../../widgets/section_list.dart';
 import '../common/navigation.dart';
+import '../../widgets/empty_state.dart';
 
 /// Личная коллекция: плейлисты, лайки, исполнители и подписки.
 class LibraryScreen extends ConsumerWidget {
@@ -33,11 +35,13 @@ class LibraryScreen extends ConsumerWidget {
               ),
               onPressed: () => AppRoutes.account(context),
             ),
-            IconButton(
-              tooltip: 'Настройки',
-              icon: const Icon(Icons.settings_outlined),
-              onPressed: () => AppRoutes.settings(context),
-            ),
+            // На широком экране настройки живут в боковой навигации.
+            if (context.isCompactLayout)
+              IconButton(
+                tooltip: 'Настройки',
+                icon: const Icon(Icons.settings_outlined),
+                onPressed: () => AppRoutes.settings(context),
+              ),
             const SizedBox(width: 4),
           ],
           bottom: auth.isSignedIn
@@ -72,7 +76,7 @@ class LibraryScreen extends ConsumerWidget {
 class _SignInPrompt extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
-    return EmptyView(
+    return EmptyState(
       icon: Icons.library_music_outlined,
       title: 'Коллекция пуста',
       subtitle: 'Войдите в аккаунт YouTube Music, чтобы видеть свои плейлисты, '
@@ -99,7 +103,7 @@ class _PlaylistsTab extends ConsumerWidget {
     return playlists.when(
       data: (List<Playlist> data) {
         if (data.isEmpty) {
-          return const EmptyView(
+          return const EmptyState(
             icon: Icons.queue_music,
             title: 'Плейлистов нет',
             subtitle: 'Создайте плейлист в YouTube Music — он появится здесь.',
@@ -126,8 +130,8 @@ class _PlaylistsTab extends ConsumerWidget {
         );
       },
       loading: () => const Center(child: CircularProgressIndicator()),
-      error: (Object error, StackTrace _) => ErrorView(
-        error: error,
+      error: (Object error, StackTrace _) => ErrorState(
+          message: describeError(error),
         onRetry: () => ref.invalidate(likedPlaylistsProvider),
       ),
     );
@@ -144,7 +148,7 @@ class _SongsTab extends ConsumerWidget {
     return songs.when(
       data: (List<Track> data) {
         if (data.isEmpty) {
-          return const EmptyView(
+          return const EmptyState(
             icon: Icons.favorite_border,
             title: 'Лайков нет',
             subtitle: 'Отмечайте треки лайком — они соберутся здесь.',
@@ -156,8 +160,8 @@ class _SongsTab extends ConsumerWidget {
         );
       },
       loading: () => const Center(child: CircularProgressIndicator()),
-      error: (Object error, StackTrace _) => ErrorView(
-        error: error,
+      error: (Object error, StackTrace _) => ErrorState(
+          message: describeError(error),
         onRetry: () => ref.invalidate(likedSongsProvider),
       ),
     );
@@ -174,8 +178,8 @@ class _ArtistsTab extends ConsumerWidget {
     return artists.when(
       data: (List<Artist> data) => _ArtistGrid(artists: data, emptyTitle: 'Исполнителей нет'),
       loading: () => const Center(child: CircularProgressIndicator()),
-      error: (Object error, StackTrace _) => ErrorView(
-        error: error,
+      error: (Object error, StackTrace _) => ErrorState(
+          message: describeError(error),
         onRetry: () => ref.invalidate(libraryArtistsProvider),
       ),
     );
@@ -192,8 +196,8 @@ class _SubscriptionsTab extends ConsumerWidget {
     return subs.when(
       data: (List<Artist> data) => _ArtistGrid(artists: data, emptyTitle: 'Подписок нет'),
       loading: () => const Center(child: CircularProgressIndicator()),
-      error: (Object error, StackTrace _) => ErrorView(
-        error: error,
+      error: (Object error, StackTrace _) => ErrorState(
+          message: describeError(error),
         onRetry: () => ref.invalidate(subscriptionsProvider),
       ),
     );
@@ -209,7 +213,7 @@ class _ArtistGrid extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     if (artists.isEmpty) {
-      return EmptyView(
+      return EmptyState(
         icon: Icons.person_outline,
         title: emptyTitle,
         subtitle: 'Подпишитесь на исполнителей в YouTube Music.',

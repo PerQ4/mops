@@ -8,6 +8,7 @@ import '../../state/player_controller.dart';
 import '../../widgets/async_views.dart';
 import '../../widgets/section_list.dart';
 import '../../widgets/track_tile.dart';
+import '../../widgets/empty_state.dart';
 
 
 /// Страница плейлиста.
@@ -27,8 +28,8 @@ class PlaylistScreen extends ConsumerWidget {
         loading: () => const Center(child: CircularProgressIndicator()),
         error: (Object error, StackTrace _) => Scaffold(
           appBar: AppBar(),
-          body: ErrorView(
-            error: error,
+          body: ErrorState(
+          message: describeError(error),
             onRetry: () => ref.invalidate(playlistProvider(playlistId)),
           ),
         ),
@@ -101,7 +102,7 @@ class _PlaylistBody extends ConsumerWidget {
         if (playlist.tracks.isEmpty)
           const SliverFillRemaining(
             hasScrollBody: false,
-            child: EmptyView(
+            child: EmptyState(
               icon: Icons.music_off_outlined,
               title: 'Плейлист пуст',
               subtitle: 'В нём пока нет доступных треков.',

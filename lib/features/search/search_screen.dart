@@ -8,6 +8,7 @@ import '../../data/sources/catalog_source.dart';
 import '../../state/catalog_providers.dart';
 import '../../widgets/async_views.dart';
 import '../../widgets/section_list.dart';
+import '../../widgets/empty_state.dart';
 
 /// Поиск по YouTube Music: подсказки, фильтры и результаты.
 class SearchScreen extends ConsumerStatefulWidget {
@@ -103,7 +104,7 @@ class _SearchScreenState extends ConsumerState<SearchScreen> {
     return results.when(
       data: (List<BrowseSection> sections) {
         if (sections.isEmpty) {
-          return const EmptyView(
+          return const EmptyState(
             icon: Icons.search_off,
             title: 'Ничего не найдено',
             subtitle: 'Попробуйте другой запрос или снимите фильтр.',
@@ -111,12 +112,11 @@ class _SearchScreenState extends ConsumerState<SearchScreen> {
         }
         return SectionListView(
           sections: sections,
-          cardWidth: _filter == SearchFilter.all ? 160 : 150,
         );
       },
       loading: () => const SectionSkeleton(rows: 3),
-      error: (Object error, StackTrace _) => ErrorView(
-        error: error,
+      error: (Object error, StackTrace _) => ErrorState(
+          message: describeError(error),
         onRetry: () => ref.invalidate(searchResultsProvider(key)),
       ),
     );

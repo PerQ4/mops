@@ -1,49 +1,30 @@
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 
+import '../../core/theme/layout.dart';
 import '../../data/models/models.dart';
 import '../../state/player_controller.dart';
-import '../../widgets/async_views.dart';
+import '../../widgets/empty_state.dart';
 import '../../widgets/track_tile.dart';
 
-/// Нижняя панель с очередью воспроизведения.
-abstract final class QueueSheet {
-  static Future<void> show(BuildContext context) {
-    return showModalBottomSheet<void>(
-      context: context,
-      showDragHandle: true,
-      isScrollControlled: true,
-      useSafeArea: true,
-      builder: (BuildContext context) => const DraggableScrollableSheet(
-        expand: false,
-        initialChildSize: 0.7,
-        maxChildSize: 0.95,
-        minChildSize: 0.35,
-        builder: _queueBuilder,
-      ),
-    );
-  }
-}
+/// Очередь воспроизведения.
+///
+/// Один виджет на все поверхности: в панели плеера на десктопе и в нижнем
+/// листе на телефоне. Раньше это было продублировано.
+class QueueList extends ConsumerWidget {
+  const QueueList({super.key, this.scrollController, this.padding});
 
-/// Ссылка на функцию — константа времени компиляции, поэтому
-/// `DraggableScrollableSheet` можно оставить `const`.
-Widget _queueBuilder(BuildContext context, ScrollController controller) =>
-    _QueueContent(scrollController: controller);
-
-class _QueueContent extends ConsumerWidget {
-  const _QueueContent({required this.scrollController});
-
-  final ScrollController scrollController;
+  final ScrollController? scrollController;
+  final EdgeInsets? padding;
 
   @override
   Widget build(BuildContext context, WidgetRef ref) {
     final PlayerUiState player = ref.watch(playerControllerProvider);
-    final PlayerController controller = ref.read(playerControllerProvider.notifier);
-    final TextTheme text = Theme.of(context).textTheme;
-    final ColorScheme scheme = Theme.of(context).colorScheme;
+    final PlayerController controller =
+        ref.read(playerControllerProvider.notifier);
 
     if (player.queue.isEmpty) {
-      return const EmptyView(
+      return const EmptyState(
         icon: Icons.queue_music,
         title: 'Очередь пуста',
         subtitle: 'Включите трек — он появится здесь.',
@@ -58,20 +39,27 @@ class _QueueContent extends ConsumerWidget {
       slivers: <Widget>[
         SliverToBoxAdapter(
           child: Padding(
-            padding: const EdgeInsets.fromLTRB(16, 0, 16, 8),
+            padding: const EdgeInsets.fromLTRB(
+              AppLayout.gutter,
+              8,
+              AppLayout.gutter,
+              4,
+            ),
             child: Row(
               children: <Widget>[
                 Expanded(
                   child: Text(
                     'Очередь',
-                    style: text.headlineSmall
+                    style: Theme.of(context)
+                        .textTheme
+                        .titleMedium
                         ?.copyWith(fontWeight: FontWeight.w700),
                   ),
                 ),
-                TextButton.icon(
-                  onPressed: controller.clearQueue,
+                IconButton(
+                  tooltip: 'Очистить',
                   icon: const Icon(Icons.clear_all),
-                  label: const Text('Очистить'),
+                  onPressed: controller.clearQueue,
                 ),
               ],
             ),
@@ -79,39 +67,29 @@ class _QueueContent extends ConsumerWidget {
         ),
 
         if (player.current != null) ...<Widget>[
-          SliverToBoxAdapter(
-            child: _GroupLabel('Сейчас играет'),
-          ),
+          const SliverToBoxAdapter(child: _GroupLabel('Сейчас играет')),
           SliverToBoxAdapter(
             child: TrackTile(
               track: player.current!,
               isCurrent: true,
               isPlaying: player.isPlaying,
-              trailing: IconButton(
-                tooltip: 'Убрать из очереди',
-                icon: const Icon(Icons.close),
-                onPressed: () => controller.removeFromQueue(player.index),
-              ),
+              onTap: () {},
             ),
           ),
         ],
 
         if (upNext.isEmpty)
-          SliverToBoxAdapter(
+          const SliverToBoxAdapter(
             child: Padding(
-              padding: const EdgeInsets.all(16),
-              child: Text(
-                'Дальше треков нет — включится радио по текущему треку.',
-                style: text.bodyMedium?.copyWith(color: scheme.onSurfaceVariant),
-              ),
+              padding: EdgeInsets.all(AppLayout.gutter),
+              child: Text('Дальше треков нет — включится радио по текущему.'),
             ),
           )
         else ...<Widget>[
           SliverToBoxAdapter(child: _GroupLabel('Далее — ${upNext.length}')),
           SliverReorderableList(
             itemCount: upNext.length,
-            // onReorderItem отдаёт уже скорректированный индекс: элемент
-            // oldIndex мысленно удалён, поэтому вычитать единицу не нужно.
+            // onReorderItem отдаёт уже скорректированный индекс.
             onReorderItem: (int oldIndex, int newIndex) {
               final int base = player.index + 1;
               controller.reorderQueue(oldIndex + base, newIndex + base);
@@ -123,7 +101,8 @@ class _QueueContent extends ConsumerWidget {
                 index: index,
                 track: track,
                 onTap: () => controller.jumpTo(player.index + 1 + index),
-                onRemove: () => controller.removeFromQueue(player.index + 1 + index),
+                onRemove: () =>
+                    controller.removeFromQueue(player.index + 1 + index),
               );
             },
           ),
@@ -134,17 +113,16 @@ class _QueueContent extends ConsumerWidget {
           SliverList.builder(
             itemCount: playedCount,
             itemBuilder: (BuildContext context, int index) {
-              final Track track = player.played[index];
               return TrackTile(
-                track: track,
-                dense: true,
+                track: player.played[index],
+                isDimmed: true,
                 onTap: () => controller.jumpTo(index),
               );
             },
           ),
         ],
 
-        const SliverToBoxAdapter(child: SizedBox(height: 32)),
+        const SliverToBoxAdapter(child: SizedBox(height: 24)),
       ],
     );
   }
@@ -158,7 +136,12 @@ class _GroupLabel extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     return Padding(
-      padding: const EdgeInsets.fromLTRB(16, 16, 16, 4),
+      padding: const EdgeInsets.fromLTRB(
+        AppLayout.gutter,
+        16,
+        AppLayout.gutter,
+        4,
+      ),
       child: Text(
         label,
         style: Theme.of(context).textTheme.labelLarge?.copyWith(
@@ -187,30 +170,28 @@ class _ReorderableTile extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
-    return Material(
-      color: Theme.of(context).colorScheme.surfaceContainerLow,
-      child: Row(
-        children: <Widget>[
-          Expanded(
-            child: TrackTile(
-              track: track,
-              onTap: onTap,
-              trailing: IconButton(
-                tooltip: 'Убрать',
-                icon: const Icon(Icons.close),
-                onPressed: onRemove,
-              ),
+    return Row(
+      children: <Widget>[
+        Expanded(
+          child: TrackTile(
+            track: track,
+            onTap: onTap,
+            onMenu: null,
+            trailing: IconButton(
+              tooltip: 'Убрать',
+              icon: const Icon(Icons.close, size: 18),
+              onPressed: onRemove,
             ),
           ),
-          ReorderableDragStartListener(
-            index: index,
-            child: const Padding(
-              padding: EdgeInsets.symmetric(horizontal: 8),
-              child: Icon(Icons.drag_handle),
-            ),
+        ),
+        ReorderableDragStartListener(
+          index: index,
+          child: const Padding(
+            padding: EdgeInsets.symmetric(horizontal: 8),
+            child: Icon(Icons.drag_indicator, size: 20),
           ),
-        ],
-      ),
+        ),
+      ],
     );
   }
 }

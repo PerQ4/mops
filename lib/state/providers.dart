@@ -76,9 +76,6 @@ class SettingsController extends Notifier<AppSettings> {
   Future<void> setAudioQuality(AudioQuality quality) =>
       update((AppSettings s) => s.copyWith(audioQuality: quality));
 
-  Future<void> setPlayerLayout(PlayerLayout layout) =>
-      update((AppSettings s) => s.copyWith(playerLayout: layout));
-
   Future<void> setShowLyrics(bool value) =>
       update((AppSettings s) => s.copyWith(showLyricsInPlayer: value));
 

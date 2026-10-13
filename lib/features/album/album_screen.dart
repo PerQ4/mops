@@ -8,6 +8,7 @@ import '../../state/player_controller.dart';
 import '../../widgets/async_views.dart';
 import '../../widgets/section_list.dart';
 import '../../widgets/track_tile.dart';
+import '../../widgets/empty_state.dart';
 
 /// Страница альбома: обложка, метаданные и список треков.
 class AlbumScreen extends ConsumerWidget {
@@ -25,8 +26,8 @@ class AlbumScreen extends ConsumerWidget {
         loading: () => const Center(child: CircularProgressIndicator()),
         error: (Object error, StackTrace _) => Scaffold(
           appBar: AppBar(),
-          body: ErrorView(
-            error: error,
+          body: ErrorState(
+          message: describeError(error),
             onRetry: () => ref.invalidate(albumProvider(albumId)),
           ),
         ),
@@ -92,7 +93,7 @@ class _AlbumBody extends ConsumerWidget {
         if (album.tracks.isEmpty)
           const SliverFillRemaining(
             hasScrollBody: false,
-            child: EmptyView(
+            child: EmptyState(
               icon: Icons.music_off_outlined,
               title: 'Треков нет',
               subtitle: 'YouTube Music не вернул список треков для этого альбома.',
@@ -106,7 +107,7 @@ class _AlbumBody extends ConsumerWidget {
               final bool isCurrent = current?.id == track.id;
               return TrackTile(
                 track: track,
-                leadingIndex: index + 1,
+                leadingNumber: index + 1,
                 isCurrent: isCurrent,
                 isPlaying: isCurrent && playing,
                 showDuration: true,

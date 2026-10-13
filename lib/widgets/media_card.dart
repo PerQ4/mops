@@ -1,13 +1,13 @@
 import 'package:flutter/material.dart';
 
-import '../core/utils/format.dart';
+import '../core/theme/layout.dart';
 import '../data/models/models.dart';
 import 'artwork.dart';
 
 /// Карточка карусели: обложка, заголовок, подпись.
 ///
-/// Для исполнителей используется круглая обложка ([circular]) — так принято
-/// в Material-музыкальных интерфейсах и это же делает YouTube Music.
+/// Размеры фиксированы константами, поэтому карточки не меняют высоту от
+/// текста и карусель не «дёргается» при прокрутке.
 class MediaCard extends StatelessWidget {
   const MediaCard({
     super.key,
@@ -15,11 +15,11 @@ class MediaCard extends StatelessWidget {
     required this.onTap,
     this.subtitle,
     this.imageUrl,
-    this.width = 160,
+    this.width = AppLayout.cardWidth,
     this.circular = false,
+    this.artworkSize,
     this.icon,
     this.heroTag,
-    this.badge,
   });
 
   final String title;
@@ -27,9 +27,12 @@ class MediaCard extends StatelessWidget {
   final String? imageUrl;
   final double width;
   final bool circular;
+
+  /// Размер обложки. Для круглых аватаров меньше ширины карточки, чтобы
+  /// подписи помещались без обрезки.
+  final double? artworkSize;
   final IconData? icon;
   final Object? heroTag;
-  final Widget? badge;
   final VoidCallback onTap;
 
   @override
@@ -41,44 +44,39 @@ class MediaCard extends StatelessWidget {
       width: width,
       child: InkWell(
         onTap: onTap,
-        borderRadius: BorderRadius.circular(16),
-        child: Padding(
-          padding: const EdgeInsets.all(4),
-          child: Column(
-            crossAxisAlignment: CrossAxisAlignment.start,
-            mainAxisSize: MainAxisSize.min,
-            children: <Widget>[
-              Stack(
-                children: <Widget>[
-                  Artwork(
-                    url: imageUrl,
-                    size: width,
-                    icon: icon,
-                    heroTag: heroTag,
-                    radius: BorderRadius.circular(circular ? width / 2 : 16),
-                  ),
-                  if (badge != null)
-                    Positioned(right: 8, bottom: 8, child: badge!),
-                ],
+        borderRadius: BorderRadius.circular(AppLayout.radiusM),
+        child: Column(
+          crossAxisAlignment: CrossAxisAlignment.start,
+          mainAxisSize: MainAxisSize.min,
+          children: <Widget>[
+            Artwork(
+              url: imageUrl,
+              size: artworkSize ?? width,
+              icon: icon,
+              heroTag: heroTag,
+              radius: BorderRadius.circular(
+                circular
+                    ? (artworkSize ?? width) / 2
+                    : AppLayout.cardArtworkRadius,
               ),
-              const SizedBox(height: 10),
+            ),
+            const SizedBox(height: 10),
+            Text(
+              title,
+              maxLines: 2,
+              overflow: TextOverflow.ellipsis,
+              style: text.bodyMedium?.copyWith(fontWeight: FontWeight.w600),
+            ),
+            if (subtitle != null && subtitle!.isNotEmpty) ...<Widget>[
+              const SizedBox(height: 2),
               Text(
-                title,
-                maxLines: 2,
+                subtitle!,
+                maxLines: 1,
                 overflow: TextOverflow.ellipsis,
-                style: text.bodyMedium?.copyWith(fontWeight: FontWeight.w600),
+                style: text.bodySmall?.copyWith(color: scheme.onSurfaceVariant),
               ),
-              if (subtitle != null && subtitle!.isNotEmpty) ...<Widget>[
-                const SizedBox(height: 2),
-                Text(
-                  subtitle!,
-                  maxLines: 1,
-                  overflow: TextOverflow.ellipsis,
-                  style: text.bodySmall?.copyWith(color: scheme.onSurfaceVariant),
-                ),
-              ],
             ],
-          ),
+          ],
         ),
       ),
     );
@@ -91,27 +89,27 @@ class BrowseItemCard extends StatelessWidget {
     super.key,
     required this.item,
     required this.onTap,
-    this.width = 160,
-    this.isCurrent = false,
+    this.width = AppLayout.cardWidth,
   });
 
   final BrowseItem item;
   final double width;
-  final bool isCurrent;
-
-  /// Что делать при нажатии: у трека — играть, у остальных — открыть.
   final void Function(BrowseItem item) onTap;
 
   @override
   Widget build(BuildContext context) {
     final (String? subtitle, bool circular, IconData icon) = switch (item) {
-      TrackItem(:final Track track) => (cleanArtistName(track.artistLine), false, Icons.music_note),
+      TrackItem(:final Track track) => (
+          track.artistLine,
+          false,
+          Icons.music_note,
+        ),
       AlbumItem(:final Album album) => (
           album.year ?? album.artistLine,
           false,
           Icons.album_outlined,
         ),
-      ArtistItem() => ('Исполнитель', true, Icons.person_outline),
+      ArtistItem() => (null, true, Icons.person_outline),
       PlaylistItem(:final Playlist playlist) => (
           playlist.author,
           false,
@@ -125,6 +123,7 @@ class BrowseItemCard extends StatelessWidget {
       imageUrl: item.thumbnails.sized((width * 2).round()),
       width: width,
       circular: circular,
+      artworkSize: circular ? AppLayout.artistAvatar : null,
       icon: icon,
       onTap: () => onTap(item),
     );

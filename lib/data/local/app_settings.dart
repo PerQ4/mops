@@ -27,27 +27,6 @@ enum AudioQuality {
       );
 }
 
-/// Полноэкранный вид плеера.
-enum PlayerLayout {
-  /// Классика: обложка сверху, управление снизу.
-  classic('Классика'),
-
-  /// Обложка на весь экран, управление поверх.
-  immersive('Полноэкранная обложка'),
-
-  /// Обложка слева, управление и очередь справа (для широких экранов).
-  split('Разделённый');
-
-  const PlayerLayout(this.label);
-
-  final String label;
-
-  static PlayerLayout fromName(String? name) => PlayerLayout.values.firstWhere(
-        (PlayerLayout l) => l.name == name,
-        orElse: () => PlayerLayout.classic,
-      );
-}
-
 /// Все настройки приложения. Сериализуется в JSON и хранится в
 /// shared_preferences одной строкой — так меньше кода и атомарная запись.
 class AppSettings {
@@ -57,7 +36,6 @@ class AppSettings {
     this.seedColorIndex = 0,
     this.useMaterialExpressive = true,
     this.audioQuality = AudioQuality.high,
-    this.playerLayout = PlayerLayout.classic,
     this.showLyricsInPlayer = true,
     this.autoPlayNext = true,
     this.streamingRegion = 'RU',
@@ -76,7 +54,6 @@ class AppSettings {
   final int seedColorIndex;
   final bool useMaterialExpressive;
   final AudioQuality audioQuality;
-  final PlayerLayout playerLayout;
   final bool showLyricsInPlayer;
   final bool autoPlayNext;
   final String streamingRegion;
@@ -110,7 +87,6 @@ class AppSettings {
     int? seedColorIndex,
     bool? useMaterialExpressive,
     AudioQuality? audioQuality,
-    PlayerLayout? playerLayout,
     bool? showLyricsInPlayer,
     bool? autoPlayNext,
     String? streamingRegion,
@@ -129,7 +105,6 @@ class AppSettings {
       seedColorIndex: seedColorIndex ?? this.seedColorIndex,
       useMaterialExpressive: useMaterialExpressive ?? this.useMaterialExpressive,
       audioQuality: audioQuality ?? this.audioQuality,
-      playerLayout: playerLayout ?? this.playerLayout,
       showLyricsInPlayer: showLyricsInPlayer ?? this.showLyricsInPlayer,
       autoPlayNext: autoPlayNext ?? this.autoPlayNext,
       streamingRegion: streamingRegion ?? this.streamingRegion,
@@ -150,7 +125,6 @@ class AppSettings {
         'seedColorIndex': seedColorIndex,
         'useMaterialExpressive': useMaterialExpressive,
         'audioQuality': audioQuality.name,
-        'playerLayout': playerLayout.name,
         'showLyricsInPlayer': showLyricsInPlayer,
         'autoPlayNext': autoPlayNext,
         'streamingRegion': streamingRegion,
@@ -173,7 +147,6 @@ class AppSettings {
       seedColorIndex: (json['seedColorIndex'] as num?)?.toInt() ?? 0,
       useMaterialExpressive: json['useMaterialExpressive'] as bool? ?? true,
       audioQuality: AudioQuality.fromName(json['audioQuality'] as String?),
-      playerLayout: PlayerLayout.fromName(json['playerLayout'] as String?),
       showLyricsInPlayer: json['showLyricsInPlayer'] as bool? ?? true,
       autoPlayNext: json['autoPlayNext'] as bool? ?? true,
       streamingRegion: json['streamingRegion'] as String? ?? 'RU',

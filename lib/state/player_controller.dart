@@ -42,6 +42,7 @@ class PlayerUiState {
     this.autoPlayRadio = true,
     this.downloading = false,
     this.downloadProgress = 0,
+    this.streamNote,
   });
 
   final List<Track> queue;
@@ -62,6 +63,9 @@ class PlayerUiState {
 
   /// Прогресс загрузки от 0 до 1.
   final double downloadProgress;
+
+  /// Подпись качества потока: контейнер и битрейт, например `WEBM 147`.
+  final String? streamNote;
 
   Track? get current =>
       (index >= 0 && index < queue.length) ? queue[index] : null;
@@ -91,6 +95,7 @@ class PlayerUiState {
     bool? autoPlayRadio,
     bool? downloading,
     double? downloadProgress,
+    String? streamNote,
   }) {
     return PlayerUiState(
       queue: queue ?? this.queue,
@@ -103,6 +108,7 @@ class PlayerUiState {
       autoPlayRadio: autoPlayRadio ?? this.autoPlayRadio,
       downloading: downloading ?? this.downloading,
       downloadProgress: downloadProgress ?? this.downloadProgress,
+      streamNote: streamNote ?? this.streamNote,
     );
   }
 }
@@ -351,6 +357,8 @@ class PlayerController extends Notifier<PlayerUiState> {
       // загрузку надо отменить, иначе заиграет «не тот».
       if (state.current?.id != track.id) return;
 
+      state = state.copyWith(streamNote: _noteFor(resolved));
+
       // При обходе блокировок звук качает приложение: GStreamer про обход
       // не знает и напрямую до googlevideo не дотянется.
       if (ref.read(bypassActiveProvider)) {
@@ -392,6 +400,18 @@ class PlayerController extends Notifier<PlayerUiState> {
         error: 'Ошибка воспроизведения: $error',
       );
     }
+  }
+
+  /// Подпись качества: контейнер и битрейт потока.
+  String? _noteFor(ResolvedStream stream) {
+    final String? container = stream.container;
+    final int? kbps = stream.bitrateKbps;
+    if (container == null && kbps == null) return null;
+    final String name = (container ?? '').toUpperCase();
+    return <String>[
+      if (name.isNotEmpty) name,
+      if (kbps != null) '$kbps',
+    ].join(' ');
   }
 
   Future<void> _handleTrackEnded() async {

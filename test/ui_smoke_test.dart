@@ -1,6 +1,6 @@
 // Проверка интерфейса без сети: подставляем фейковые данные и отрисовываем
-// ключевые экраны. Тест ловит ошибки раскладки (overflow) и сохраняет
-// эталонные изображения.
+// ключевые экраны. Тест ловит ошибки раскладки (overflow, «дёрганье»
+// размеров) и сохраняет эталонные изображения.
 //
 // Запуск: flutter test --update-goldens test/ui_smoke_test.dart
 import 'dart:async';
@@ -18,6 +18,7 @@ import 'package:mops/core/theme/seed_colors.dart';
 import 'package:mops/core/theme/ui_scaler.dart';
 import 'package:mops/data/local/app_settings.dart';
 import 'package:mops/data/models/models.dart';
+import 'package:mops/features/player/now_playing_panel.dart';
 import 'package:mops/features/player/now_playing_screen.dart';
 import 'package:mops/features/settings/settings_screen.dart';
 import 'package:mops/features/shell/app_shell.dart';
@@ -65,7 +66,7 @@ class _FakeAudioEngine implements AudioEngine {
   }
 }
 
-/// Нотификатор плеера с заранее заданным состоянием — очередь и трек.
+/// Нотификатор плеера с заранее заданным состоянием.
 class _StubPlayer extends PlayerController {
   _StubPlayer(this._preset);
 
@@ -99,7 +100,9 @@ List<Track> _fakeTracks(int count) {
         'Weird Fishes',
         'Time (You and I)',
       ][i % 8],
-      artists: <ArtistRef>[ArtistRef(name: _artistNames[i % _artistNames.length])],
+      artists: <ArtistRef>[
+        ArtistRef(name: _artistNames[i % _artistNames.length]),
+      ],
       album: AlbumRef(name: 'Currents'),
       duration: Duration(minutes: 3, seconds: 20 + i * 7),
     );
@@ -147,42 +150,31 @@ List<BrowseSection> _fakeHome() {
           )),
       ],
     ),
-    BrowseSection(
-      title: 'Чарты',
-      items: tracks
-          .skip(3)
-          .map((Track t) => TrackItem(t))
-          .toList(growable: false),
-    ),
   ];
 }
 
-/// ------------------------------------------------------------------ загрузка шрифтов
+/// ------------------------------------------------------------------ шрифты
 
 /// В тестовой среде системных шрифтов нет — текст рисуется «квадратиками».
 /// Подгружаем Roboto и MaterialIcons с диска, чтобы эталоны были читаемыми.
 Future<void> _loadFonts() async {
-  // Roboto — семейство по умолчанию в Material.
   await _loadFamily('Roboto', <String>[
     '/usr/share/fonts/TTF/Roboto-Regular.ttf',
     '/usr/share/fonts/TTF/Roboto-Medium.ttf',
     '/usr/share/fonts/TTF/Roboto-Bold.ttf',
   ]);
 
-  // Без этого шрифта иконки выглядят как пустые квадраты.
   await _loadFamily('MaterialIcons', <String>[
     '${_flutterRoot()}/bin/cache/artifacts/material_fonts/MaterialIcons-Regular.otf',
   ]);
 }
 
 String _flutterRoot() {
-  // Тест запускается из корня проекта, а SDK лежит рядом.
   final String fromEnv = Platform.environment['FLUTTER_ROOT'] ?? '';
   if (fromEnv.isNotEmpty && Directory(fromEnv).existsSync()) return fromEnv;
 
-  final String executable = Platform.resolvedExecutable;
-  // …/flutter/bin/cache/dart-sdk/bin/dart → …/flutter
-  final List<String> parts = executable.split(Platform.pathSeparator);
+  final List<String> parts =
+      Platform.resolvedExecutable.split(Platform.pathSeparator);
   final int cacheIndex = parts.lastIndexOf('cache');
   if (cacheIndex > 1) {
     return parts.sublist(0, cacheIndex - 1).join(Platform.pathSeparator);
@@ -205,7 +197,6 @@ Future<void> _loadFamily(String family, List<String> paths) async {
 
 void main() {
   setUpAll(() async {
-    // В тестах окружение не читаем: масштаб задаём явно.
     envReaderOverride = (String name) => null;
     await _loadFonts();
   });
@@ -217,7 +208,6 @@ void main() {
     prefs = await SharedPreferences.getInstance();
   });
 
-  // Тёмная тема лучше показывает Expressive-палитру.
   const AppSettings settings = AppSettings(
     themeMode: ThemeModePreference.dark,
     colorSource: ColorSource.seed,
@@ -226,9 +216,6 @@ void main() {
   );
 
   /// Собирает приложение с подставными данными и указанным размером окна.
-  ///
-  /// Тип списка overrides не пишем явно: класс `Override` в Riverpod 3
-  /// не экспортируется, но вывод типов справляется сам.
   Future<void> pump(
     WidgetTester tester,
     Widget child, {
@@ -246,7 +233,6 @@ void main() {
           initialSettingsProvider.overrideWithValue(settings),
           initialSessionProvider.overrideWithValue(null),
           desktopScaleProvider.overrideWithValue(DesktopScaleInfo.none),
-          // Проверка обхода ходит в сеть — в тестах она не нужна.
           bypassAutoVerifyProvider.overrideWithValue(false),
           audioEngineProvider.overrideWithValue(_FakeAudioEngine()),
           homeSectionsProvider.overrideWith((ref) => _fakeHome()),
@@ -260,15 +246,34 @@ void main() {
     await tester.pump(const Duration(milliseconds: 400));
   }
 
-  testWidgets('Главная, широкий экран', (WidgetTester tester) async {
-    await pump(tester, const MopsApp(), size: const Size(1440, 900));
+  PlayerUiState playingState() {
+    final List<Track> tracks = _fakeTracks(6);
+    return PlayerUiState(
+      queue: tracks,
+      index: 1,
+      playback: const PlaybackState(
+        status: PlaybackStatus.playing,
+        position: Duration(minutes: 1, seconds: 24),
+        duration: Duration(minutes: 4, seconds: 12),
+        volume: 0.8,
+      ),
+      streamNote: 'WEBM 147',
+    );
+  }
+
+  testWidgets('Главная, широкий экран: рейл и панель плеера', (WidgetTester tester) async {
+    await pump(tester, const MopsApp(), size: const Size(1600, 1000));
 
     expect(tester.takeException(), isNull);
-    // «Главная» встречается и в заголовке страницы, и в боковой навигации.
-    expect(find.text('Главная'), findsWidgets);
-    expect(find.text('Слушать снова'), findsOneWidget);
+    // Заголовок — название приложения, а не «Главная»: раздел виден в рейле.
+    expect(find.text('mOps'), findsWidgets);
     expect(find.byType(NavigationRail), findsOneWidget);
+    // На широком экране нижней навигации нет — её заменяет боковая.
     expect(find.byType(NavigationBar), findsNothing);
+    // И плеер показан постоянно, а не отдельным экраном.
+    expect(find.byType(NowPlayingPanel), findsOneWidget);
+    // Треки идут списком, а не каруселью.
+    expect(find.text('Let It Happen'), findsWidgets);
 
     await expectLater(
       find.byType(MaterialApp),
@@ -282,6 +287,7 @@ void main() {
     expect(tester.takeException(), isNull);
     expect(find.byType(NavigationBar), findsOneWidget);
     expect(find.byType(NavigationRail), findsNothing);
+    expect(find.byType(NowPlayingPanel), findsNothing);
 
     await expectLater(
       find.byType(MaterialApp),
@@ -289,39 +295,51 @@ void main() {
     );
   });
 
-  testWidgets('Настройки', (WidgetTester tester) async {
+  testWidgets('Панель плеера показывает очередь и качество потока',
+      (WidgetTester tester) async {
+    await pump(
+      tester,
+      const MopsApp(),
+      size: const Size(1600, 1000),
+      player: playingState(),
+    );
+
+    expect(tester.takeException(), isNull);
+    expect(find.byType(NowPlayingPanel), findsOneWidget);
+    // Название трека и качество потока из состояния плеера.
+    expect(find.text('Everything In Its Right Place'), findsWidgets);
+    expect(find.text('WEBM 147'), findsOneWidget);
+    // Под управлением по умолчанию — очередь.
+    expect(find.text('Очередь'), findsWidgets);
+
+    await expectLater(
+      find.byType(MaterialApp),
+      matchesGoldenFile('goldens/03_player_panel.png'),
+    );
+  });
+
+  testWidgets('Настройки доступны с телефона', (WidgetTester tester) async {
     await pump(tester, const MopsApp(), size: const Size(412, 880));
-    // Открываем настройки через иконку в AppBar.
     await tester.tap(find.byIcon(Icons.settings_outlined).first);
     await tester.pumpAndSettle();
 
     expect(tester.takeException(), isNull);
     expect(find.text('Material 3 Expressive'), findsOneWidget);
+    // Дублирующего пункта «Вид плеера» больше нет.
+    expect(find.text('Вид плеера'), findsNothing);
 
     await expectLater(
       find.byType(MaterialApp),
-      matchesGoldenFile('goldens/03_settings.png'),
+      matchesGoldenFile('goldens/04_settings.png'),
     );
   });
 
-  testWidgets('Полноэкранный плеер', (WidgetTester tester) async {
-    final List<Track> tracks = _fakeTracks(6);
-    final PlayerUiState state = PlayerUiState(
-      queue: tracks,
-      index: 1,
-      playback: PlaybackState(
-        status: PlaybackStatus.playing,
-        position: const Duration(minutes: 1, seconds: 24),
-        duration: const Duration(minutes: 4, seconds: 12),
-        volume: 0.8,
-      ),
-    );
-
+  testWidgets('Полноэкранный плеер на телефоне', (WidgetTester tester) async {
     await pump(
       tester,
       const _Harness(child: NowPlayingScreen()),
-      size: const Size(900, 1000),
-      player: state,
+      size: const Size(412, 880),
+      player: playingState(),
     );
 
     expect(tester.takeException(), isNull);
@@ -329,53 +347,43 @@ void main() {
 
     await expectLater(
       find.byType(MaterialApp),
-      matchesGoldenFile('goldens/04_now_playing.png'),
+      matchesGoldenFile('goldens/05_now_playing.png'),
     );
-  });
-
-  testWidgets('Масштаб интерфейса меняется с клавиатуры', (WidgetTester tester) async {
-    await pump(tester, const MopsApp(), size: const Size(1440, 900));
-
-    final BuildContext context = tester.element(find.byType(AppShell));
-    final ProviderContainer container = ProviderScope.containerOf(context);
-
-    // По умолчанию — автоматический режим (0).
-    expect(container.read(settingsControllerProvider).uiScale, 0.0);
-
-    // Ctrl + должен увеличить масштаб до 1.1.
-    await tester.sendKeyDownEvent(LogicalKeyboardKey.controlLeft);
-    await tester.sendKeyEvent(LogicalKeyboardKey.equal);
-    await tester.sendKeyUpEvent(LogicalKeyboardKey.controlLeft);
-    await tester.pumpAndSettle();
-    expect(container.read(settingsControllerProvider).uiScale, 1.1);
-
-    // Ctrl - возвращает к 1.0.
-    await tester.sendKeyDownEvent(LogicalKeyboardKey.controlLeft);
-    await tester.sendKeyEvent(LogicalKeyboardKey.minus);
-    await tester.sendKeyUpEvent(LogicalKeyboardKey.controlLeft);
-    await tester.pumpAndSettle();
-    expect(container.read(settingsControllerProvider).uiScale, 1.0);
-
-    // Ctrl 0 включает автоматический режим.
-    await tester.sendKeyDownEvent(LogicalKeyboardKey.controlLeft);
-    await tester.sendKeyEvent(LogicalKeyboardKey.digit0);
-    await tester.sendKeyUpEvent(LogicalKeyboardKey.controlLeft);
-    await tester.pumpAndSettle();
-    expect(container.read(settingsControllerProvider).uiScale, 0.0);
   });
 
   testWidgets('Настройки напрямую', (WidgetTester tester) async {
     await pump(
       tester,
       const _Harness(child: SettingsScreen()),
-      size: const Size(600, 900),
+      size: const Size(720, 900),
     );
 
     expect(tester.takeException(), isNull);
     await expectLater(
       find.byType(MaterialApp),
-      matchesGoldenFile('goldens/05_settings_direct.png'),
+      matchesGoldenFile('goldens/06_settings_wide.png'),
     );
+  });
+
+  testWidgets('Масштаб интерфейса меняется с клавиатуры', (WidgetTester tester) async {
+    await pump(tester, const MopsApp(), size: const Size(1600, 1000));
+
+    final BuildContext context = tester.element(find.byType(AppShell));
+    final ProviderContainer container = ProviderScope.containerOf(context);
+
+    expect(container.read(settingsControllerProvider).uiScale, 0.0);
+
+    await tester.sendKeyDownEvent(LogicalKeyboardKey.controlLeft);
+    await tester.sendKeyEvent(LogicalKeyboardKey.equal);
+    await tester.sendKeyUpEvent(LogicalKeyboardKey.controlLeft);
+    await tester.pumpAndSettle();
+    expect(container.read(settingsControllerProvider).uiScale, 1.1);
+
+    await tester.sendKeyDownEvent(LogicalKeyboardKey.controlLeft);
+    await tester.sendKeyEvent(LogicalKeyboardKey.digit0);
+    await tester.sendKeyUpEvent(LogicalKeyboardKey.controlLeft);
+    await tester.pumpAndSettle();
+    expect(container.read(settingsControllerProvider).uiScale, 0.0);
   });
 }
 

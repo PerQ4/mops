@@ -6,6 +6,7 @@ import '../../data/sources/catalog_source.dart';
 import '../../state/catalog_providers.dart';
 import '../../widgets/async_views.dart';
 import '../../widgets/section_list.dart';
+import '../../widgets/empty_state.dart';
 
 /// Раздел «Обзор»: новые релизы, чарты, настроения и жанры.
 ///
@@ -69,7 +70,7 @@ class _ExploreTab extends ConsumerWidget {
     return sections.when(
       data: (List<BrowseSection> data) {
         if (data.isEmpty) {
-          return const EmptyView(
+          return const EmptyState(
             icon: Icons.category_outlined,
             title: 'Раздел пуст',
             subtitle: 'YouTube Music не вернул содержимое для этого раздела.',
@@ -84,8 +85,8 @@ class _ExploreTab extends ConsumerWidget {
         );
       },
       loading: () => const SectionSkeleton(),
-      error: (Object error, StackTrace _) => ErrorView(
-        error: error,
+      error: (Object error, StackTrace _) => ErrorState(
+          message: describeError(error),
         onRetry: () => ref.invalidate(browseSectionProvider(browseId)),
       ),
     );

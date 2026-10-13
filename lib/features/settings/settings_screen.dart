@@ -65,13 +65,6 @@ class SettingsScreen extends ConsumerWidget {
               onSelected: controller.setSeedColorIndex,
             ),
 
-          ListTile(
-            title: const Text('Вид плеера'),
-            subtitle: Text(settings.playerLayout.label),
-            trailing: const Icon(Icons.chevron_right),
-            onTap: () => _pickPlayerLayout(context, controller, settings),
-          ),
-
           SwitchListTile(
             title: const Text('Показывать текст в плеере'),
             subtitle: const Text('Открывать текст по умолчанию, если он есть'),
@@ -202,21 +195,6 @@ class SettingsScreen extends ConsumerWidget {
       label: (ColorSource v) => v.label,
     );
     if (result != null) await controller.setColorSource(result);
-  }
-
-  Future<void> _pickPlayerLayout(
-    BuildContext context,
-    SettingsController controller,
-    AppSettings settings,
-  ) async {
-    final PlayerLayout? result = await _showChoice<PlayerLayout>(
-      context,
-      title: 'Вид плеера',
-      current: settings.playerLayout,
-      values: PlayerLayout.values,
-      label: (PlayerLayout v) => v.label,
-    );
-    if (result != null) await controller.setPlayerLayout(result);
   }
 
   Future<void> _pickAudioQuality(

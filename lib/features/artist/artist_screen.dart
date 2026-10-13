@@ -9,6 +9,7 @@ import '../../widgets/media_card.dart';
 import '../../widgets/section_list.dart';
 import '../../widgets/track_tile.dart';
 import '../common/navigation.dart';
+import '../../widgets/empty_state.dart';
 
 /// Страница исполнителя: популярные треки, альбомы, синглы, похожие.
 class ArtistScreen extends ConsumerWidget {
@@ -26,8 +27,8 @@ class ArtistScreen extends ConsumerWidget {
         loading: () => const Center(child: CircularProgressIndicator()),
         error: (Object error, StackTrace _) => Scaffold(
           appBar: AppBar(),
-          body: ErrorView(
-            error: error,
+          body: ErrorState(
+          message: describeError(error),
             onRetry: () => ref.invalidate(artistProvider(artistId)),
           ),
         ),
@@ -85,7 +86,7 @@ class _ArtistBody extends ConsumerWidget {
           for (int i = 0; i < artist.topTracks.length && i < 10; i++)
             TrackTile(
               track: artist.topTracks[i],
-              leadingIndex: i + 1,
+              leadingNumber: i + 1,
               isCurrent: current?.id == artist.topTracks[i].id,
               isPlaying: current?.id == artist.topTracks[i].id && playing,
               subtitleOverride: artist.topTracks[i].artistLine,

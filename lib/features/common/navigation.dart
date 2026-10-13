@@ -4,6 +4,7 @@ import '../album/album_screen.dart';
 import '../artist/artist_screen.dart';
 import '../player/now_playing_screen.dart';
 import '../playlist/playlist_screen.dart';
+import '../search/search_results_screen.dart';
 import '../settings/account_screen.dart';
 import '../settings/bypass_screen.dart';
 import '../settings/settings_screen.dart';
@@ -62,6 +63,10 @@ abstract final class AppRoutes {
 
   static Future<void> nowPlaying(BuildContext context) =>
       _push<void>(context, const NowPlayingScreen());
+
+  /// Результаты поиска по готовому запросу (переходы «настроение → выдача»).
+  static Future<void> searchWithQuery(BuildContext context, String query) =>
+      _push<void>(context, SearchResultsScreen(query: query));
 
   static Future<void> settings(BuildContext context) =>
       _push<void>(context, const SettingsScreen());

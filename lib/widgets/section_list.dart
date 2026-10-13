@@ -1,17 +1,15 @@
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 
+import '../core/theme/layout.dart';
 import '../data/models/models.dart';
 import '../features/common/navigation.dart';
 import '../state/player_controller.dart';
 import 'artwork.dart';
-import 'section_carousel.dart';
+import 'media_card.dart';
 import 'track_tile.dart';
 
-/// Обрабатывает нажатие на элемент карусели.
-///
-/// Треки запускаются, а альбомы, исполнители и плейлисты открываются —
-/// ровно то поведение, к которому привыкли по YouTube Music.
+/// Открывает элемент карусели: треки играют, остальное открывается.
 void openBrowseItem(
   BuildContext context,
   WidgetRef ref,
@@ -39,28 +37,39 @@ List<Track> tracksOf(BrowseSection section) => section.items
     .map((TrackItem item) => item.track)
     .toList();
 
-/// Вертикальный список каруселей.
+/// Список секций главной и подобных страниц.
+///
+/// Форма взята у ArchiveTune: секция с треками показывается **обычным
+/// списком**, а не каруселью карточек — так треки читаются и не «дёргаются».
+/// Карусель остаётся только для альбомов, исполнителей и плейлистов, где
+/// важна обложка.
 class SectionListView extends ConsumerWidget {
   const SectionListView({
     super.key,
     required this.sections,
-    this.padding = const EdgeInsets.symmetric(vertical: 8),
+    this.padding = const EdgeInsets.only(bottom: 24),
     this.header,
-    this.cardWidth = 160,
     this.emptyPlaceholder,
+    this.trackPreviewLimit = 5,
   });
 
   final List<BrowseSection> sections;
   final EdgeInsets padding;
   final Widget? header;
-  final double cardWidth;
   final Widget? emptyPlaceholder;
+
+  /// Сколько треков показывать в секции до кнопки «Все».
+  final int trackPreviewLimit;
 
   @override
   Widget build(BuildContext context, WidgetRef ref) {
     if (sections.isEmpty) {
       return emptyPlaceholder ?? const SizedBox.shrink();
     }
+
+    // Плоский список без подписей (результаты поиска) показываем без «шапок»,
+    // чтобы не плодить лишние заголовки.
+    final bool flat = sections.length == 1 && sections.first.title.isEmpty;
 
     return ListView.builder(
       padding: padding,
@@ -70,56 +79,188 @@ class SectionListView extends ConsumerWidget {
           if (index == 0) return header!;
           index -= 1;
         }
-
         final BrowseSection section = sections[index];
-        return SectionCarousel(
-          section: section,
-          cardWidth: cardWidth,
-          onItemTap: (BrowseItem item) => openBrowseItem(
-            context,
-            ref,
-            item,
-            playContext: tracksOf(section),
-          ),
-        );
+        return flat
+            ? _TrackRows(section: section, showTitle: false)
+            : _Section(section: section, trackPreviewLimit: trackPreviewLimit);
       },
     );
   }
 }
 
-/// Вертикальный список треков (используется на страницах альбома/плейлиста).
+/// Одна секция: либо список треков, либо карусель карточек.
+class _Section extends ConsumerWidget {
+  const _Section({required this.section, required this.trackPreviewLimit});
+
+  final BrowseSection section;
+  final int trackPreviewLimit;
+
+  @override
+  Widget build(BuildContext context, WidgetRef ref) {
+    final List<Track> tracks = tracksOf(section);
+    final bool isTrackSection = tracks.isNotEmpty && tracks.length == section.items.length;
+
+    if (isTrackSection) {
+      return _TrackRows(section: section, limit: trackPreviewLimit);
+    }
+
+    return _CardCarousel(section: section);
+  }
+}
+
+/// Заголовок секции в стиле ArchiveTune: крупный, без кнопки «Все»
+/// (кнопка появляется только там, где есть куда перейти).
+class _SectionTitle extends StatelessWidget {
+  const _SectionTitle({required this.title, this.onShowAll});
+
+  final String title;
+  final VoidCallback? onShowAll;
+
+  @override
+  Widget build(BuildContext context) {
+    return Padding(
+      padding: const EdgeInsets.fromLTRB(
+        AppLayout.gutter,
+        20,
+        AppLayout.gutter,
+        8,
+      ),
+      child: Row(
+        children: <Widget>[
+          Expanded(
+            child: Text(
+              title,
+              maxLines: 1,
+              overflow: TextOverflow.ellipsis,
+              style: Theme.of(context)
+                  .textTheme
+                  .headlineSmall
+                  ?.copyWith(fontWeight: FontWeight.w700, letterSpacing: -0.5),
+            ),
+          ),
+          if (onShowAll != null)
+            TextButton(onPressed: onShowAll, child: const Text('Все')),
+        ],
+      ),
+    );
+  }
+}
+
+/// Секция треков обычным списком.
+class _TrackRows extends ConsumerWidget {
+  const _TrackRows({
+    required this.section,
+    this.limit,
+    this.showTitle = true,
+  });
+
+  final BrowseSection section;
+  final int? limit;
+  final bool showTitle;
+
+  @override
+  Widget build(BuildContext context, WidgetRef ref) {
+    final List<Track> tracks = tracksOf(section);
+    if (tracks.isEmpty) return const SizedBox.shrink();
+
+    final int shown = limit == null ? tracks.length : tracks.length.clamp(0, limit!);
+
+    return Column(
+      crossAxisAlignment: CrossAxisAlignment.stretch,
+      children: <Widget>[
+        if (showTitle && section.title.isNotEmpty)
+          _SectionTitle(
+            title: section.title,
+            onShowAll: tracks.length > shown
+                ? () => ref
+                    .read(playerControllerProvider.notifier)
+                    .playQueue(tracks, shuffle: true)
+                : null,
+          ),
+        for (int i = 0; i < shown; i++)
+          TrackTile(
+            track: tracks[i],
+            onTap: () => ref
+                .read(playerControllerProvider.notifier)
+                .playTrack(tracks[i], context: tracks),
+          ),
+      ],
+    );
+  }
+}
+
+/// Карусель карточек: альбомы, исполнители, плейлисты.
+class _CardCarousel extends ConsumerWidget {
+  const _CardCarousel({required this.section});
+
+  final BrowseSection section;
+
+  @override
+  Widget build(BuildContext context, WidgetRef ref) {
+    // У круглых аватаров обложка меньше карточки, поэтому и высота другая —
+    // иначе подписи обрезаются.
+    final bool circular = section.items.isNotEmpty &&
+        section.items.first is ArtistItem;
+
+    return Column(
+      crossAxisAlignment: CrossAxisAlignment.start,
+      children: <Widget>[
+        if (section.title.isNotEmpty) _SectionTitle(title: section.title),
+        SizedBox(
+          // Высота зафиксирована константой — карусель не «прыгает».
+          height: circular
+              ? AppLayout.artistAvatar + 62
+              : AppLayout.cardHeight,
+          child: ListView.separated(
+            scrollDirection: Axis.horizontal,
+            padding: const EdgeInsets.symmetric(horizontal: AppLayout.gutter),
+            itemCount: section.items.length,
+            separatorBuilder: (BuildContext context, int _) =>
+                const SizedBox(width: 12),
+            itemBuilder: (BuildContext context, int index) {
+              final BrowseItem item = section.items[index];
+              return BrowseItemCard(
+                item: item,
+                onTap: (BrowseItem value) => openBrowseItem(
+                  context,
+                  ref,
+                  value,
+                  playContext: tracksOf(section),
+                ),
+              );
+            },
+          ),
+        ),
+      ],
+    );
+  }
+}
+
+/// Список треков одной страницы (альбом, плейлист, лайки).
 class TrackListView extends ConsumerWidget {
   const TrackListView({
     super.key,
     required this.tracks,
-    this.padding = const EdgeInsets.symmetric(vertical: 8),
+    this.padding = const EdgeInsets.only(bottom: 24),
     this.header,
-    this.context_,
-    this.showIndex = false,
-    this.shrinkWrap = false,
-    this.physics,
+    this.playContext,
+    this.showNumbers = false,
   });
 
   final List<Track> tracks;
   final EdgeInsets padding;
   final Widget? header;
-
-  /// Контекст воспроизведения; по умолчанию — сам список.
-  final List<Track>? context_;
-  final bool showIndex;
-  final bool shrinkWrap;
-  final ScrollPhysics? physics;
+  final List<Track>? playContext;
+  final bool showNumbers;
 
   @override
   Widget build(BuildContext context, WidgetRef ref) {
     final PlayerUiState player = ref.watch(playerControllerProvider);
     final String? currentId = player.current?.id;
-    final List<Track> playContext = context_ ?? tracks;
+    final List<Track> queue = playContext ?? tracks;
 
     return ListView.builder(
       padding: padding,
-      shrinkWrap: shrinkWrap,
-      physics: physics,
       itemCount: tracks.length + (header != null ? 1 : 0),
       itemBuilder: (BuildContext context, int index) {
         if (header != null) {
@@ -132,65 +273,19 @@ class TrackListView extends ConsumerWidget {
 
         return TrackTile(
           track: track,
-          leadingIndex: showIndex ? index + 1 : null,
+          leadingNumber: showNumbers ? index + 1 : null,
           isCurrent: isCurrent,
           isPlaying: isCurrent && player.isPlaying,
-          onTap: () => ref.read(playerControllerProvider.notifier).playTrack(
-                track,
-                context: playContext,
-              ),
-          onLongPress: () => _showTrackActions(context, ref, track),
-        );
-      },
-    );
-  }
-
-  void _showTrackActions(
-    BuildContext context,
-    WidgetRef ref,
-    Track track,
-  ) {
-    showModalBottomSheet<void>(
-      context: context,
-      showDragHandle: true,
-      builder: (BuildContext sheetContext) {
-        return SafeArea(
-          child: Column(
-            mainAxisSize: MainAxisSize.min,
-            children: <Widget>[
-              ListTile(
-                leading: const Icon(Icons.play_arrow),
-                title: const Text('Играть сейчас'),
-                onTap: () {
-                  Navigator.pop(sheetContext);
-                  ref.read(playerControllerProvider.notifier).playTrack(track);
-                },
-              ),
-              ListTile(
-                leading: const Icon(Icons.queue_play_next),
-                title: const Text('Играть следующим'),
-                onTap: () {
-                  Navigator.pop(sheetContext);
-                  ref.read(playerControllerProvider.notifier).playNext(track);
-                },
-              ),
-              ListTile(
-                leading: const Icon(Icons.playlist_add),
-                title: const Text('В конец очереди'),
-                onTap: () {
-                  Navigator.pop(sheetContext);
-                  ref.read(playerControllerProvider.notifier).enqueue(track);
-                },
-              ),
-            ],
-          ),
+          onTap: () => ref
+              .read(playerControllerProvider.notifier)
+              .playTrack(track, context: queue),
         );
       },
     );
   }
 }
 
-/// Крупный заголовок страницы с обложкой — шапка альбома/плейлиста/артиста.
+/// Шапка страницы альбома, плейлиста или исполнителя.
 class PageHeader extends StatelessWidget {
   const PageHeader({
     super.key,
@@ -215,14 +310,15 @@ class PageHeader extends StatelessWidget {
   Widget build(BuildContext context) {
     final TextTheme text = Theme.of(context).textTheme;
     final ColorScheme scheme = Theme.of(context).colorScheme;
-    final bool wide = MediaQuery.sizeOf(context).width >= 720;
-    const double size = 200;
+    final double width = context.layoutWidth;
+    final bool wide = AppLayout.isExpanded(width);
+    const double size = AppLayout.headerArtwork;
 
     final Widget artwork = Artwork(
       url: imageUrl,
       size: size,
       icon: fallbackIcon,
-      radius: BorderRadius.circular(circular ? size / 2 : 20),
+      radius: BorderRadius.circular(circular ? size / 2 : AppLayout.radiusL),
     );
 
     final Widget info = Column(
@@ -233,10 +329,15 @@ class PageHeader extends StatelessWidget {
         Text(
           title,
           textAlign: wide ? TextAlign.start : TextAlign.center,
-          style: text.displaySmall?.copyWith(fontWeight: FontWeight.w700),
+          maxLines: 2,
+          overflow: TextOverflow.ellipsis,
+          style: text.displaySmall?.copyWith(
+            fontWeight: FontWeight.w800,
+            letterSpacing: -1,
+          ),
         ),
         if (subtitle != null && subtitle!.isNotEmpty) ...<Widget>[
-          const SizedBox(height: 8),
+          const SizedBox(height: 6),
           Text(
             subtitle!,
             textAlign: wide ? TextAlign.start : TextAlign.center,
@@ -244,17 +345,17 @@ class PageHeader extends StatelessWidget {
           ),
         ],
         if (description != null && description!.trim().isNotEmpty) ...<Widget>[
-          const SizedBox(height: 12),
+          const SizedBox(height: 10),
           Text(
             description!.trim(),
-            maxLines: 4,
+            maxLines: 3,
             overflow: TextOverflow.ellipsis,
             textAlign: wide ? TextAlign.start : TextAlign.center,
             style: text.bodyMedium?.copyWith(color: scheme.onSurfaceVariant),
           ),
         ],
         if (actions.isNotEmpty) ...<Widget>[
-          const SizedBox(height: 20),
+          const SizedBox(height: 18),
           Wrap(
             spacing: 12,
             runSpacing: 8,
@@ -266,7 +367,12 @@ class PageHeader extends StatelessWidget {
     );
 
     return Padding(
-      padding: const EdgeInsets.fromLTRB(16, 8, 16, 24),
+      padding: const EdgeInsets.fromLTRB(
+        AppLayout.gutter,
+        8,
+        AppLayout.gutter,
+        8,
+      ),
       child: wide
           ? Row(
               crossAxisAlignment: CrossAxisAlignment.end,
@@ -279,7 +385,7 @@ class PageHeader extends StatelessWidget {
           : Column(
               children: <Widget>[
                 artwork,
-                const SizedBox(height: 20),
+                const SizedBox(height: 18),
                 info,
               ],
             ),

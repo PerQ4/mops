@@ -1,3 +1,4 @@
+import 'package:flutter/foundation.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 
 import '../data/models/models.dart';
@@ -23,7 +24,11 @@ final librarySourceProvider = Provider<LibrarySource>(
 
 /// Главная страница.
 final homeSectionsProvider = FutureProvider<List<BrowseSection>>((ref) async {
-  return ref.watch(catalogSourceProvider).home();
+  final List<BrowseSection> sections =
+      await ref.watch(catalogSourceProvider).home();
+  // Видно в логе: если секций нет, проблема в доступе к сети, а не в вёрстке.
+  debugPrint('[Home] секций получено: ${sections.length}');
+  return sections;
 });
 
 /// Раздел «Обзор».

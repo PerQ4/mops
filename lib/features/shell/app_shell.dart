@@ -1,11 +1,13 @@
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 
+import '../../core/theme/layout.dart';
 import '../../state/player_controller.dart';
 import '../common/navigation.dart';
 import '../explore/explore_screen.dart';
 import '../home/home_screen.dart';
 import '../library/library_screen.dart';
+import '../player/now_playing_panel.dart';
 import '../player/player_bar.dart';
 import '../search/search_screen.dart';
 
@@ -14,7 +16,7 @@ enum ShellDestination {
   home('Главная', Icons.home_outlined, Icons.home),
   explore('Обзор', Icons.explore_outlined, Icons.explore),
   search('Поиск', Icons.search_outlined, Icons.search),
-  library('Коллекция', Icons.library_music_outlined, Icons.library_music);
+  library('Библиотека', Icons.library_music_outlined, Icons.library_music);
 
   const ShellDestination(this.label, this.icon, this.selectedIcon);
 
@@ -23,11 +25,16 @@ enum ShellDestination {
   final IconData selectedIcon;
 }
 
-/// Каркас приложения: навигация слева (широкие экраны) или снизу (узкие),
-/// постоянная панель плеера и переходы к деталям.
+/// Каркас приложения.
 ///
-/// Экраны живут в [IndexedStack], поэтому позиция прокрутки и загруженные
-/// данные не теряются при переключении разделов.
+/// Раскладок ровно две, и переключение происходит в одной точке:
+///
+///  * **узкая** — нижняя навигация и компактная панель плеера над ней;
+///  * **широкая** — боковая навигация и постоянная панель плеера справа.
+///
+/// Ширина боковой панели фиксирована, поэтому при изменении размера окна
+/// она не «дёргается». Экраны живут в [IndexedStack] — позиция прокрутки и
+/// загруженные данные сохраняются при переключении разделов.
 class AppShell extends ConsumerStatefulWidget {
   const AppShell({super.key});
 
@@ -38,21 +45,13 @@ class AppShell extends ConsumerStatefulWidget {
 class _AppShellState extends ConsumerState<AppShell> {
   int _index = 0;
 
-  /// Порог, после которого снизу-навигация уступает место боковой.
-  static const double _railBreakpoint = 960;
-
-  /// Порог, после которого боковая навигация разворачивается с подписями.
-  static const double _extendedBreakpoint = 1320;
-
-  void _select(int index) => setState(() => _index = index);
-
   @override
   Widget build(BuildContext context) {
     // Следим за плеером, чтобы он жил всё время работы приложения.
     ref.watch(playerControllerProvider);
 
-    final double width = MediaQuery.sizeOf(context).width;
-    final bool useRail = width >= _railBreakpoint;
+    final double width = context.layoutWidth;
+    final bool expanded = AppLayout.isExpanded(width);
 
     const List<Widget> pages = <Widget>[
       HomeScreen(),
@@ -61,68 +60,98 @@ class _AppShellState extends ConsumerState<AppShell> {
       LibraryScreen(),
     ];
 
-    final Widget content = Column(
-      children: <Widget>[
-        Expanded(
-          child: IndexedStack(index: _index, children: pages),
-        ),
-        const PlayerBar(),
-      ],
-    );
-
-    if (useRail) {
+    if (expanded) {
       return Scaffold(
         body: Row(
           children: <Widget>[
-            NavigationRail(
-              extended: width >= _extendedBreakpoint,
-              selectedIndex: _index,
-              onDestinationSelected: _select,
-              labelType: width >= _extendedBreakpoint
-                  ? NavigationRailLabelType.none
-                  : NavigationRailLabelType.all,
-              destinations: <NavigationRailDestination>[
-                for (final ShellDestination destination in ShellDestination.values)
-                  NavigationRailDestination(
-                    icon: Icon(destination.icon),
-                    selectedIcon: Icon(destination.selectedIcon),
-                    label: Text(destination.label),
-                  ),
-              ],
-              trailing: Expanded(
-                child: Align(
-                  alignment: Alignment.bottomCenter,
-                  child: Padding(
-                    padding: const EdgeInsets.only(bottom: 16),
-                    child: IconButton(
-                      tooltip: 'Настройки',
-                      icon: const Icon(Icons.settings_outlined),
-                      onPressed: () => AppRoutes.settings(context),
-                    ),
-                  ),
-                ),
-              ),
+            _NavigationRail(
+              index: _index,
+              onSelect: (int value) => setState(() => _index = value),
+              extended: AppLayout.useExtendedRail(width),
             ),
             const VerticalDivider(width: 1),
-            Expanded(child: content),
+            Expanded(
+              child: IndexedStack(index: _index, children: pages),
+            ),
+            const VerticalDivider(width: 1),
+            const SizedBox(
+              width: AppLayout.playerPanelWidth,
+              child: NowPlayingPanel(),
+            ),
           ],
         ),
       );
     }
 
     return Scaffold(
-      body: content,
-      bottomNavigationBar: NavigationBar(
-        selectedIndex: _index,
-        onDestinationSelected: _select,
-        destinations: <NavigationDestination>[
-          for (final ShellDestination destination in ShellDestination.values)
-            NavigationDestination(
-              icon: Icon(destination.icon),
-              selectedIcon: Icon(destination.selectedIcon),
-              label: destination.label,
-            ),
+      body: IndexedStack(index: _index, children: pages),
+      bottomNavigationBar: Column(
+        mainAxisSize: MainAxisSize.min,
+        children: <Widget>[
+          const PlayerBar(),
+          NavigationBar(
+            height: AppLayout.bottomNavHeight,
+            selectedIndex: _index,
+            onDestinationSelected: (int value) =>
+                setState(() => _index = value),
+            destinations: <NavigationDestination>[
+              for (final ShellDestination d in ShellDestination.values)
+                NavigationDestination(
+                  icon: Icon(d.icon),
+                  selectedIcon: Icon(d.selectedIcon),
+                  label: d.label,
+                ),
+            ],
+          ),
         ],
+      ),
+    );
+  }
+}
+
+/// Боковая навигация с фиксированной шириной.
+class _NavigationRail extends StatelessWidget {
+  const _NavigationRail({
+    required this.index,
+    required this.onSelect,
+    required this.extended,
+  });
+
+  final int index;
+  final ValueChanged<int> onSelect;
+  final bool extended;
+
+  @override
+  Widget build(BuildContext context) {
+    return NavigationRail(
+      // Ширина задана явно: иначе панель меняет её сама и всё «дёргается».
+      minWidth: AppLayout.railWidth,
+      minExtendedWidth: AppLayout.railExtendedWidth,
+      extended: extended,
+      labelType: extended ? NavigationRailLabelType.none : NavigationRailLabelType.all,
+      selectedIndex: index,
+      onDestinationSelected: onSelect,
+      destinations: <NavigationRailDestination>[
+        for (final ShellDestination d in ShellDestination.values)
+          NavigationRailDestination(
+            icon: Icon(d.icon),
+            selectedIcon: Icon(d.selectedIcon),
+            label: Text(d.label),
+          ),
+      ],
+      // Логотип живёт в шапке страницы, чтобы не дублироваться.
+      trailing: Expanded(
+        child: Align(
+          alignment: Alignment.bottomCenter,
+          child: Padding(
+            padding: const EdgeInsets.only(bottom: 16),
+            child: IconButton(
+              tooltip: 'Настройки',
+              icon: const Icon(Icons.settings_outlined),
+              onPressed: () => AppRoutes.settings(context),
+            ),
+          ),
+        ),
       ),
     );
   }
