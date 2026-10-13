@@ -129,6 +129,10 @@ class SettingsController extends Notifier<AppSettings> {
         ),
       );
 
+  /// Включает или выключает автопоиск локального прокси.
+  Future<void> setAutoDetectProxy(bool value) =>
+      update((AppSettings s) => s.copyWith(autoDetectProxy: value));
+
   Future<void> setProxy({
     ProxyKind? kind,
     String? host,

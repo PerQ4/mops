@@ -4,6 +4,7 @@ import 'package:flutter_riverpod/flutter_riverpod.dart';
 
 import '../../core/net/anti_dpi.dart';
 import '../../core/net/fronting.dart';
+import '../../core/net/local_proxy.dart';
 import '../../data/local/app_settings.dart';
 import '../../state/providers.dart';
 
@@ -31,6 +32,8 @@ class _BypassScreenState extends ConsumerState<BypassScreen> {
 
   ConnectivityReport? _report;
   bool _checking = false;
+  bool _searching = false;
+  String? _proxyResult;
 
   @override
   void initState() {
@@ -119,9 +122,54 @@ class _BypassScreenState extends ConsumerState<BypassScreen> {
             ),
           ),
 
-          // ---------------------------------------------------- подмена хоста
+          // ------------------------------------------------------------- звук
+          const Divider(height: 24),
+          const _SectionHeader('Звук'),
           SwitchListTile(
-            title: const Text('Подмена хоста (обход SNI)'),
+            title: const Text('Искать локальный прокси автоматически'),
+            subtitle: const Text(
+              'Провайдер блокирует медиасерверы отдельно, и подмена хоста '
+              'их не обходит. Приложение само найдёт запущенный прокси '
+              '(v2rayA, v2rayN, Clash, Tor…) и включит звук',
+            ),
+            value: settings.autoDetectProxy,
+            onChanged: controller.setAutoDetectProxy,
+          ),
+          Padding(
+            padding: const EdgeInsets.fromLTRB(16, 4, 16, 0),
+            child: Align(
+              alignment: Alignment.centerLeft,
+              child: FilledButton.tonalIcon(
+                onPressed: _searching ? null : () => _searchProxy(controller),
+                icon: _searching
+                    ? const SizedBox(
+                        width: 18,
+                        height: 18,
+                        child: CircularProgressIndicator(strokeWidth: 2),
+                      )
+                    : const Icon(Icons.search),
+                label: Text(_searching ? 'Ищем…' : 'Найти прокси сейчас'),
+              ),
+            ),
+          ),
+          if (_proxyResult != null)
+            Padding(
+              padding: const EdgeInsets.fromLTRB(16, 12, 16, 0),
+              child: Text(
+                _proxyResult!,
+                style: text.bodyMedium?.copyWith(
+                  color: config.usesProxy
+                      ? scheme.primary
+                      : scheme.onSurfaceVariant,
+                ),
+              ),
+            ),
+
+          // ---------------------------------------------------- подмена хоста
+          const Divider(height: 24),
+          const _SectionHeader('Подмена хоста (обход SNI)'),
+          SwitchListTile(
+            title: const Text('Включена'),
             subtitle: const Text(
               'Провайдер видит только имя разрешённого узла Google, '
               'а нужный домен передаётся в заголовке Host',
@@ -385,6 +433,42 @@ class _BypassScreenState extends ConsumerState<BypassScreen> {
           'Для звука нужен прокси или системный обход.';
     }
     return 'Ничего не используется: приложение ходит в сеть напрямую.';
+  }
+
+  /// Ищет локальный прокси прямо сейчас и сразу включает его.
+  Future<void> _searchProxy(SettingsController controller) async {
+    setState(() {
+      _searching = true;
+      _proxyResult = null;
+    });
+
+    final LocalProxy? proxy = await LocalProxyDetector.find();
+    if (!mounted) return;
+
+    if (proxy == null) {
+      setState(() {
+        _searching = false;
+        _proxyResult =
+            'Прокси не найден. Запустите свой прокси-клиент (v2rayA, v2rayN, '
+            'Clash, Tor…) и нажмите ещё раз — либо укажите адрес вручную ниже.';
+      });
+      return;
+    }
+
+    await controller.setProxy(
+      kind: proxy.kind,
+      host: proxy.host,
+      port: proxy.port,
+    );
+    await controller.setFrontingEnabled(false);
+    if (!mounted) return;
+
+    setState(() {
+      _searching = false;
+      _proxyResult = 'Найден и включён: ${proxy.kind.label} '
+          '${proxy.label}${proxy.note == null ? "" : " · ${proxy.note}"}. '
+          'Звук должен заработать.';
+    });
   }
 
   Future<void> _runCheck() async {

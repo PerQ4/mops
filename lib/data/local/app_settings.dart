@@ -68,6 +68,7 @@ class AppSettings {
     this.lastSpeed = 1.0,
     this.uiScale = 0.0,
     this.bypass = const AntiDpiConfig(),
+    this.autoDetectProxy = true,
   });
 
   final ThemeModePreference themeMode;
@@ -91,6 +92,13 @@ class AppSettings {
   /// Обход блокировок провайдера (подмена хоста, прокси).
   final AntiDpiConfig bypass;
 
+  /// Искать ли локальный прокси автоматически, чтобы заработал звук.
+  ///
+  /// Провайдер блокирует медиахосты отдельно, и подмена хоста их не обходит.
+  /// Локальный прокси (v2rayA, v2rayN, Clash…) решает задачу целиком,
+  /// поэтому приложение пробует найти его само.
+  final bool autoDetectProxy;
+
   bool get isUiScaleAuto => uiScale <= 0;
 
   int get safeSeedIndex =>
@@ -113,6 +121,7 @@ class AppSettings {
     double? lastSpeed,
     double? uiScale,
     AntiDpiConfig? bypass,
+    bool? autoDetectProxy,
   }) {
     return AppSettings(
       themeMode: themeMode ?? this.themeMode,
@@ -131,6 +140,7 @@ class AppSettings {
       lastSpeed: lastSpeed ?? this.lastSpeed,
       uiScale: uiScale ?? this.uiScale,
       bypass: bypass ?? this.bypass,
+      autoDetectProxy: autoDetectProxy ?? this.autoDetectProxy,
     );
   }
 
@@ -151,6 +161,7 @@ class AppSettings {
         'lastSpeed': lastSpeed,
         'uiScale': uiScale,
         'bypass': bypass.toJson(),
+        'autoDetectProxy': autoDetectProxy,
       };
 
   String encode() => jsonEncode(toJson());
@@ -175,6 +186,7 @@ class AppSettings {
       bypass: json['bypass'] is Map<String, dynamic>
           ? AntiDpiConfig.fromJson(json['bypass'] as Map<String, dynamic>)
           : const AntiDpiConfig(),
+      autoDetectProxy: json['autoDetectProxy'] as bool? ?? true,
     );
   }
 

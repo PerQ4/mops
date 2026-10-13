@@ -318,24 +318,47 @@ class _RelaySession {
         timeout: const Duration(seconds: 15),
       );
       socket.setOption(SocketOption.tcpNoDelay, true);
+
+      // Рукопожатие и последующий туннель читают один и тот же поток,
+      // поэтому чтение идёт через общий буфер: у сокета только одна подписка.
+      final SocketReader reader = SocketReader(socket);
       await Socks5Client.negotiate(
-        socket,
+        reader,
         targetHost: host,
         targetPort: port,
         username: user,
         password: password,
       );
-    } else {
-      // direct <host> <port>
-      host = parts.length >= 3 ? parts[1] : parts[0];
-      port = parts.length >= 3 ? int.parse(parts[2]) : 443;
-      socket = await Socket.connect(
-        host,
-        port,
-        timeout: const Duration(seconds: 15),
+
+      _target = socket;
+      _targetSub = reader.startForwarding().listen(
+        (List<int> data) {
+          if (!_clientClosed) client.add(data);
+        },
+        onDone: () {
+          _targetClosed = true;
+          _shutdown();
+        },
+        onError: (Object _) {
+          _targetClosed = true;
+          _shutdown();
+        },
+        cancelOnError: false,
       );
-      socket.setOption(SocketOption.tcpNoDelay, true);
+
+      if (rest.isNotEmpty) _forwardToTarget(rest);
+      return;
     }
+
+    // direct <host> <port>
+    host = parts.length >= 3 ? parts[1] : parts[0];
+    port = parts.length >= 3 ? int.parse(parts[2]) : 443;
+    socket = await Socket.connect(
+      host,
+      port,
+      timeout: const Duration(seconds: 15),
+    );
+    socket.setOption(SocketOption.tcpNoDelay, true);
 
     _target = socket;
     _targetSub = socket.listen(
@@ -429,15 +452,18 @@ abstract final class Socks5Client {
   static const int _noAuth = 0x00;
   static const int _userPass = 0x02;
 
-  /// Выполняет рукопожатие и CONNECT на уже открытом сокете.
+  /// Выполняет рукопожатие и CONNECT.
+  ///
+  /// Принимает читатель, а не сокет: у сокета только одна подписка, поэтому
+  /// и рукопожатие, и последующий туннель должны читать через один буфер.
   static Future<void> negotiate(
-    Socket socket, {
+    SocketReader reader, {
     required String targetHost,
     required int targetPort,
     String? username,
     String? password,
   }) async {
-    final _SocketReader reader = _SocketReader(socket);
+    final Socket socket = reader.socket;
 
     final bool useAuth =
         username != null && username.isNotEmpty && password != null;
@@ -523,28 +549,43 @@ abstract final class Socks5Client {
 /// Читает ровно N байт из сокета, сохраняя излишек в буфере.
 ///
 /// Нужен потому, что сокет отдаёт данные произвольными порциями, а протокол
-/// SOCKS5 требует точных размеров.
-class _SocketReader {
-  _SocketReader(Socket socket) {
+/// SOCKS5 требует точных размеров. После рукопожатия здесь же продолжается
+/// чтение туннеля — см. [startForwarding]: подписка на сокет может быть
+/// только одна, поэтому оба этапа идут через этот буфер.
+class SocketReader {
+  SocketReader(this.socket) {
     _subscription = socket.listen(
       (List<int> data) {
+        final StreamController<List<int>>? out = _out;
+        if (out != null) {
+          out.add(data);
+          return;
+        }
         _buffer.addAll(data);
         _notify();
       },
       onDone: () {
         _closed = true;
-        _notify();
+        final StreamController<List<int>>? out = _out;
+        if (out != null) {
+          out.close();
+        } else {
+          _notify();
+        }
       },
       onError: (Object error) {
         _error = error;
+        _closed = true;
         _notify();
       },
       cancelOnError: false,
     );
   }
 
+  final Socket socket;
   final List<int> _buffer = <int>[];
   late final StreamSubscription<List<int>> _subscription;
+  StreamController<List<int>>? _out;
   Completer<void>? _waiter;
   bool _closed = false;
   Object? _error;
@@ -562,11 +603,29 @@ class _SocketReader {
       }
       _waiter = Completer<void>();
       await _waiter!.future;
+      _waiter = null;
     }
     final List<int> result = _buffer.sublist(0, count);
     _buffer.removeRange(0, count);
     return result;
   }
 
-  Future<void> cancel() => _subscription.cancel();
+  /// Переключает чтение в режим туннеля и возвращает поток данных.
+  ///
+  /// Байты, уже накопленные в буфере, отдаются первыми — иначе начало
+  /// полезной нагрузки потерялось бы.
+  Stream<List<int>> startForwarding() {
+    final StreamController<List<int>> controller =
+        StreamController<List<int>>();
+    _out = controller;
+
+    if (_buffer.isNotEmpty) {
+      controller.add(List<int>.of(_buffer));
+      _buffer.clear();
+    }
+    if (_closed) controller.close();
+
+    _subscription.resume();
+    return controller.stream;
+  }
 }

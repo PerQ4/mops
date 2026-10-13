@@ -304,7 +304,7 @@ abstract final class ConnectivityCheck {
     final List<String> details = <String>[];
 
     final bool dataPlain = await dataReachable(fronting: false);
-    final bool mediaPlain = await _mediaReachable();
+    final bool mediaPlain = await mediaReachable();
     details.add('Данные (поиск, обложки): ${dataPlain ? "доступны" : "заблокированы"}');
     details.add('Медиапоток (звук): ${mediaPlain ? "доступен" : "заблокирован"}');
 
@@ -399,7 +399,7 @@ abstract final class ConnectivityCheck {
   ///
   /// Идёт через `SecureSocket`, то есть мимо подмены хоста — именно так
   /// в сеть ходит GStreamer при воспроизведении.
-  static Future<bool> _mediaReachable() async {
+  static Future<bool> mediaReachable() async {
     SecureSocket? socket;
     try {
       // Важно: `timeout` самого connect покрывает только установку TCP.

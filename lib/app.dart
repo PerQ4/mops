@@ -10,6 +10,7 @@ import 'core/theme/ui_scaler.dart';
 import 'core/net/anti_dpi.dart';
 import 'core/net/bypass.dart';
 import 'core/net/fronting.dart';
+import 'core/net/local_proxy.dart';
 import 'data/local/app_settings.dart';
 import 'features/shell/app_shell.dart';
 import 'state/providers.dart';
@@ -34,40 +35,71 @@ class _MopsAppState extends ConsumerState<MopsApp> {
     // Проверку удобства ради делаем после первого кадра, чтобы не задерживать
     // запуск: она может занять несколько секунд.
     WidgetsBinding.instance.addPostFrameCallback((_) {
-      unawaited(_verifyBypass());
+      unawaited(_configureAccess());
     });
   }
 
-  /// Проверяет, что выбранный способ доступа действительно работает.
+  /// Приводит доступ к сети в рабочее состояние — всё автоматически.
   ///
-  /// Обход включён по умолчанию, поэтому обычно здесь ничего менять не нужно.
-  /// Проверка нужна для редких случаев: если подмена хоста через этот узел
-  /// почему-то не работает, а прямой доступ есть — отключаем её, чтобы
-  /// приложение не осталось без данных. Всё делается само, без участия
-  /// пользователя.
-  Future<void> _verifyBypass() async {
+  /// Два независимых шага:
+  ///
+  ///  1. Если подмена хоста через узел не работает, а прямой доступ есть —
+  ///     выключаем её, чтобы приложение не осталось без данных.
+  ///  2. Если медиахост (звук) недоступен, ищем локальный прокси. Провайдер
+  ///     блокирует медиасерверы отдельно, и подменить их хост нельзя:
+  ///     у них собственный backend. Зато обычный локальный прокси решает
+  ///     задачу целиком, а он есть почти у каждого, кто обходит блокировки.
+  ///
+  /// Пользователю ничего настраивать не нужно.
+  Future<void> _configureAccess() async {
     if (!ref.read(bypassAutoVerifyProvider)) return;
-
-    final AntiDpiConfig config = ref.read(settingsControllerProvider).bypass;
-
-    // Пользователь сам выключил обход или настроил прокси — не вмешиваемся.
-    if (!config.fronting.enabled || config.usesProxy) return;
 
     final SettingsController controller =
         ref.read(settingsControllerProvider.notifier);
 
     try {
-      if (await ConnectivityCheck.dataReachable(fronting: true)) return;
+      AppSettings settings = ref.read(settingsControllerProvider);
 
-      final bool direct = await ConnectivityCheck.dataReachable(fronting: false);
-      if (direct) {
-        await controller.setFrontingEnabled(false);
-        debugPrint(
-          '[Bypass] подмена хоста недоступна, а прямой доступ есть — выключена',
-        );
+      // Шаг 1: не сломана ли подмена хоста.
+      if (settings.bypass.fronting.enabled &&
+          !settings.bypass.usesProxy &&
+          !await ConnectivityCheck.dataReachable(fronting: true)) {
+        if (await ConnectivityCheck.dataReachable(fronting: false)) {
+          await controller.setFrontingEnabled(false);
+          debugPrint('[Access] подмена хоста недоступна — выключена');
+        }
       }
+
+      // Шаг 2: доступен ли звук. Если да — искать прокси незачем.
+      if (await ConnectivityCheck.mediaReachable()) {
+        debugPrint('[Access] медиахост доступен напрямую — прокси не нужен');
+        return;
+      }
+
+      settings = ref.read(settingsControllerProvider);
+      if (!settings.autoDetectProxy || settings.bypass.usesProxy) return;
+
+      debugPrint('[Access] медиахост заблокирован — ищу локальный прокси');
+      final LocalProxy? proxy = await LocalProxyDetector.find(
+        onFound: (LocalProxy found) =>
+            debugPrint('[Access] найден прокси: $found'),
+      );
+
+      if (proxy == null) {
+        debugPrint('[Access] локальный прокси не найден');
+        return;
+      }
+
+      // Прокси закрывает всё сразу — подмена хоста больше не нужна.
+      await controller.setProxy(
+        kind: proxy.kind,
+        host: proxy.host,
+        port: proxy.port,
+      );
+      await controller.setFrontingEnabled(false);
+      debugPrint('[Access] включён прокси ${proxy.label}');
     } on Object catch (error) {
-      debugPrint('[Bypass] проверка не удалась: $error');
+      debugPrint('[Access] проверка не удалась: $error');
     }
   }
 
