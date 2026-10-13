@@ -167,6 +167,7 @@ class _NavButton extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     final ColorScheme scheme = Theme.of(context).colorScheme;
+    final TextTheme text = Theme.of(context).textTheme;
 
     // Скругление выделения должно быть концентрично внешнему: иначе
     // «таблетка» внутри капсулы выглядит чужеродно. Внутренний радиус —
@@ -183,21 +184,47 @@ class _NavButton extends StatelessWidget {
           onTap: onTap,
           borderRadius: pillRadius,
           child: AnimatedContainer(
-            duration: const Duration(milliseconds: 180),
-            padding: const EdgeInsets.symmetric(
-              horizontal: 14,
+            duration: const Duration(milliseconds: 220),
+            curve: Curves.easeOutCubic,
+            padding: EdgeInsets.symmetric(
+              horizontal: selected ? 16 : 14,
               vertical: inset,
             ),
             decoration: BoxDecoration(
               color: selected ? scheme.secondaryContainer : Colors.transparent,
               borderRadius: pillRadius,
             ),
-            child: Icon(
-              selected ? destination.selectedIcon : destination.icon,
-              size: 22,
-              color: selected
-                  ? scheme.onSecondaryContainer
-                  : scheme.onSurfaceVariant,
+            child: Row(
+              mainAxisSize: MainAxisSize.min,
+              children: <Widget>[
+                Icon(
+                  selected ? destination.selectedIcon : destination.icon,
+                  size: 22,
+                  color: selected
+                      ? scheme.onSecondaryContainer
+                      : scheme.onSurfaceVariant,
+                ),
+                // Название показываем только у выбранного пункта: список
+                // остаётся компактным, но видно, где находишься.
+                AnimatedSize(
+                  duration: const Duration(milliseconds: 220),
+                  curve: Curves.easeOutCubic,
+                  alignment: Alignment.centerLeft,
+                  child: selected
+                      ? Padding(
+                          padding: const EdgeInsets.only(left: 10),
+                          child: Text(
+                            destination.label,
+                            maxLines: 1,
+                            style: text.labelLarge?.copyWith(
+                              color: scheme.onSecondaryContainer,
+                              fontWeight: FontWeight.w600,
+                            ),
+                          ),
+                        )
+                      : const SizedBox.shrink(),
+                ),
+              ],
             ),
           ),
         ),
