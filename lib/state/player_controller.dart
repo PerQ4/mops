@@ -359,28 +359,25 @@ class PlayerController extends Notifier<PlayerUiState> {
 
       state = state.copyWith(streamNote: _noteFor(resolved));
 
-      // При обходе блокировок звук качает приложение: GStreamer про обход
-      // не знает и напрямую до googlevideo не дотянется.
-      if (ref.read(bypassActiveProvider)) {
-        state = state.copyWith(downloading: true, downloadProgress: 0);
-        final String path = await ref.read(streamDownloaderProvider).fetch(
-              resolved.url,
-              cacheKey: track.id,
-              onProgress: (double progress) {
-                if (state.current?.id == track.id) {
-                  state = state.copyWith(downloadProgress: progress);
-                }
-              },
-            );
-        if (state.current?.id != track.id) return;
+      // Файл всегда качает приложение, а не GStreamer. Медиасервер отдаёт
+      // данные только на запрос с диапазоном (`Range`), а GStreamer делает
+      // обычный GET и получает 403 — отсюда «не удалось воспроизвести трек».
+      // Скачанный файл играется из кэша.
+      state = state.copyWith(downloading: true, downloadProgress: 0);
+      final String path = await ref.read(streamDownloaderProvider).fetch(
+            resolved.url,
+            cacheKey: track.id,
+            onProgress: (double progress) {
+              if (state.current?.id == track.id) {
+                state = state.copyWith(downloadProgress: progress);
+              }
+            },
+          );
+      if (state.current?.id != track.id) return;
 
-        await _engine.load(path, autoplay: true, isLocal: true);
-        state = state.copyWith(resolving: false, downloading: false);
-        return;
-      }
-
-      await _engine.load(resolved.url.toString(), autoplay: true);
-      state = state.copyWith(resolving: false);
+      await _engine.load(path, autoplay: true, isLocal: true);
+      state = state.copyWith(resolving: false, downloading: false);
+      return;
     } on StreamResolutionException catch (error) {
       state = state.copyWith(
         resolving: false,

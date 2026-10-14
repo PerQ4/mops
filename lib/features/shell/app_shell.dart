@@ -42,7 +42,14 @@ class AppShell extends ConsumerWidget {
 
     final Widget content = Stack(
       children: <Widget>[
-        IndexedStack(index: index, children: pages),
+        // Отступ снизу: островок парит над содержимым, поэтому последние
+        // строки списков должны заканчиваться выше него.
+        Padding(
+          padding: const EdgeInsets.only(
+            bottom: AppLayout.floatingDockClearance,
+          ),
+          child: IndexedStack(index: index, children: pages),
+        ),
         const Align(
           alignment: Alignment.bottomCenter,
           child: FloatingDock(),

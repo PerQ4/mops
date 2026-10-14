@@ -42,6 +42,13 @@ abstract final class AppLayout {
   static const double bottomNavHeight = 72;
   static const double miniPlayerHeight = 72;
 
+  /// Отступ снизу, чтобы содержимое экранов не уходило под плавающий островок.
+  ///
+  /// Высота островка (64) + его отступ от края окна (14) + запас (8).
+  /// Значения должны совпадать с `FloatingDock.islandHeight` и
+  /// `FloatingDock.margin`.
+  static const double floatingDockClearance = 86;
+
   /// Максимальная ширина содержимого.
   ///
   /// Без ограничения на широком мониторе строки растягиваются на всю ширину,

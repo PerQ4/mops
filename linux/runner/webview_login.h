@@ -12,10 +12,12 @@
 // HttpOnly и недоступна из JavaScript.
 void webview_login_register(FlBinaryMessenger* messenger);
 
-// Задаёт контейнер, поверх которого показывается панель входа.
+// Задаёт контейнер, поверх которого показывается панель входа, и вид Flutter.
 //
 // Браузер открывается не в отдельном окне, а внутри окна приложения: панель
-// добавляется в переданный GtkOverlay и занимает всю его площадь.
-void webview_login_set_host(GtkOverlay* overlay);
+// добавляется в переданный GtkOverlay и занимает всю его площадь. Вид Flutter
+// нужен, чтобы вернуть ему фокус клавиатуры после закрытия панели — иначе
+// приложение перестаёт принимать ввод (например, в поиске).
+void webview_login_set_host(GtkOverlay* overlay, GtkWidget* flutter_view);
 
 #endif  // RUNNER_WEBVIEW_LOGIN_H_

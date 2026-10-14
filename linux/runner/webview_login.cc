@@ -37,6 +37,7 @@ constexpr char kSignInUrl[] =
     "&continue=https%3A%2F%2Fmusic.youtube.com%2F&hl=ru";
 
 GtkOverlay* g_overlay = nullptr;
+GtkWidget* g_flutter_view = nullptr;
 GtkWidget* g_panel = nullptr;
 WebKitWebView* g_view = nullptr;
 FlMethodCall* g_pending_call = nullptr;
@@ -65,6 +66,12 @@ void hide_panel() {
   }
   if (g_panel != nullptr) {
     gtk_widget_hide(g_panel);
+  }
+  // Возвращаем фокус клавиатуры интерфейсу: панель его забирала, и без этого
+  // приложение перестаёт принимать ввод.
+  if (g_flutter_view != nullptr) {
+    gtk_widget_grab_focus(g_flutter_view);
+    g_message("[Login] фокус возвращён интерфейсу");
   }
 }
 
@@ -113,9 +120,32 @@ std::string cookies_from_list(GList* cookies) {
   return result;
 }
 
+// Находимся ли мы именно на music.youtube.com.
+//
+// Проверять подстроку нельзя: в адресе страницы входа Google есть параметр
+// continue=https%3A%2F%2Fmusic.youtube.com%2F, и подстрока совпадёт там же.
+bool is_music_youtube_page(const gchar* uri) {
+  if (uri == nullptr) {
+    return false;
+  }
+  g_autoptr(GUri) parsed = g_uri_parse(uri, G_URI_FLAGS_NONE, nullptr);
+  if (parsed == nullptr) {
+    return false;
+  }
+  const gchar* host = g_uri_get_host(parsed);
+  return host != nullptr && g_strcmp0(host, "music.youtube.com") == 0;
+}
+
 bool has_sapisid(const std::string& cookies) {
   return cookies.find("SAPISID=") != std::string::npos ||
          cookies.find("__Secure-3PAPISID=") != std::string::npos;
+}
+
+// Cookie именно домена YouTube. Без них YouTube считает нас гостем, даже
+// если вход в Google выполнен.
+bool has_youtube_cookies(const std::string& cookies) {
+  return cookies.find("LOGIN_INFO=") != std::string::npos ||
+         cookies.find("VISITOR_INFO1_LIVE=") != std::string::npos;
 }
 
 // Диагностика: показывает, помнит ли браузер предыдущий вход.
@@ -193,8 +223,7 @@ void request_finish() {
     return;  // уже идём за cookie
   }
 
-  const gchar* uri = webkit_web_view_get_uri(g_view);
-  if (uri == nullptr || strstr(uri, "music.youtube.com") == nullptr) {
+  if (!is_music_youtube_page(webkit_web_view_get_uri(g_view))) {
     g_message("[Login] иду на music.youtube.com за cookie YouTube");
     g_waiting_home = true;
     webkit_web_view_load_uri(g_view, "https://music.youtube.com/");
@@ -262,8 +291,12 @@ void on_cookies_for_check(GObject* source, GAsyncResult* result,
     g_error_free(error);
   }
 
-  // Если вход уже выполнен, панель закрывается сама.
-  if (g_pending_call != nullptr && has_sapisid(cookie_string)) {
+  // Панель закрывается сама, только когда есть и вход Google, и cookie
+  // YouTube: иначе в сессию попадут cookie google.com, и YouTube будет
+  // считать нас гостем.
+  if (g_pending_call != nullptr && has_sapisid(cookie_string) &&
+      has_youtube_cookies(cookie_string)) {
+    g_message("[Login] вход подтверждён, забираю cookie");
     request_finish();
   }
 }
@@ -275,8 +308,7 @@ void on_load_changed(WebKitWebView* view, WebKitLoadEvent event,
   if (event != WEBKIT_LOAD_FINISHED || g_pending_call == nullptr) {
     return;
   }
-  const gchar* uri = webkit_web_view_get_uri(view);
-  if (uri == nullptr || strstr(uri, "music.youtube.com") == nullptr) {
+  if (!is_music_youtube_page(webkit_web_view_get_uri(view))) {
     return;
   }
 
@@ -452,7 +484,10 @@ void method_call_cb(FlMethodChannel* /*channel*/, FlMethodCall* method_call,
 
 }  // namespace
 
-void webview_login_set_host(GtkOverlay* overlay) { g_overlay = overlay; }
+void webview_login_set_host(GtkOverlay* overlay, GtkWidget* flutter_view) {
+  g_overlay = overlay;
+  g_flutter_view = flutter_view;
+}
 
 void webview_login_register(FlBinaryMessenger* messenger) {
   g_autoptr(FlStandardMethodCodec) codec = fl_standard_method_codec_new();
