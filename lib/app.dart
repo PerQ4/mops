@@ -137,7 +137,9 @@ class _MopsAppState extends ConsumerState<MopsApp> {
         return _ScaleShortcuts(
           child: UiScaler(
             scale: scale,
-            child: _ClampedTextScale(child: content),
+            child: _RenderScale(
+              child: _ClampedTextScale(child: content),
+            ),
           ),
         );
       },
@@ -146,6 +148,32 @@ class _MopsAppState extends ConsumerState<MopsApp> {
 }
 
 /// Итоговый масштаб интерфейса — см. `lib/state/ui_scale.dart`.
+
+/// Ограничивает разрешение отрисовки, не меняя раскладку.
+///
+/// На этом экране движок рисовал в двойном разрешении (DPR 2.0 при физическом
+/// масштабе 1.25): это вчетверо больше пикселей, чем нужно, и анимации заметно
+/// лагали. Здесь плотность ограничивается, а логический размер остаётся тем
+/// же — то есть раскладка не меняется, картинка чуть мягче.
+class _RenderScale extends StatelessWidget {
+  const _RenderScale({required this.child});
+
+  final Widget child;
+
+  /// Предел плотности. 1.5 — компромисс: текст остаётся чётким, а пикселей
+  /// примерно на треть меньше, чем при 2.0.
+  static const double maxDevicePixelRatio = 1.5;
+
+  @override
+  Widget build(BuildContext context) {
+    final MediaQueryData media = MediaQuery.of(context);
+    if (media.devicePixelRatio <= maxDevicePixelRatio) return child;
+    return MediaQuery(
+      data: media.copyWith(devicePixelRatio: maxDevicePixelRatio),
+      child: child,
+    );
+  }
+}
 
 /// Ограничивает системный масштаб текста: на десктопе он иногда даёт
 /// нечитаемо крупный интерфейс, а уменьшить его пользователь не может.
