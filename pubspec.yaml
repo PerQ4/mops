@@ -40,6 +40,10 @@ dependencies:
   # обычным GET — именно так отдаёт ссылку visionOS (проверено
   # tool/plain_get_check.dart: обычный GET — 200). GStreamer из audioplayers
   # слал `Range: bytes=0-` и получал 403, поэтому движок заменён.
+  # Встроенный браузер для входа в аккаунт: на Windows и macOS это WebView2
+  # и WKWebView, на Linux — свой WebKitGTK (см. linux/runner/webview_login.cc).
+  flutter_inappwebview: ^6.1.5
+
   media_kit: ^1.2.6
   # Нативные библиотеки для Linux. ВАЖНО: этот пакет НЕ кладёт libmpv в поставку
   # (он собирает только mimalloc) — нужен системный libmpv, который ставится

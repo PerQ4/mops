@@ -4,6 +4,7 @@ import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:url_launcher/url_launcher.dart';
 
 import '../../core/auth/oauth_device_flow.dart';
+import '../../core/auth/inapp_login.dart';
 import '../../core/auth/webview_login.dart';
 import '../../core/auth/token_store.dart';
 import '../../state/auth_controller.dart';
@@ -594,6 +595,23 @@ class _CookieLoginCardState extends ConsumerState<_CookieLoginCard> {
   }
 }
 
+/// Готов ли вход: нужен SAPISID и cookie домена YouTube (LOGIN_INFO).
+///
+/// Одного SAPISID мало: без cookie YouTube аккаунт считается гостем, и данные
+/// не подтягиваются.
+bool _hasYoutubeLogin(String cookies) {
+  bool hasSapisid = false;
+  bool hasYoutubeCookie = false;
+  for (final String part in cookies.split(';')) {
+    final String name = part.split('=').first.trim();
+    if (name == 'SAPISID' || name == '__Secure-3PAPISID') hasSapisid = true;
+    if (name == 'LOGIN_INFO' || name == 'VISITOR_INFO1_LIVE') {
+      hasYoutubeCookie = true;
+    }
+  }
+  return hasSapisid && hasYoutubeCookie;
+}
+
 class _WebviewLoginCardState extends ConsumerState<_WebviewLoginCard> {
   bool _available = false;
   bool _busy = false;
@@ -602,8 +620,12 @@ class _WebviewLoginCardState extends ConsumerState<_WebviewLoginCard> {
   @override
   void initState() {
     super.initState();
+    // Панель входа есть либо в Linux (WebKitGTK), либо через встроенный
+    // браузер системы (WebView2 в Windows, WKWebView в macOS).
     WebviewLogin.isAvailable().then((bool value) {
-      if (mounted) setState(() => _available = value);
+      if (mounted) {
+        setState(() => _available = value || inAppLoginAvailable);
+      }
     });
   }
 
@@ -663,7 +685,18 @@ class _WebviewLoginCardState extends ConsumerState<_WebviewLoginCard> {
     });
 
     try {
-      final String cookies = await WebviewLogin.openLogin();
+      final String cookies = inAppLoginAvailable
+          ? (await openInAppLogin(
+                context,
+                url: WebviewLogin.signInUrl,
+                cookieHost: 'https://music.youtube.com',
+                isDone: _hasYoutubeLogin,
+              ) ??
+              '')
+          : await WebviewLogin.openLogin();
+      if (cookies.isEmpty) {
+        throw WebviewLoginException("Вход отменён.");
+      }
       await ref
           .read(authControllerProvider.notifier)
           .signInWithCookies(cookies);
