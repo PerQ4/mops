@@ -115,17 +115,6 @@ class _LyricsMenuSheet extends ConsumerWidget {
               ),
             ),
             const Divider(height: 1),
-            if (onToggleVisibility != null)
-              ListTile(
-                leading: Icon(
-                  lyricsVisible ? Icons.visibility_off : Icons.visibility,
-                ),
-                title: Text(lyricsVisible ? 'Скрыть текст' : 'Показать текст'),
-                onTap: () {
-                  Navigator.pop(context);
-                  onToggleVisibility!();
-                },
-              ),
             const Padding(
               padding: EdgeInsets.fromLTRB(16, 14, 16, 4),
               child: Text('Найти текст в другом источнике'),

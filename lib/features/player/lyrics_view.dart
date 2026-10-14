@@ -146,7 +146,6 @@ class _PlainLyrics extends ConsumerWidget {
   @override
   Widget build(BuildContext context, WidgetRef ref) {
     final TextTheme theme = Theme.of(context).textTheme;
-    final ColorScheme scheme = Theme.of(context).colorScheme;
     final double scale = ref.watch(
       settingsControllerProvider.select((AppSettings s) => s.lyricsTextScale),
     );
@@ -159,33 +158,6 @@ class _PlainLyrics extends ConsumerWidget {
         children: <Widget>[
           // Честно предупреждаем: у этого текста нет времён, поэтому плеер
           // не подсвечивает строки и не прокручивает их.
-          Container(
-            padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 8),
-            decoration: BoxDecoration(
-              color: scheme.surfaceContainerHighest,
-              borderRadius: BorderRadius.circular(12),
-            ),
-            child: Row(
-              children: <Widget>[
-                Icon(Icons.info_outline, size: 16, color: scheme.onSurfaceVariant),
-                const SizedBox(width: 8),
-                Expanded(
-                  child: Text(
-                    source == null || source!.isEmpty
-                        ? 'Текст без синхронизации — автопрокрутки нет.'
-                        : 'Текст без синхронизации ($source) — автопрокрутки нет.',
-                    style: theme.bodySmall?.copyWith(
-                      color: scheme.onSurfaceVariant,
-                    ),
-                  ),
-                ),
-                TextButton(
-                  onPressed: onFindSource,
-                  child: const Text('Другой источник'),
-                ),
-              ],
-            ),
-          ),
           const SizedBox(height: 16),
           Text(
             text,
@@ -274,8 +246,8 @@ class _SyncedLyricsState extends ConsumerState<_SyncedLyrics> {
       }
     }
 
-    final ColorScheme scheme = Theme.of(context).colorScheme;
     final TextTheme theme = Theme.of(context).textTheme;
+    final ColorScheme scheme = Theme.of(context).colorScheme;
     final double scale = ref.watch(
       settingsControllerProvider.select((AppSettings s) => s.lyricsTextScale),
     );

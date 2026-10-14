@@ -279,13 +279,17 @@ class _TopBar extends ConsumerWidget {
           const Spacer(),
           // Источник текста можно сменить, даже пока текст скрыт: пункт
           // «найти в другом источнике» из меню текста.
-          // Одна кнопка вместо двух: меню текста уже содержит
-          // «Показать/скрыть», и отдельная кнопка дублировала действие.
-          LyricsMenuButton(
-            request: request,
-            onToggleVisibility: onToggleLyrics,
-            lyricsVisible: showLyrics,
+          // Показ текста — отдельной кнопкой, а выбор источника — в меню
+          // (пункт «Показать/скрыть» оттуда убран, чтобы не дублировать).
+          IconButton.filledTonal(
+            tooltip: showLyrics ? 'Скрыть текст' : 'Показать текст',
+            isSelected: showLyrics,
+            icon: const Icon(Icons.lyrics_outlined, size: 20),
+            selectedIcon: const Icon(Icons.lyrics, size: 20),
+            onPressed: onToggleLyrics,
           ),
+          const SizedBox(width: 4),
+          LyricsMenuButton(request: request),
           const SizedBox(width: 8),
         ],
       ),
