@@ -75,6 +75,10 @@ class AudioplayersEngine implements AudioEngine {
       PlayerState.stopped => PlaybackStatus.idle,
       PlayerState.disposed => PlaybackStatus.idle,
     };
+    // [DEBUG]
+    // ignore: avoid_print
+    print('[DBG] onPlayerState raw=$state -> ${mapped.name} '
+        'seeking=$_seeking needsRecovery=$_needsRecovery');
 
     // Завершение приходит и сюда, и в `onPlayerComplete`. Обрабатываем в
     // одном месте, чтобы фильтр «это не перемотка» сработал одинаково.
@@ -92,6 +96,11 @@ class AudioplayersEngine implements AudioEngine {
 
   /// Сообщает об окончании воспроизведения, отсекая ложный EOS перемотки.
   void _emitCompletion() {
+    // [DEBUG]
+    // ignore: avoid_print
+    print('[DBG] _emitCompletion seeking=$_seeking '
+        'needsRecovery=$_needsRecovery status=${_state.status.name} '
+        'duration=${_state.duration.inMilliseconds}');
     if (_seeking) {
       // Перемотка оборвала поток в EOS. Держим тот же трек и позицию:
       // очередь переключать нельзя, иначе «играть» включит следующий.
@@ -112,6 +121,9 @@ class AudioplayersEngine implements AudioEngine {
   }
 
   void _onLog(String message) {
+    // [DEBUG]
+    // ignore: avoid_print
+    print('[DBG] log: $message');
     // audioplayers пишет в лог и ошибки, и отладку. Понятный пользователю
     // текст формируем только для явных сбоев.
     final String lower = message.toLowerCase();
@@ -146,6 +158,9 @@ class AudioplayersEngine implements AudioEngine {
     bool autoplay = true,
     bool isLocal = false,
   }) async {
+    // [DEBUG]
+    // ignore: avoid_print
+    print('[DBG] load autoplay=$autoplay isLocal=$isLocal source=$source');
     // Новый трек — прежняя перемотка и её последствия больше не важны.
     _needsRecovery = false;
     _lastSeekTarget = Duration.zero;
@@ -180,6 +195,10 @@ class AudioplayersEngine implements AudioEngine {
 
   @override
   Future<void> play() async {
+    // [DEBUG]
+    // ignore: avoid_print
+    print('[DBG] play needsRecovery=$_needsRecovery status=${_state.status.name} '
+        'lastSeek=${_lastSeekTarget.inMilliseconds}');
     // Если поток оборвался на перемотке, возвращаем его на выбранное место,
     // чтобы «играть» продолжило ТОТ ЖЕ трек, а не тишину.
     if (_needsRecovery) {
@@ -209,6 +228,9 @@ class AudioplayersEngine implements AudioEngine {
   @override
   Future<void> seek(Duration position) async {
     final Duration clamped = position < Duration.zero ? Duration.zero : position;
+    // [DEBUG]
+    // ignore: avoid_print
+    print('[DBG] seek begin $clamped');
     _lastSeekTarget = clamped;
     _beginSeek();
 
@@ -218,6 +240,9 @@ class AudioplayersEngine implements AudioEngine {
 
     try {
       await _player.seek(clamped);
+      // [DEBUG]
+      // ignore: avoid_print
+      print('[DBG] seek await вернулся');
     } on Object catch (error) {
       // Ошибку перемотки не показываем как сбой воспроизведения: звук
       // продолжает идти, плеер остаётся на прежнем месте.
@@ -231,12 +256,18 @@ class AudioplayersEngine implements AudioEngine {
   void _beginSeek() {
     _seeking = true;
     _seekSafetyTimer?.cancel();
+    // [DEBUG]
+    // ignore: avoid_print
+    print('[DBG] _beginSeek');
     // Страховка: если `onSeekComplete` не придёт (например, платформа его не
     // шлёт), снимаем флаг сами — иначе настоящий конец трека будет пропущен.
     _seekSafetyTimer = Timer(const Duration(seconds: 10), _endSeek);
   }
 
   void _endSeek() {
+    // [DEBUG]
+    // ignore: avoid_print
+    print('[DBG] _endSeek (was $_seeking)');
     _seeking = false;
     _seekSafetyTimer?.cancel();
     _seekSafetyTimer = null;

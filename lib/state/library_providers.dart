@@ -27,6 +27,22 @@ final FutureProvider<List<Track>> likedSongsProvider =
   return ref.watch(librarySourceProvider).likedSongs();
 });
 
+/// Плейлист «Мне нравится» целиком — для экрана плейлиста.
+///
+/// Экран плейлиста не может пользоваться общим `playlistProvider`: тот ходит
+/// в каталог без авторизации, и гостю лайкнутый плейлист приходит пустым.
+/// Поэтому у «Мне нравится» отдельный источник, который запрашивает список
+/// авторизованно и сам подставляет понятное название.
+final FutureProvider<Playlist> likedSongsPlaylistProvider =
+    FutureProvider<Playlist>((ref) async {
+  if (!ref.watch(authControllerProvider).isSignedIn) {
+    // Без входа запрос всё равно вернул бы пустоту — показываем пустой
+    // плейлист с названием, а не сетевую ошибку.
+    return const Playlist(id: 'VLLM', title: 'Мне нравится');
+  }
+  return ref.watch(librarySourceProvider).likedSongsPlaylist();
+});
+
 /// Множество id лайкнутых треков — единый источник правды для «сердца».
 ///
 /// Раньше каждый экран сам сверялся с [likedSongsProvider] и держал локальный

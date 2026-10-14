@@ -4,7 +4,9 @@ import 'package:flutter_riverpod/flutter_riverpod.dart';
 import '../../core/theme/layout.dart';
 import '../../core/utils/format.dart';
 import '../../data/models/models.dart';
+import '../../data/sources/library_source.dart';
 import '../../state/catalog_providers.dart';
+import '../../state/library_providers.dart';
 import '../../state/player_controller.dart';
 import '../../widgets/async_views.dart';
 import '../../widgets/track_tile.dart';
@@ -20,8 +22,14 @@ class PlaylistScreen extends ConsumerWidget {
 
   @override
   Widget build(BuildContext context, WidgetRef ref) {
-    final AsyncValue<Playlist> playlist =
-        ref.watch(playlistProvider(playlistId));
+    // «Понравившаяся музыка» в библиотеке открывается с id `VLLM` (а из
+    // очереди — с `LM`). Общий `playlistProvider` запрашивает раздел без
+    // авторизации, и гостю YouTube отдаёт пустой плейлист, поэтому для
+    // «Мне нравится» берём отдельный авторизованный источник.
+    final bool liked = LibrarySource.isLikedPlaylist(playlistId);
+    final AsyncValue<Playlist> playlist = liked
+        ? ref.watch(likedSongsPlaylistProvider)
+        : ref.watch(playlistProvider(playlistId));
 
     return Scaffold(
       body: playlist.when(
@@ -30,8 +38,10 @@ class PlaylistScreen extends ConsumerWidget {
         error: (Object error, StackTrace _) => Scaffold(
           appBar: AppBar(),
           body: ErrorState(
-          message: describeError(error),
-            onRetry: () => ref.invalidate(playlistProvider(playlistId)),
+            message: describeError(error),
+            onRetry: () => ref.invalidate(
+              liked ? likedSongsPlaylistProvider : playlistProvider(playlistId),
+            ),
           ),
         ),
       ),

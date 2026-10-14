@@ -201,7 +201,12 @@ class CatalogSource {
     final String browseId =
         playlistId.startsWith('VL') ? playlistId : 'VL$playlistId';
 
-    final Map<String, dynamic> res = await _client.browse(browseId);
+    // Авторизация обязательна: без неё YouTube не отдаёт приватные плейлисты —
+    // например «Мне нравится» (id VLLM) приходит пустым, хотя вход выполнен.
+    final Map<String, dynamic> res = await _client.browse(
+      browseId,
+      authenticated: _client.hasAuth,
+    );
     final List<Track> tracks =
         _tracksFrom(res, fallbackPlaylistId: playlistId);
 

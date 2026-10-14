@@ -73,8 +73,9 @@ class _LibraryScreenState extends ConsumerState<LibraryScreen> {
   Widget _body() {
     return switch (_filter) {
       LibraryFilter.all => const _LibraryOverview(),
+      LibraryFilter.liked => const _SongsTab(),
       LibraryFilter.playlists => const _PlaylistsGrid(),
-      LibraryFilter.songs => const _SongsTab(),
+      LibraryFilter.songs => const _LibrarySongsTab(),
       LibraryFilter.artists => const _ArtistsGrid(),
       LibraryFilter.albums => const _AlbumsGrid(),
       LibraryFilter.subscriptions => const _SubscriptionsGrid(),
@@ -86,8 +87,13 @@ class _LibraryScreenState extends ConsumerState<LibraryScreen> {
 ///
 /// «Подписки» оставлены отдельным чипом: без него раздел потерялся бы, хотя
 /// в списке из задания его нет.
+///
+/// «Мне нравится» — отдельный чип, хотя раньше лайкнутые треки прятались под
+/// «Треками»: YouTube Music различает их (лайкнутая музыка и сохранённые
+/// треки), и без своего раздела лайкнутый плейлист было не найти.
 enum LibraryFilter {
   all('Библиотека', Icons.library_music_outlined),
+  liked('Мне нравится', Icons.favorite_outline),
   playlists('Плейлисты', Icons.queue_music),
   songs('Треки', Icons.music_note_outlined),
   artists('Исполнители', Icons.person_outline),
@@ -411,6 +417,42 @@ class _SongsTab extends ConsumerWidget {
       error: (Object error, StackTrace _) => ErrorState(
         message: describeError(error),
         onRetry: () => ref.invalidate(likedSongsProvider),
+      ),
+    );
+  }
+}
+
+/// Сохранённые треки — раздел «Треки» библиотеки YouTube Music.
+///
+/// Это не то же самое, что «Мне нравится»: сюда попадают треки, сохранённые
+/// в библиотеку (`FEmusic_liked_videos`). Раньше «Треки» показывали лайкнутое
+/// и дублировали «Мне нравится»; теперь у разделов разные источники.
+class _LibrarySongsTab extends ConsumerWidget {
+  const _LibrarySongsTab();
+
+  @override
+  Widget build(BuildContext context, WidgetRef ref) {
+    final AsyncValue<List<Track>> songs = ref.watch(librarySongsProvider);
+
+    return songs.when(
+      data: (List<Track> data) {
+        if (data.isEmpty) {
+          return const EmptyState(
+            icon: Icons.music_note_outlined,
+            title: 'Сохранённых треков нет',
+            subtitle: 'Добавляйте треки в библиотеку YouTube Music — они '
+                'появятся здесь.',
+          );
+        }
+        return TrackListView(
+          tracks: data,
+          header: _PlayAllHeader(tracks: data, title: 'Треки'),
+        );
+      },
+      loading: () => const Center(child: CircularProgressIndicator()),
+      error: (Object error, StackTrace _) => ErrorState(
+        message: describeError(error),
+        onRetry: () => ref.invalidate(librarySongsProvider),
       ),
     );
   }

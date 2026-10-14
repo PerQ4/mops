@@ -89,13 +89,68 @@ class LibrarySource {
     return _playlistsFromResponse(res);
   }
 
+  /// `browseId` плейлиста «Мне нравится».
+  ///
+  /// Именно он приходит в списке плейлистов библиотеки (`likedPlaylists`),
+  /// поэтому плитка открывает экран плейлиста с этим id.
+  static const String likedPlaylistBrowseId = 'VLLM';
+
+  /// id, под которым лайкнутый плейлист известен внутри API и в очереди.
+  static const String likedPlaylistQueueId = 'LM';
+
+  /// Относится ли id к плейлисту «Мне нравится».
+  ///
+  /// Проверяем оба варианта: страница библиотеки использует `browseId` (`VLLM`),
+  /// а ссылки из очереди и старой разметки — `playlistId` (`LM`).
+  static bool isLikedPlaylist(String id) =>
+      id == likedPlaylistBrowseId || id == likedPlaylistQueueId;
+
   /// Треки, которым поставлен лайк.
   Future<List<Track>> likedSongs() async {
     final Map<String, dynamic> res = await _client.browse(
       _browseLikedSongs,
       authenticated: true,
     );
-    return BrowseParser.playlistShelf(res, playlistId: 'LM');
+    return BrowseParser.playlistShelf(res, playlistId: likedPlaylistQueueId);
+  }
+
+  /// Плейлист «Мне нравится» целиком — для экрана плейлиста.
+  ///
+  /// Отдельный метод, а не `CatalogSource.playlist`: тот запрашивает раздел
+  /// без `authenticated: true`, а гостю YouTube не отдаёт лайкнутые треки —
+  /// страница открывалась пустой. Здесь запрос всегда авторизованный.
+  Future<Playlist> likedSongsPlaylist() async {
+    final Map<String, dynamic> res = await _client.browse(
+      likedPlaylistBrowseId,
+      authenticated: true,
+    );
+    final List<Track> tracks =
+        BrowseParser.playlistShelf(res, playlistId: likedPlaylistQueueId);
+
+    // Обложки в шапке у лайкнутого плейлиста обычно нет — тогда берём её
+    // у первого трека, иначе герой страницы остался бы серой заглушкой.
+    final List<Thumbnail> headerThumbs = BrowseParser.pageThumbnails(res);
+    final List<Thumbnail> thumbs = headerThumbs.isNotEmpty
+        ? headerThumbs
+        : (tracks.isEmpty ? const <Thumbnail>[] : tracks.first.thumbnails);
+
+    return Playlist(
+      id: likedPlaylistBrowseId,
+      title: 'Мне нравится',
+      thumbnails: thumbs,
+      tracks: tracks,
+      trackCount: tracks.isEmpty ? null : tracks.length,
+      duration: _totalDuration(tracks),
+    );
+  }
+
+  /// Суммарная длительность — для подписи «N треков • 1 ч 20 мин».
+  Duration? _totalDuration(List<Track> tracks) {
+    Duration total = Duration.zero;
+    for (final Track track in tracks) {
+      total += track.duration;
+    }
+    return total == Duration.zero ? null : total;
   }
 
   /// Все сохранённые треки (включая добавленные вручную).
