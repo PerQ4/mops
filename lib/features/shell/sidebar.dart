@@ -335,14 +335,15 @@ class _PlaylistRowState extends ConsumerState<_PlaylistRow> {
                     ],
                   ),
                 ),
-                // Кнопки не убираем из дерева, а гасим прозрачностью: иначе
-                // название «прыгало» бы по ширине при каждом наведении.
-                IgnorePointer(
-                  ignoring: !showActions,
-                  child: AnimatedOpacity(
-                    opacity: showActions ? 1 : 0,
-                    duration: const Duration(milliseconds: 150),
-                    child: Row(
+                // Пока курсор не наведён, кнопки не занимают место вовсе:
+                // иначе место под них резервировалось всегда и название
+                // плейлиста обрезалось даже без наведения.
+                AnimatedSize(
+                  duration: const Duration(milliseconds: 150),
+                  curve: Curves.easeOutCubic,
+                  alignment: Alignment.centerRight,
+                  child: showActions
+                      ? Row(
                       mainAxisSize: MainAxisSize.min,
                       children: <Widget>[
                         _busy
@@ -380,8 +381,8 @@ class _PlaylistRowState extends ConsumerState<_PlaylistRow> {
                               ],
                         ),
                       ],
-                    ),
-                  ),
+                    )
+                      : const SizedBox.shrink(),
                 ),
               ],
             ),
