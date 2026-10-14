@@ -35,7 +35,10 @@ class FloatingDock extends ConsumerWidget {
   static const double islandHeight = 78;
 
   /// Высота мини-плеера. ArchiveTune: 70.
-  static const double playerIslandHeight = 70;
+  /// Высота островка плеера. Раньше была 70, как мини-плеер в ArchiveTune,
+  /// но там он примыкает сверху к панели навигации, а у нас островки стоят
+  /// рядом — при разной высоте они выглядят разнородно.
+  static const double playerIslandHeight = islandHeight;
 
   /// Полное скругление — половина высоты островка.
   static const double outerRadius = islandHeight / 2;
@@ -131,7 +134,7 @@ class _NavIsland extends ConsumerWidget {
         child: Row(
           mainAxisSize: MainAxisSize.min,
           children: <Widget>[
-            const SizedBox(width: 8),
+            const SizedBox(width: 10),
             for (final ShellDestination d in ShellDestination.values)
               _NavButton(
                 destination: d,
@@ -141,7 +144,7 @@ class _NavIsland extends ConsumerWidget {
                   ShellDestination.values.indexOf(d),
                 ),
               ),
-            const SizedBox(width: 4),
+            const SizedBox(width: 6),
             Container(
               width: 1,
               height: 24,
@@ -154,7 +157,7 @@ class _NavIsland extends ConsumerWidget {
               icon: const Icon(Icons.settings_outlined),
               onPressed: () => AppRoutes.settings(context),
             ),
-            const SizedBox(width: 8),
+            const SizedBox(width: 10),
           ],
         ),
       ),
@@ -178,12 +181,14 @@ class _NavButton extends StatelessWidget {
     final ColorScheme scheme = Theme.of(context).colorScheme;
     final TextTheme text = Theme.of(context).textTheme;
 
-    // Скругление выделения должно быть концентрично внешнему: иначе
-    // «таблетка» внутри капсулы выглядит чужеродно. Внутренний радиус —
-    // внешний минус вертикальный отступ.
+    // Геометрия выделения: отступ от краёв одинаковый, а радиус концентричен
+    // внешнему (внешний минус отступ). Высоту задаём явно: если оставить её
+    // по содержимому, «таблетка» выходит ниже задуманного, отступ перестаёт
+    // совпадать с радиусом и скругление выглядит чужим.
     const double inset = 10;
     final BorderRadius pillRadius =
         BorderRadius.circular(FloatingDock.outerRadius - inset);
+    const double pillHeight = FloatingDock.islandHeight - inset * 2;
 
     return Padding(
       padding: const EdgeInsets.symmetric(horizontal: 2),
@@ -195,10 +200,8 @@ class _NavButton extends StatelessWidget {
           child: AnimatedContainer(
             duration: const Duration(milliseconds: 220),
             curve: Curves.easeOutCubic,
-            padding: EdgeInsets.symmetric(
-              horizontal: selected ? 16 : 14,
-              vertical: inset,
-            ),
+            height: pillHeight,
+            padding: EdgeInsets.symmetric(horizontal: selected ? 16 : 14),
             decoration: BoxDecoration(
               color: selected ? scheme.secondaryContainer : Colors.transparent,
               borderRadius: pillRadius,
