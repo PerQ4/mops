@@ -43,7 +43,9 @@ class FrontingConfig {
     'youtube.com',
     'youtu.be',
     'ytimg.com',
-    'ggpht.com',
+    // `ggpht.com` здесь быть НЕ должно: на нём лежат аватары аккаунта
+    // (yt3.ggpht.com), а фронт-узел их не отдаёт — из-за этого аватар
+    // не появлялся. Напрямую этот хост открывается.
     'googleusercontent.com',
     'youtube-nocookie.com',
   };
