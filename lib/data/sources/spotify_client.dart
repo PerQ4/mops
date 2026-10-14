@@ -25,9 +25,11 @@ class SpotifyClient {
 
   static const String _tokenUrl = 'https://open.spotify.com/api/token';
   static const String _serverTimeUrl = 'https://open.spotify.com/api/server-time';
-  static const String _nuanceUrl =
-      'https://gist.githubusercontent.com/sonic-liberation/'
-      '22ed9c6ba463899e933427f7de1f0eef/raw/nuances.json';
+  // Секреты TOTP: словарь «версия → массив чисел». Старый гист с одним
+  // секретом больше не используется — из него получался неверный код.
+  static const String _secretsUrl =
+      'https://raw.githubusercontent.com/xyloflake/spot-secrets-go/'
+      'main/secrets/secretDict.json';
   static const String _api = 'https://api.spotify.com/v1';
 
   /// Адрес страницы входа Spotify — открывается во встроенном браузере.
@@ -41,6 +43,7 @@ class SpotifyClient {
   String? _token;
   DateTime? _tokenExpiry;
   String? _nuanceSecret;
+  String? _nuanceVersion;
 
   /// Готов ли клиент к работе (есть ли действующий токен).
   bool get isAuthorized => _token != null && !_isExpired;
@@ -50,8 +53,8 @@ class SpotifyClient {
 
   /// Получает токен по cookie `sp_dc`.
   Future<void> authorize(String spDc) async {
-    final String? secret = await _fetchNuance();
-    if (secret == null) {
+    final ({String secret, String version})? nuance = await _fetchNuance();
+    if (nuance == null) {
       throw const SpotifyException(
         'Не удалось получить секрет для входа в Spotify. Попробуйте позже.',
       );
@@ -62,20 +65,32 @@ class SpotifyClient {
       throw const SpotifyException('Spotify не ответил. Проверьте соединение.');
     }
 
-    final String totp = _totp(secret, serverTime);
+    final String totp = _totp(nuance.secret, serverTime);
+
+    // Так делает рабочий клиент: `reason=transport`, `productType=web-player`
+    // (через дефис), код и его версия в параметрах, метка времени — и НИКАКОГО
+    // заголовка Authorization. Прежний вариант с `reason=init`, `web_player` и
+    // `Authorization` сервер отклонял, и токен не выдавался.
+    final Uri tokenUri = Uri.parse(_tokenUrl).replace(
+      queryParameters: <String, String>{
+        'reason': 'transport',
+        'productType': 'web-player',
+        'totp': totp,
+        'totpVer': nuance.version,
+        'ts': '${DateTime.now().millisecondsSinceEpoch ~/ 1000}',
+      },
+    );
 
     final Map<String, dynamic>? json = await _request(
-      Uri.parse('$_tokenUrl?reason=init&productType=web_player'),
+      tokenUri,
       method: 'GET',
       headers: <String, String>{
         'Cookie': 'sp_dc=$spDc',
-        'App-Platform': 'WebPlayer',
-        'Authorization': 'Bearer $totp',
       },
     );
 
     final String? token = json?['accessToken'] as String?;
-    if (token == null || token.isEmpty) {
+    if (token == null || token.isEmpty || json?['isAnonymous'] == true) {
       throw const SpotifyException(
         'Spotify не выдал токен. Проверьте, что вход выполнен.',
       );
@@ -187,19 +202,39 @@ class SpotifyClient {
         headers: <String, String>{'Authorization': 'Bearer $_token'},
       );
 
-  /// Секрет TOTP из публичного гиста (кэшируется на время работы).
-  Future<String?> _fetchNuance() async {
-    final String? cached = _nuanceSecret;
-    if (cached != null) return cached;
+  /// Секрет TOTP и его версия (кэшируются на время работы).
+  ///
+  /// Источник — словарь «версия → массив чисел». Секрет — не строка: каждый
+  /// байт получается XOR-преобразованием `value ^ ((i % 33) + 9)`, как в
+  /// рабочих клиентах. Версия берётся наибольшая: старая даёт код, который
+  /// Spotify уже не принимает.
+  Future<({String secret, String version})?> _fetchNuance() async {
+    if (_nuanceSecret != null && _nuanceVersion != null) {
+      return (secret: _nuanceSecret!, version: _nuanceVersion!);
+    }
 
-    final Map<String, dynamic>? json = await _request(Uri.parse(_nuanceUrl));
-    // Список приходит как {'items': [...]} — так его приводит _request.
-    final dynamic list =
-        (json?['items'] as List<dynamic>?)?.firstOrNull ?? json;
-    if (list is! Map) return null;
-    final String? secret = list['s'] as String?;
-    _nuanceSecret = secret;
-    return secret;
+    final Map<String, dynamic>? json = await _request(Uri.parse(_secretsUrl));
+    if (json == null || json.isEmpty) return null;
+
+    final List<String> versions = json.keys.toList()
+      ..sort(
+        (String a, String b) =>
+            (int.tryParse(a) ?? 0).compareTo(int.tryParse(b) ?? 0),
+      );
+    final String version = versions.last;
+    final dynamic raw = json[version];
+    if (raw is! List) return null;
+
+    final StringBuffer secret = StringBuffer();
+    for (int i = 0; i < raw.length; i++) {
+      final dynamic item = raw[i];
+      if (item is! num) return null;
+      secret.writeCharCode(item.toInt() ^ ((i % 33) + 9));
+    }
+
+    _nuanceSecret = secret.toString();
+    _nuanceVersion = version;
+    return (secret: _nuanceSecret!, version: _nuanceVersion!);
   }
 
   Future<int?> _fetchServerTime() async {
@@ -213,8 +248,11 @@ class SpotifyClient {
   }
 
   /// Шестизначный код TOTP: SHA1, шаг 30 секунд, 6 цифр.
+  ///
+  /// Ключ — сами байты секрета (он приходит уже «раскодированным» из
+  /// XOR-преобразования), а не base32: HMAC считается по сырым байтам.
   static String _totp(String secret, int serverTimeSeconds) {
-    final Uint8List key = _base32Decode(secret);
+    final Uint8List key = Uint8List.fromList(secret.codeUnits);
     final int counter = serverTimeSeconds ~/ 30;
 
     // Счётчик — 8 байт (RFC 6238). С четырьмя байтами код не совпадает
@@ -235,27 +273,7 @@ class SpotifyClient {
     return (binary % 1000000).toString().padLeft(6, '0');
   }
 
-  /// Разбор base32 (алфавит без цифр 0/1 — как в секретах TOTP).
-  static Uint8List _base32Decode(String input) {
-    const String alphabet = 'ABCDEFGHIJKLMNOPQRSTUVWXYZ234567';
-    final String clean = input.replaceAll('=', '').toUpperCase();
-
-    int buffer = 0;
-    int bits = 0;
-    final BytesBuilder out = BytesBuilder();
-    for (final int code in clean.codeUnits) {
-      final int value = alphabet.indexOf(String.fromCharCode(code));
-      if (value < 0) continue;
-      buffer = (buffer << 5) | value;
-      bits += 5;
-      if (bits >= 8) {
-        bits -= 8;
-        out.addByte((buffer >> bits) & 0xff);
-      }
-    }
-    return out.takeBytes();
-  }
-
+  /// Разбор base32 больше не нужен: секрет приходит в виде чисел.
   Future<Map<String, dynamic>?> _request(
     Uri uri, {
     String method = 'GET',
@@ -287,10 +305,11 @@ class SpotifyClient {
 
   /// Диагностика: секрет, время сервера и посчитанный код.
   Future<String?> debugTotp() async {
-    final String? secret = await _fetchNuance();
+    final ({String secret, String version})? nuance = await _fetchNuance();
     final int? time = await _fetchServerTime();
-    if (secret == null || time == null) return null;
-    return 'время=$time код=${_totp(secret, time)}';
+    if (nuance == null || time == null) return null;
+    return 'версия=${nuance.version} время=$time '
+        'код=${_totp(nuance.secret, time)}';
   }
 
   void dispose() => _client.close(force: true);

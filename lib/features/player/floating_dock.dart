@@ -538,15 +538,6 @@ class _IslandControls extends ConsumerWidget {
     return Row(
       mainAxisSize: MainAxisSize.min,
       children: <Widget>[
-        if (wide)
-          IconButton(
-            tooltip: player.shuffle ? 'Перемешивание включено' : 'Перемешать',
-            isSelected: player.shuffle,
-            iconSize: 20,
-            icon: const Icon(Icons.shuffle),
-            selectedIcon: Icon(Icons.shuffle, size: 20, color: scheme.primary),
-            onPressed: controller.toggleShuffle,
-          ),
         IconButton(
           tooltip: 'Предыдущий',
           iconSize: 24,
@@ -581,25 +572,6 @@ class _IslandControls extends ConsumerWidget {
           icon: const Icon(Icons.skip_next_rounded),
           onPressed: player.queue.isEmpty ? null : controller.next,
         ),
-        if (wide)
-          IconButton(
-            tooltip: player.repeat.label,
-            isSelected: player.repeat != PlayerRepeatMode.off,
-            iconSize: 20,
-            icon: Icon(
-              player.repeat == PlayerRepeatMode.one
-                  ? Icons.repeat_one
-                  : Icons.repeat,
-            ),
-            selectedIcon: Icon(
-              player.repeat == PlayerRepeatMode.one
-                  ? Icons.repeat_one
-                  : Icons.repeat,
-              size: 20,
-              color: scheme.primary,
-            ),
-            onPressed: controller.cycleRepeat,
-          ),
         IconButton(
           tooltip: liked ? 'Убрать из «Мне нравится»' : 'Нравится',
           iconSize: 20,
@@ -624,9 +596,9 @@ class _IslandControls extends ConsumerWidget {
         // самой панели). Кнопка — только на широком экране.
         if (wide && panelEnabled)
           IconButton(
-            tooltip: 'Развернуть справа',
+            tooltip: 'Открыть панель плеера',
             iconSize: 20,
-            icon: const Icon(Icons.open_in_full),
+            icon: const Icon(Icons.vertical_split),
             onPressed: () {
               // Разворачиваем плеер в панель — всплывающий ящик закрываем,
               // иначе очередь висела бы и над островком, и в панели.

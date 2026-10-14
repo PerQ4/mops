@@ -278,6 +278,30 @@ class BrowseParser {
     return tracks;
   }
 
+  /// Треки из ответа на continuation полки/плейлиста.
+  ///
+  /// В ответе на `continuation` контейнер другой —
+  /// `musicPlaylistShelfContinuation.contents`, а не `musicPlaylistShelfRenderer`:
+  /// без этого «Мне нравится» и длинные плейлисты обрывались на первой странице.
+  static List<Track> playlistShelfContinuation(
+    dynamic node, {
+    required String playlistId,
+  }) {
+    final List<Track> tracks = <Track>[];
+    for (final dynamic renderer in traverseList(
+      node,
+      <String>['musicPlaylistShelfContinuation', 'contents'],
+    )) {
+      if (renderer is! Map) continue;
+      final Track? track = responsiveItem(
+        renderer['musicResponsiveListItemRenderer'],
+        fallbackPlaylistId: playlistId,
+      );
+      if (track != null) tracks.add(track);
+    }
+    return tracks;
+  }
+
   /// Токен продолжения — им докручивается лента («ещё»).
   ///
   /// YouTube Music кладёт его двумя разными способами, встречаются оба:

@@ -187,6 +187,27 @@ Win32Window::MessageHandler(HWND hwnd,
       }
       return 0;
 
+    case WM_GETMINMAXINFO: {
+      // Минимальный размер окна: на меньшем раскладка ломается — островки,
+      // боковая библиотека и панель плеера перестают помещаться. Значение
+      // масштабируем по DPI, иначе на HiDPI минимум окажется крошечным.
+      UINT dpi = 96;
+      HMODULE user32_module = GetModuleHandleA("User32.dll");
+      if (user32_module != nullptr) {
+        auto get_dpi_for_window =
+            reinterpret_cast<UINT(WINAPI*)(HWND)>(GetProcAddress(
+                user32_module, "GetDpiForWindow"));
+        if (get_dpi_for_window != nullptr) {
+          dpi = get_dpi_for_window(hwnd);
+        }
+      }
+      const double scale = static_cast<double>(dpi) / 96.0;
+      auto* info = reinterpret_cast<MINMAXINFO*>(lparam);
+      info->ptMinTrackSize.x = static_cast<LONG>(960 * scale);
+      info->ptMinTrackSize.y = static_cast<LONG>(600 * scale);
+      return 0;
+    }
+
     case WM_DPICHANGED: {
       auto newRectSize = reinterpret_cast<RECT*>(lparam);
       LONG newWidth = newRectSize->right - newRectSize->left;

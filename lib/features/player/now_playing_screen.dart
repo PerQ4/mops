@@ -144,14 +144,17 @@ class _Controls extends StatelessWidget {
       mainAxisSize: MainAxisSize.min,
       children: <Widget>[
         _InfoRow(track: track, player: player),
-        const SizedBox(height: 4),
+        const SizedBox(height: 2),
         PlayerSeekBar(player: player),
         Padding(
           padding: const EdgeInsets.symmetric(horizontal: 8),
           child: PlayerTransportBar(player: player),
         ),
-        PlayerVolumeBar(player: player),
-        const SizedBox(height: 8),
+        const Padding(
+          padding: EdgeInsets.symmetric(horizontal: 8),
+          child: PlayerVolumeControl(),
+        ),
+        const SizedBox(height: 6),
       ],
     );
   }
@@ -223,8 +226,11 @@ class _ArtworkStage extends StatelessWidget {
       child: Center(
         child: LayoutBuilder(
           builder: (BuildContext context, BoxConstraints constraints) {
-            // Обложка квадратная и вписывается в доступное место.
-            final double side = constraints.biggest.shortestSide;
+            // Обложка квадратная и вписывается в доступное место, но не
+            // растягивается на пол-экрана: на десктопе огромная обложка
+            // отбирала место у управления и очереди.
+            final double available = constraints.biggest.shortestSide;
+            final double side = available > 420 ? 420 : available;
             return SizedBox(
               width: side,
               height: side,
@@ -269,16 +275,7 @@ class _TopBar extends ConsumerWidget {
             onPressed: () => Navigator.maybePop(context),
           ),
           const Spacer(),
-          Text(
-            'Сейчас играет',
-            style: Theme.of(context)
-                .textTheme
-                .labelLarge
-                ?.copyWith(fontWeight: FontWeight.w600),
-          ),
-          const Spacer(),
-          // Источник текста можно сменить, даже пока текст скрыт: пункт
-          // «найти в другом источнике» из меню текста.
+          // Подпись «Сейчас играет» убрана: название трека и так видно ниже.
           // Показ текста — отдельной кнопкой, а выбор источника — в меню
           // (пункт «Показать/скрыть» оттуда убран, чтобы не дублировать).
           IconButton.filledTonal(
@@ -319,8 +316,11 @@ class _InfoRow extends ConsumerWidget {
       authControllerProvider.select((AuthState s) => s.isSignedIn),
     );
 
+    final PlayerController controller =
+        ref.read(playerControllerProvider.notifier);
+
     return Padding(
-      padding: const EdgeInsets.fromLTRB(AppLayout.gutter, 12, 8, 0),
+      padding: const EdgeInsets.fromLTRB(AppLayout.gutter, 6, 8, 0),
       child: Row(
         crossAxisAlignment: CrossAxisAlignment.start,
         children: <Widget>[
@@ -330,7 +330,7 @@ class _InfoRow extends ConsumerWidget {
               children: <Widget>[
                 Text(
                   track.title,
-                  maxLines: 2,
+                  maxLines: 1,
                   overflow: TextOverflow.ellipsis,
                   style: text.headlineSmall?.copyWith(
                     fontWeight: FontWeight.w700,
@@ -338,20 +338,56 @@ class _InfoRow extends ConsumerWidget {
                   ),
                 ),
                 const SizedBox(height: 2),
-                Text(
-                  player.error ?? track.artistLine,
-                  maxLines: 1,
-                  overflow: TextOverflow.ellipsis,
-                  style: text.bodyMedium?.copyWith(
-                    color: player.error != null
-                        ? scheme.error
-                        : scheme.onSurfaceVariant,
-                  ),
+                Row(
+                  children: <Widget>[
+                    Flexible(
+                      child: Text(
+                        player.error ?? track.artistLine,
+                        maxLines: 1,
+                        overflow: TextOverflow.ellipsis,
+                        style: text.bodyMedium?.copyWith(
+                          color: player.error != null
+                              ? scheme.error
+                              : scheme.onSurfaceVariant,
+                        ),
+                      ),
+                    ),
+                    const SizedBox(width: 8),
+                    QualityBadge(player: player),
+                  ],
                 ),
               ],
             ),
           ),
           const SizedBox(width: 8),
+          // Перемешивание и повтор переехали сюда из строки транспорта:
+          // там остались только «назад / играть / вперёд».
+          IconButton(
+            tooltip: player.shuffle ? 'Перемешивание включено' : 'Перемешать',
+            isSelected: player.shuffle,
+            iconSize: 20,
+            icon: const Icon(Icons.shuffle),
+            selectedIcon: Icon(Icons.shuffle, size: 20, color: scheme.primary),
+            onPressed: controller.toggleShuffle,
+          ),
+          IconButton(
+            tooltip: player.repeat.label,
+            isSelected: player.repeat != PlayerRepeatMode.off,
+            iconSize: 20,
+            icon: Icon(
+              player.repeat == PlayerRepeatMode.one
+                  ? Icons.repeat_one
+                  : Icons.repeat,
+            ),
+            selectedIcon: Icon(
+              player.repeat == PlayerRepeatMode.one
+                  ? Icons.repeat_one
+                  : Icons.repeat,
+              size: 20,
+              color: scheme.primary,
+            ),
+            onPressed: controller.cycleRepeat,
+          ),
           // «…» открывает то же меню, что и из островка: исполнитель, альбом,
           // очередь и лайк. rootNavigator: плеер сам лежит в корневом
           // навигаторе — иначе переход остался бы под его экраном.

@@ -149,10 +149,17 @@ class _LyricsMenuSheet extends ConsumerWidget {
   }
 
   IconData _iconFor(LyricsSource source) => switch (source) {
+        LyricsSource.auto => Icons.auto_awesome,
         LyricsSource.music => Icons.library_music_outlined,
         LyricsSource.subtitles => Icons.subtitles_outlined,
-        LyricsSource.kugou => Icons.cloud_outlined,
+        LyricsSource.betterLyrics => Icons.graphic_eq,
+        LyricsSource.youlyPlus => Icons.music_note_outlined,
         LyricsSource.lrclib => Icons.public,
+        LyricsSource.kugou => Icons.cloud_outlined,
+        LyricsSource.megalobiz => Icons.travel_explore,
+        LyricsSource.simpmusic => Icons.queue_music,
+        LyricsSource.unison => Icons.album_outlined,
+        LyricsSource.musixmatch => Icons.music_note,
       };
 
   void _select(BuildContext context, WidgetRef ref, LyricsSource source) {

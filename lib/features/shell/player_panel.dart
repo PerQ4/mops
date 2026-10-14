@@ -161,7 +161,9 @@ class _PlayerRightPanelState extends ConsumerState<PlayerRightPanel> {
           return Column(
             crossAxisAlignment: CrossAxisAlignment.stretch,
             children: <Widget>[
-              _PanelHeader(
+              _PanelInfo(
+                track: track,
+                player: player,
                 showLyrics: _showLyrics,
                 onToggleLyrics: () =>
                     setState(() => _showLyrics = !_showLyrics),
@@ -169,15 +171,20 @@ class _PlayerRightPanelState extends ConsumerState<PlayerRightPanel> {
                     ref.read(playerRightPanelProvider.notifier).close(),
               ),
               _PanelArtwork(track: track, side: artSide),
-              _PanelInfo(track: track, player: player),
-              const SizedBox(height: 4),
               PlayerSeekBar(player: player, compact: true),
               Padding(
                 padding: const EdgeInsets.symmetric(horizontal: 8),
-                child: PlayerTransportBar(player: player, dense: true),
+                child: PlayerTransportBar(
+                  player: player,
+                  dense: true,
+                  showModes: true,
+                ),
               ),
-              PlayerVolumeBarSliderOnly(),
-              const SizedBox(height: 4),
+              const Padding(
+                padding: EdgeInsets.symmetric(horizontal: 8),
+                child: PlayerVolumeControl(),
+              ),
+              const SizedBox(height: 2),
               Expanded(
                 child: _showLyrics
                     ? LyricsView(
@@ -189,58 +196,6 @@ class _PlayerRightPanelState extends ConsumerState<PlayerRightPanel> {
             ],
           );
         },
-      ),
-    );
-  }
-}
-
-/// Шапка панели: подпись, переключатель текста и сворачивание в островок.
-class _PanelHeader extends StatelessWidget {
-  const _PanelHeader({
-    required this.showLyrics,
-    required this.onToggleLyrics,
-    required this.onClose,
-  });
-
-  final bool showLyrics;
-  final VoidCallback onToggleLyrics;
-  final VoidCallback onClose;
-
-  @override
-  Widget build(BuildContext context) {
-    final ColorScheme scheme = Theme.of(context).colorScheme;
-
-    return Padding(
-      padding: const EdgeInsets.fromLTRB(20, 8, 4, 0),
-      child: Row(
-        children: <Widget>[
-          Expanded(
-            child: Text(
-              'Сейчас играет',
-              style: Theme.of(context).textTheme.labelLarge?.copyWith(
-                    color: scheme.onSurfaceVariant,
-                    fontWeight: FontWeight.w700,
-                    letterSpacing: 0.4,
-                  ),
-            ),
-          ),
-          IconButton(
-            tooltip: showLyrics ? 'Скрыть текст' : 'Показать текст',
-            isSelected: showLyrics,
-            iconSize: 20,
-            icon: const Icon(Icons.lyrics_outlined),
-            selectedIcon: Icon(Icons.lyrics, size: 20, color: scheme.primary),
-            onPressed: onToggleLyrics,
-          ),
-          // Стрелка вправо — потому что панель справа; она же намекает, что
-          // плеер «уезжает» обратно в островок.
-          IconButton(
-            tooltip: 'Свернуть в островок',
-            iconSize: 20,
-            icon: const Icon(Icons.keyboard_double_arrow_right_rounded),
-            onPressed: onClose,
-          ),
-        ],
       ),
     );
   }
@@ -260,7 +215,7 @@ class _PanelArtwork extends StatelessWidget {
     final List<String> variants = track.artworkFallbacks(kArtworkLarge);
 
     return Padding(
-      padding: const EdgeInsets.symmetric(horizontal: 20, vertical: 8),
+      padding: const EdgeInsets.symmetric(horizontal: 20, vertical: 2),
       child: Center(
         child: SizedBox(
           width: side,
@@ -277,12 +232,25 @@ class _PanelArtwork extends StatelessWidget {
   }
 }
 
-/// Название, исполнитель и действия — лайк и «…».
+/// Название, исполнитель, отметка качества и все действия строкой.
+///
+/// Отдельной шапки «Сейчас играет» больше нет: название трека уже всё говорит,
+/// а кнопки текста и сворачивания стоят в этой же строке вместе с
+/// перемешиванием, повтором, лайком и «…».
 class _PanelInfo extends ConsumerWidget {
-  const _PanelInfo({required this.track, required this.player});
+  const _PanelInfo({
+    required this.track,
+    required this.player,
+    required this.showLyrics,
+    required this.onToggleLyrics,
+    required this.onClose,
+  });
 
   final Track track;
   final PlayerUiState player;
+  final bool showLyrics;
+  final VoidCallback onToggleLyrics;
+  final VoidCallback onClose;
 
   @override
   Widget build(BuildContext context, WidgetRef ref) {
@@ -297,8 +265,32 @@ class _PanelInfo extends ConsumerWidget {
       authControllerProvider.select((AuthState s) => s.isSignedIn),
     );
 
+    // Компактные кнопки: в строке их семь, обычный размер не поместился бы
+    // в узкую панель.
+    Widget action({
+      required String tooltip,
+      required IconData icon,
+      IconData? selectedIcon,
+      bool selected = false,
+      VoidCallback? onPressed,
+    }) {
+      return IconButton(
+        tooltip: tooltip,
+        isSelected: selected,
+        iconSize: 18,
+        padding: EdgeInsets.zero,
+        visualDensity: VisualDensity.compact,
+        constraints: const BoxConstraints.tightFor(width: 32, height: 32),
+        icon: Icon(icon, color: selected ? scheme.primary : null),
+        selectedIcon: selectedIcon == null
+            ? null
+            : Icon(selectedIcon, size: 18, color: scheme.primary),
+        onPressed: onPressed,
+      );
+    }
+
     return Padding(
-      padding: const EdgeInsets.fromLTRB(20, 4, 4, 0),
+      padding: const EdgeInsets.fromLTRB(16, 6, 4, 2),
       child: Row(
         crossAxisAlignment: CrossAxisAlignment.start,
         children: <Widget>[
@@ -308,7 +300,7 @@ class _PanelInfo extends ConsumerWidget {
               children: <Widget>[
                 Text(
                   track.title,
-                  maxLines: 2,
+                  maxLines: 1,
                   overflow: TextOverflow.ellipsis,
                   style: text.titleMedium?.copyWith(
                     fontWeight: FontWeight.w700,
@@ -325,22 +317,36 @@ class _PanelInfo extends ConsumerWidget {
                         : scheme.onSurfaceVariant,
                   ),
                 ),
+                // Отметка качества — отдельной строкой: рядом с длинным именем
+                // исполнителя она сжималась и выглядела неаккуратно.
+                if (player.streamNote != null) ...<Widget>[
+                  const SizedBox(height: 6),
+                  QualityBadge(player: player),
+                ],
               ],
             ),
           ),
-          IconButton(
+          action(
+            tooltip: showLyrics ? 'Скрыть текст' : 'Показать текст',
+            icon: Icons.lyrics_outlined,
+            selectedIcon: Icons.lyrics,
+            selected: showLyrics,
+            onPressed: onToggleLyrics,
+          ),
+          action(
+            tooltip: 'Свернуть в островок',
+            icon: Icons.keyboard_double_arrow_right_rounded,
+            onPressed: onClose,
+          ),
+          action(
             tooltip: liked ? 'Убрать из «Мне нравится»' : 'Нравится',
-            iconSize: 20,
-            icon: Icon(
-              liked ? Icons.favorite : Icons.favorite_border,
-              color: liked ? scheme.primary : null,
-            ),
+            icon: liked ? Icons.favorite : Icons.favorite_border,
+            selected: liked,
             onPressed: signedIn ? () => _like(context, ref) : null,
           ),
-          IconButton(
+          action(
             tooltip: 'Действия',
-            iconSize: 20,
-            icon: const Icon(Icons.more_vert),
+            icon: Icons.more_vert,
             onPressed: () => showTrackMenu(context, track),
           ),
         ],

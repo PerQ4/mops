@@ -97,6 +97,18 @@ class SettingsScreen extends ConsumerWidget {
             onTap: () => _pickLyricsSource(context, controller, settings),
           ),
 
+          ListTile(
+            leading: const Icon(Icons.vpn_key_outlined),
+            title: const Text('Ключ Musixmatch'),
+            subtitle: Text(
+              settings.musixmatchApiKey.isEmpty
+                  ? 'Не задан — источник Musixmatch выключен'
+                  : 'Задан',
+            ),
+            trailing: const Icon(Icons.chevron_right),
+            onTap: () => _editMusixmatchKey(context, controller, settings),
+          ),
+
           SwitchListTile(
             title: const Text('Показывать текст в плеере'),
             subtitle: const Text('Открывать текст по умолчанию, если он есть'),
@@ -123,6 +135,14 @@ class SettingsScreen extends ConsumerWidget {
             ),
             value: settings.playerPanelEnabled,
             onChanged: controller.setPlayerPanelEnabled,
+          ),
+
+          ListTile(
+            leading: const Icon(Icons.linear_scale),
+            title: const Text('Полоса перемотки'),
+            subtitle: Text(settings.progressBarStyle.label),
+            trailing: const Icon(Icons.chevron_right),
+            onTap: () => _pickProgressBarStyle(context, controller, settings),
           ),
 
           const Divider(height: 24),
@@ -320,6 +340,54 @@ class SettingsScreen extends ConsumerWidget {
       label: (LyricsSource v) => v.label,
     );
     if (result != null) await controller.setLyricsSource(result);
+  }
+
+  Future<void> _pickProgressBarStyle(
+    BuildContext context,
+    SettingsController controller,
+    AppSettings settings,
+  ) async {
+    final ProgressBarStyle? result = await _showChoice<ProgressBarStyle>(
+      context,
+      title: 'Полоса перемотки',
+      current: settings.progressBarStyle,
+      values: ProgressBarStyle.values,
+      label: (ProgressBarStyle v) => v.label,
+    );
+    if (result != null) await controller.setProgressBarStyle(result);
+  }
+
+  /// Ключ Paxsenix: через него работает источник Musixmatch.
+  Future<void> _editMusixmatchKey(
+    BuildContext context,
+    SettingsController controller,
+    AppSettings settings,
+  ) async {
+    final TextEditingController field =
+        TextEditingController(text: settings.musixmatchApiKey);
+    final String? result = await showDialog<String>(
+      context: context,
+      builder: (BuildContext dialogContext) => AlertDialog(
+        title: const Text('Ключ Paxsenix (Musixmatch)'),
+        content: TextField(
+          controller: field,
+          autofocus: true,
+          decoration: const InputDecoration(hintText: 'Bearer-ключ Paxsenix'),
+        ),
+        actions: <Widget>[
+          TextButton(
+            onPressed: () => Navigator.pop(dialogContext),
+            child: const Text('Отмена'),
+          ),
+          FilledButton(
+            onPressed: () => Navigator.pop(dialogContext, field.text),
+            child: const Text('Сохранить'),
+          ),
+        ],
+      ),
+    );
+    field.dispose();
+    if (result != null) await controller.setMusixmatchApiKey(result);
   }
 
   Future<void> _pickLyricsTextScale(

@@ -1,3 +1,4 @@
+import 'package:flutter/gestures.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 
@@ -74,7 +75,8 @@ class AppShell extends ConsumerWidget {
       // как самостоятельная панель поверх библиотеки (как в Spotify Desktop).
       return Scaffold(
         backgroundColor: scheme.surfaceContainer,
-        body: Row(
+        body: _MouseBackListener(
+          child: Row(
           children: <Widget>[
             const LibrarySidebar(),
             Expanded(
@@ -100,11 +102,39 @@ class AppShell extends ConsumerWidget {
             if (rightPanel) PlayerRightPanelSlot(open: panelOpen),
           ],
         ),
+        ),
       );
     }
 
     // Узкая раскладка: навигация живёт в том же плавающем островке
     // (см. [FloatingDock]), поэтому отдельная нижняя панель не нужна.
-    return Scaffold(body: content);
+    return Scaffold(body: _MouseBackListener(child: content));
+  }
+}
+
+/// Возврат назад кнопкой мыши (XBUTTON1).
+///
+/// Flutter присылает её как [kBackMouseButton]. Сначала закрываем подэкран
+/// вложенного навигатора (альбом, исполнитель, плейлист), иначе — маршрут
+/// корневого (полноэкранный плеер).
+class _MouseBackListener extends StatelessWidget {
+  const _MouseBackListener({required this.child});
+
+  final Widget child;
+
+  @override
+  Widget build(BuildContext context) {
+    return Listener(
+      onPointerDown: (PointerDownEvent event) {
+        if (event.buttons & kBackMouseButton == 0) return;
+        final NavigatorState? content = contentNavigatorKey.currentState;
+        if (content != null && content.canPop()) {
+          content.maybePop();
+          return;
+        }
+        Navigator.of(context, rootNavigator: true).maybePop();
+      },
+      child: child,
+    );
   }
 }

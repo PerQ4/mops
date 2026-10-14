@@ -119,13 +119,18 @@ class Track {
     return artworkVariants(url, size);
   }
 
-  Track copyWith({bool? played}) => Track(
+  Track copyWith({
+    bool? played,
+    List<ArtistRef>? artists,
+    List<Thumbnail>? thumbnails,
+    AlbumRef? album,
+  }) => Track(
         id: id,
         title: title,
-        artists: artists,
-        album: album,
+        artists: artists ?? this.artists,
+        album: album ?? this.album,
         duration: duration,
-        thumbnails: thumbnails,
+        thumbnails: thumbnails ?? this.thumbnails,
         isExplicit: isExplicit,
         playlistId: playlistId,
         isVideo: isVideo,
@@ -298,13 +303,28 @@ class BrowseSection {
   final String? params;
 }
 
-/// Строка синхронизированного текста.
+/// Слово синхронизированного текста — для «караоке»-подсветки.
 @immutable
-class TimedLyric {
-  const TimedLyric({required this.time, required this.text});
+class TimedWord {
+  const TimedWord({required this.time, required this.text});
 
   final Duration time;
   final String text;
+}
+
+/// Строка синхронизированного текста.
+@immutable
+class TimedLyric {
+  const TimedLyric({required this.time, required this.text, this.words});
+
+  final Duration time;
+  final String text;
+
+  /// Пословная разметка (TTML Apple Music) — по ней строка подсвечивается
+  /// слово за словом, как в ArchiveTune.
+  final List<TimedWord>? words;
+
+  bool get hasWords => words != null && words!.isNotEmpty;
 }
 
 /// Текст песни: обычный, синхронизированный или отсутствует.

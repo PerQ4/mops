@@ -122,6 +122,14 @@ class SettingsController extends Notifier<AppSettings> {
   Future<void> setPlayerPanelEnabled(bool value) =>
       update((AppSettings s) => s.copyWith(playerPanelEnabled: value));
 
+  /// Стиль полосы перемотки в плеере.
+  Future<void> setProgressBarStyle(ProgressBarStyle style) =>
+      update((AppSettings s) => s.copyWith(progressBarStyle: style));
+
+  /// Ключ Paxsenix — через него работает источник Musixmatch.
+  Future<void> setMusixmatchApiKey(String value) =>
+      update((AppSettings s) => s.copyWith(musixmatchApiKey: value.trim()));
+
   Future<void> setAutoPlayNext(bool value) =>
       update((AppSettings s) => s.copyWith(autoPlayNext: value));
 

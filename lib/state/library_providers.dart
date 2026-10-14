@@ -133,3 +133,17 @@ final FutureProvider<List<Artist>> subscriptionsProvider =
   if (!ref.watch(authControllerProvider).isSignedIn) return const <Artist>[];
   return ref.watch(librarySourceProvider).subscriptions();
 });
+
+/// Перечитывает всю библиотеку.
+///
+/// Данные кэшируются на время работы приложения, поэтому без явного сброса
+/// списки («Мне нравится», плейлисты, исполнители) оставались устаревшими —
+/// изменения на других устройствах подтягивались только после перезапуска.
+void refreshLibrary(WidgetRef ref) {
+  ref.invalidate(likedPlaylistsProvider);
+  ref.invalidate(likedSongsProvider);
+  ref.invalidate(likedSongsPlaylistProvider);
+  ref.invalidate(librarySongsProvider);
+  ref.invalidate(libraryArtistsProvider);
+  ref.invalidate(subscriptionsProvider);
+}

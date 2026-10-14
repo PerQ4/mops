@@ -141,19 +141,48 @@ class CatalogSource {
   /// Страница альбома.
   Future<Album> album(String albumId) async {
     final Map<String, dynamic> res = await _client.browse(albumId);
-    final List<Track> tracks = _tracksFrom(res, fallbackPlaylistId: null);
+    final List<ArtistRef> albumArtists =
+        _artistsFromSubtitle(BrowseParser.pageSubtitle(res));
+    final List<Thumbnail> albumThumbs = BrowseParser.pageThumbnails(res);
+    // В списке треков альбома у строк часто нет ни исполнителя, ни обложки —
+    // они известны из шапки. Подставляем их, иначе в списке стоит
+    // «Неизвестный исполнитель» и пустая картинка.
+    final List<Track> tracks = _withHeaderFallback(
+      _tracksFrom(res, fallbackPlaylistId: null),
+      artists: albumArtists,
+      thumbnails: albumThumbs,
+    );
 
     return Album(
       id: albumId,
       title: BrowseParser.pageTitle(res) ?? 'Альбом',
-      artists: _artistsFromSubtitle(BrowseParser.pageSubtitle(res)),
+      artists: albumArtists,
       year: _yearFrom(BrowseParser.pageSubtitle(res)),
-      thumbnails: BrowseParser.pageThumbnails(res),
+      thumbnails: albumThumbs,
       tracks: tracks,
       trackCount: tracks.isEmpty ? null : tracks.length,
       duration: _totalDuration(tracks),
       description: BrowseParser.pageDescription(res),
     );
+  }
+
+  /// Подставляет трекам исполнителя и обложку из шапки страницы, если у самих
+  /// строк их нет: в альбомах и «популярных треках» YouTube их часто опускает.
+  List<Track> _withHeaderFallback(
+    List<Track> tracks, {
+    required List<ArtistRef> artists,
+    required List<Thumbnail> thumbnails,
+  }) {
+    if (tracks.isEmpty) return tracks;
+    return tracks.map((Track track) {
+      final bool needArtists = track.artists.isEmpty && artists.isNotEmpty;
+      final bool needThumbs = track.thumbnails.isEmpty && thumbnails.isNotEmpty;
+      if (!needArtists && !needThumbs) return track;
+      return track.copyWith(
+        artists: needArtists ? artists : null,
+        thumbnails: needThumbs ? thumbnails : null,
+      );
+    }).toList(growable: false);
   }
 
   /// Страница исполнителя.
@@ -200,13 +229,20 @@ class CatalogSource {
       topTracks.addAll(_tracksFrom(res, fallbackPlaylistId: null));
     }
 
+    final String artistName = BrowseParser.pageTitle(res) ?? 'Исполнитель';
+    final List<Thumbnail> artistThumbs = BrowseParser.pageThumbnails(res);
+
     return Artist(
       id: artistId,
-      name: BrowseParser.pageTitle(res) ?? 'Исполнитель',
-      thumbnails: BrowseParser.pageThumbnails(res),
+      name: artistName,
+      thumbnails: artistThumbs,
       description: BrowseParser.pageDescription(res),
       subscribers: BrowseParser.pageSubtitle(res),
-      topTracks: topTracks,
+      topTracks: _withHeaderFallback(
+        topTracks,
+        artists: <ArtistRef>[ArtistRef(name: artistName, id: artistId)],
+        thumbnails: artistThumbs,
+      ),
       albums: albums,
       singles: singles,
       related: related,
@@ -226,6 +262,28 @@ class CatalogSource {
     );
     final List<Track> tracks =
         _tracksFrom(res, fallbackPlaylistId: playlistId);
+
+    // Длинные плейлисты YouTube отдаёт постранично — докручиваем продолжения,
+    // иначе список обрывался на первой странице.
+    String? token = BrowseParser.continuationToken(res);
+    final Set<String> seen = tracks.map((Track t) => t.id).toSet();
+    int guard = 0;
+    while (token != null && guard++ < 80) {
+      final Map<String, dynamic> page = await _client.browse(
+        browseId,
+        continuation: token,
+        authenticated: _client.hasAuth,
+      );
+      final List<Track> more = <Track>[
+        ..._tracksFrom(page, fallbackPlaylistId: playlistId),
+        ...BrowseParser.playlistShelfContinuation(page, playlistId: playlistId),
+      ];
+      if (more.isEmpty) break;
+      for (final Track track in more) {
+        if (seen.add(track.id)) tracks.add(track);
+      }
+      token = BrowseParser.continuationToken(page);
+    }
 
     return Playlist(
       id: playlistId,

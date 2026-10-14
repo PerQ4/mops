@@ -62,16 +62,26 @@ enum StreamSource {
 
 /// Откуда брать текст песни.
 ///
-/// В ArchiveTune источников два: вкладка «Текст» в YouTube Music и субтитры
-/// видео. У клипов и редких записей вкладки нет, а субтитры есть.
+/// Как в ArchiveTune, источников несколько: сервисы с синхронизацией (TTML и
+/// LRC), вкладка «Текст» YouTube Music и субтитры видео. Выбранный источник
+/// авторитетен: если в нём пусто, приложение не подменяет результат текстом
+/// YouTube. Режим «Авто» перебирает реальные базы, а тексты YouTube берёт
+/// только в самом конце — когда ни одна база не ответила.
 enum LyricsSource {
-  music(
-    'Текст YouTube Music',
-    'Вкладка «Текст»; для подсветки — база KuGou',
+  auto(
+    'Авто',
+    'Перебор баз по порядку; тексты YouTube — в последнюю очередь',
   ),
+  music('Текст YouTube Music', 'Вкладка «Текст» — без времён'),
   subtitles('Субтитры видео', 'Дорожка видео — со временем строк'),
+  betterLyrics('BetterLyrics', 'Apple Music (TTML) — пословная синхронизация'),
+  youlyPlus('YouLy+', 'Зеркала Lyricify — TTML или LRC'),
+  lrclib('LRCLIB', 'Открытая база — текст с временами'),
   kugou('KuGou', 'Внешняя база — текст с временами'),
-  lrclib('LRCLIB', 'Внешняя база — текст с временами');
+  megalobiz('Megalobiz', 'Внешняя база — текст с временами'),
+  simpmusic('SimpMusic', 'Индекс по id видео — текст с временами'),
+  unison('Unison', 'Внешняя база — текст с временами'),
+  musixmatch('Musixmatch', 'Через Paxsenix — нужен ключ в настройках');
 
   const LyricsSource(this.label, this.description);
 
@@ -81,7 +91,30 @@ enum LyricsSource {
   static LyricsSource fromName(String? name) =>
       LyricsSource.values.firstWhere(
         (LyricsSource v) => v.name == name,
-        orElse: () => LyricsSource.music,
+        orElse: () => LyricsSource.auto,
+      );
+}
+
+/// Стиль полосы перемотки в плеере.
+///
+/// Перенесён из ArchiveTune (`SliderStyle`): там пять вариантов — обычный,
+/// «волнистый», толстый сегментный, волна с кружком и тонкий простой.
+enum ProgressBarStyle {
+  standard('Обычный', 'Круглый ползунок на дорожке'),
+  wavy('Волнистый', 'Живая волна, без ползунка'),
+  thick('Толстый', 'Сегменты с точками, без ползунка'),
+  circular('С кружком', 'Волна с круглым ползунком'),
+  simple('Простой', 'Тонкая сегментная дорожка без ползунка');
+
+  const ProgressBarStyle(this.label, this.description);
+
+  final String label;
+  final String description;
+
+  static ProgressBarStyle fromName(String? name) =>
+      ProgressBarStyle.values.firstWhere(
+        (ProgressBarStyle v) => v.name == name,
+        orElse: () => ProgressBarStyle.standard,
       );
 }
 
@@ -175,7 +208,7 @@ class AppSettings {
     this.paletteStyle = PaletteStylePreference.tonal,
     this.playerPanelWidth = 280,
     this.sidebarWidth = 280,
-    this.lyricsSource = LyricsSource.music,
+    this.lyricsSource = LyricsSource.auto,
     this.audioQuality = AudioQuality.high,
     this.streamClient = StreamSource.auto,
     this.showLyricsInPlayer = true,
@@ -189,6 +222,7 @@ class AppSettings {
     this.streamingLanguage = 'ru',
     this.oauthClientId = '',
     this.oauthClientSecret = '',
+    this.musixmatchApiKey = '',
     this.lastVolume = 1.0,
     this.lastSpeed = 1.0,
     this.uiScale = 0.0,
@@ -196,6 +230,7 @@ class AppSettings {
     this.autoDetectProxy = true,
     this.sidebarCollapsed = false,
     this.playerPanelEnabled = true,
+    this.progressBarStyle = ProgressBarStyle.standard,
   });
 
   final ThemeModePreference themeMode;
@@ -250,6 +285,9 @@ class AppSettings {
   final String streamingLanguage;
   final String oauthClientId;
   final String oauthClientSecret;
+
+  /// Ключ Paxsenix — через него подключается Musixmatch (как в ArchiveTune).
+  final String musixmatchApiKey;
   final double lastVolume;
   final double lastSpeed;
 
@@ -282,6 +320,9 @@ class AppSettings {
   /// раскладке — на телефоне правую панель размещать негде.
   final bool playerPanelEnabled;
 
+  /// Стиль полосы перемотки в плеере (как пять `SliderStyle` в ArchiveTune).
+  final ProgressBarStyle progressBarStyle;
+
   bool get isUiScaleAuto => uiScale <= 0;
 
   int get safeSeedIndex =>
@@ -310,6 +351,7 @@ class AppSettings {
     String? streamingLanguage,
     String? oauthClientId,
     String? oauthClientSecret,
+    String? musixmatchApiKey,
     double? lastVolume,
     double? lastSpeed,
     double? uiScale,
@@ -317,6 +359,7 @@ class AppSettings {
     bool? autoDetectProxy,
     bool? sidebarCollapsed,
     bool? playerPanelEnabled,
+    ProgressBarStyle? progressBarStyle,
   }) {
     return AppSettings(
       themeMode: themeMode ?? this.themeMode,
@@ -341,6 +384,7 @@ class AppSettings {
       streamingLanguage: streamingLanguage ?? this.streamingLanguage,
       oauthClientId: oauthClientId ?? this.oauthClientId,
       oauthClientSecret: oauthClientSecret ?? this.oauthClientSecret,
+      musixmatchApiKey: musixmatchApiKey ?? this.musixmatchApiKey,
       lastVolume: lastVolume ?? this.lastVolume,
       lastSpeed: lastSpeed ?? this.lastSpeed,
       uiScale: uiScale ?? this.uiScale,
@@ -348,6 +392,7 @@ class AppSettings {
       autoDetectProxy: autoDetectProxy ?? this.autoDetectProxy,
       sidebarCollapsed: sidebarCollapsed ?? this.sidebarCollapsed,
       playerPanelEnabled: playerPanelEnabled ?? this.playerPanelEnabled,
+      progressBarStyle: progressBarStyle ?? this.progressBarStyle,
     );
   }
 
@@ -374,6 +419,7 @@ class AppSettings {
         'streamingLanguage': streamingLanguage,
         'oauthClientId': oauthClientId,
         'oauthClientSecret': oauthClientSecret,
+        'musixmatchApiKey': musixmatchApiKey,
         'lastVolume': lastVolume,
         'lastSpeed': lastSpeed,
         'uiScale': uiScale,
@@ -381,6 +427,7 @@ class AppSettings {
         'autoDetectProxy': autoDetectProxy,
         'sidebarCollapsed': sidebarCollapsed,
         'playerPanelEnabled': playerPanelEnabled,
+        'progressBarStyle': progressBarStyle.name,
       };
 
   String encode() => jsonEncode(toJson());
@@ -412,6 +459,7 @@ class AppSettings {
       streamingLanguage: json['streamingLanguage'] as String? ?? 'ru',
       oauthClientId: json['oauthClientId'] as String? ?? '',
       oauthClientSecret: json['oauthClientSecret'] as String? ?? '',
+      musixmatchApiKey: json['musixmatchApiKey'] as String? ?? '',
       lastVolume: (json['lastVolume'] as num?)?.toDouble() ?? 1.0,
       lastSpeed: (json['lastSpeed'] as num?)?.toDouble() ?? 1.0,
       uiScale: (json['uiScale'] as num?)?.toDouble() ?? 0.0,
@@ -421,6 +469,7 @@ class AppSettings {
       autoDetectProxy: json['autoDetectProxy'] as bool? ?? true,
       sidebarCollapsed: json['sidebarCollapsed'] as bool? ?? false,
       playerPanelEnabled: json['playerPanelEnabled'] as bool? ?? true,
+      progressBarStyle: ProgressBarStyle.fromName(json['progressBarStyle'] as String?),
     );
   }
 

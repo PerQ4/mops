@@ -107,11 +107,55 @@ class LibrarySource {
 
   /// Треки, которым поставлен лайк.
   Future<List<Track>> likedSongs() async {
-    final Map<String, dynamic> res = await _client.browse(
-      _browseLikedSongs,
-      authenticated: true,
-    );
-    return BrowseParser.playlistShelf(res, playlistId: likedPlaylistQueueId);
+    final ({Map<String, dynamic> first, List<Track> tracks}) page =
+        await _allShelfTracks(_browseLikedSongs, likedPlaylistQueueId);
+    return page.tracks;
+  }
+
+  /// Полная полка треков: первая страница плюс все продолжения.
+  ///
+  /// YouTube отдаёт за раз лишь часть списка (для «Мне нравится» и длинных
+  /// плейлистов — первую страницу), остальное докручивается токеном
+  /// продолжения. Без этого списки обрывались, и треков было «не все».
+  Future<({Map<String, dynamic> first, List<Track> tracks})> _allShelfTracks(
+    String browseId,
+    String playlistId,
+  ) async {
+    final Map<String, dynamic> first =
+        await _client.browse(browseId, authenticated: true);
+
+    final List<Track> tracks = <Track>[
+      ...BrowseParser.playlistShelf(first, playlistId: playlistId),
+    ];
+
+    String? token = BrowseParser.continuationToken(first);
+    int guard = 0;
+    while (token != null && guard++ < 80) {
+      final Map<String, dynamic> page = await _client.browse(
+        browseId,
+        continuation: token,
+        authenticated: true,
+      );
+      final List<Track> more = <Track>[
+        ...BrowseParser.playlistShelf(page, playlistId: playlistId),
+        ...BrowseParser.playlistShelfContinuation(page, playlistId: playlistId),
+      ];
+      if (more.isEmpty) break;
+      tracks.addAll(more);
+      token = BrowseParser.continuationToken(page);
+    }
+
+    return (first: first, tracks: _dedupe(tracks));
+  }
+
+  /// Убирает дубликаты по id, сохраняя порядок.
+  List<Track> _dedupe(List<Track> tracks) {
+    final Set<String> seen = <String>{};
+    final List<Track> result = <Track>[];
+    for (final Track track in tracks) {
+      if (seen.add(track.id)) result.add(track);
+    }
+    return result;
   }
 
   /// Плейлист «Мне нравится» целиком — для экрана плейлиста.
@@ -120,12 +164,10 @@ class LibrarySource {
   /// без `authenticated: true`, а гостю YouTube не отдаёт лайкнутые треки —
   /// страница открывалась пустой. Здесь запрос всегда авторизованный.
   Future<Playlist> likedSongsPlaylist() async {
-    final Map<String, dynamic> res = await _client.browse(
-      likedPlaylistBrowseId,
-      authenticated: true,
-    );
-    final List<Track> tracks =
-        BrowseParser.playlistShelf(res, playlistId: likedPlaylistQueueId);
+    final ({Map<String, dynamic> first, List<Track> tracks}) page =
+        await _allShelfTracks(likedPlaylistBrowseId, likedPlaylistQueueId);
+    final Map<String, dynamic> res = page.first;
+    final List<Track> tracks = page.tracks;
 
     // Обложки в шапке у лайкнутого плейлиста обычно нет — тогда берём её
     // у первого трека, иначе герой страницы остался бы серой заглушкой.
@@ -155,18 +197,14 @@ class LibrarySource {
 
   /// Все сохранённые треки (включая добавленные вручную).
   Future<List<Track>> librarySongs() async {
-    final Map<String, dynamic> res = await _client.browse(
-      _browseLibrarySongs,
-      authenticated: true,
-    );
-    final List<Track> fromShelf =
-        BrowseParser.playlistShelf(res, playlistId: 'LM');
-    if (fromShelf.isNotEmpty) return fromShelf;
+    final ({Map<String, dynamic> first, List<Track> tracks}) page =
+        await _allShelfTracks(_browseLibrarySongs, 'LM');
+    if (page.tracks.isNotEmpty) return page.tracks;
 
     // Раздел может прийти как обычная секция.
     final List<Track> tracks = <Track>[];
     for (final dynamic renderer
-        in traverseList(res, <String>['musicResponsiveListItemRenderer'])) {
+        in traverseList(page.first, <String>['musicResponsiveListItemRenderer'])) {
       final Track? track = BrowseParser.responsiveItem(renderer);
       if (track != null) tracks.add(track);
     }

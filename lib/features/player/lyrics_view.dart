@@ -189,6 +189,9 @@ class _SyncedLyricsState extends ConsumerState<_SyncedLyrics> {
   int _activeIndex = -1;
   bool _userScrolling = false;
 
+  /// Текущая позиция в миллисекундах — для пословной подсветки.
+  int _positionMs = 0;
+
   List<GlobalKey> _buildKeys() =>
       List<GlobalKey>.generate(widget.lines.length, (_) => GlobalKey());
 
@@ -231,11 +234,15 @@ class _SyncedLyricsState extends ConsumerState<_SyncedLyrics> {
     // номер активной строки: список перестраивается только когда строка
     // действительно сменилась, а не на каждом тике — иначе все анимации
     // подсветки перезапускались бы несколько раз в секунду.
-    final int index = ref.watch(
+    // Позицию слушаем по миллисекундам: активная строка может подсвечиваться
+    // по словам («караоке»), поэтому одного номера строки уже мало.
+    final int positionMs = ref.watch(
       playerControllerProvider.select(
-        (PlayerUiState s) => _indexForPosition(s.playback.position),
+        (PlayerUiState s) => s.playback.position.inMilliseconds,
       ),
     );
+    _positionMs = positionMs;
+    final int index = _indexForPosition(Duration(milliseconds: positionMs));
 
     if (index != _activeIndex) {
       _activeIndex = index;
@@ -269,35 +276,56 @@ class _SyncedLyricsState extends ConsumerState<_SyncedLyrics> {
         itemCount: widget.lines.length,
         itemBuilder: (BuildContext context, int index) {
           final bool active = index == _activeIndex;
-          return AnimatedContainer(
+          // Как в ArchiveTune: активная строка выделяется цветом акцента,
+          // жирностью и чуть большим размером, без подложки-плашки. Плавно
+          // перетекает между строками по мере воспроизведения.
+          return Padding(
             key: _keys[index],
-            duration: const Duration(milliseconds: 220),
-            curve: Curves.easeOut,
-            margin: const EdgeInsets.symmetric(vertical: 4),
             padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 6),
-            decoration: BoxDecoration(
-              // Подсветка активной строки: цветом акцента и мягкой подложкой.
-              color: active
-                  ? scheme.primary.withValues(alpha: 0.10)
-                  : Colors.transparent,
-              borderRadius: BorderRadius.circular(12),
-            ),
             child: AnimatedDefaultTextStyle(
-              duration: const Duration(milliseconds: 220),
-              curve: Curves.easeOut,
+              duration: const Duration(milliseconds: 260),
+              curve: Curves.easeOutCubic,
               style: (theme.titleLarge ?? const TextStyle()).copyWith(
                 height: 1.45,
-                fontSize: baseSize * scale,
+                fontSize: baseSize * scale * (active ? 1.12 : 1.0),
                 fontWeight: active ? FontWeight.w700 : FontWeight.w500,
                 color: active
                     ? scheme.primary
-                    : scheme.onSurfaceVariant.withValues(alpha: 0.55),
+                    : scheme.onSurfaceVariant.withValues(alpha: 0.5),
               ),
-              child: Text(widget.lines[index].text),
+              child: _lineText(context, index, active, scheme),
             ),
           );
         },
       ),
     );
+  }
+
+  /// Текст строки: обычный, а для активной строки с пословной разметкой —
+  /// «караоке»: спетые слова цветом акцента, остальные приглушены.
+  Widget _lineText(
+    BuildContext context,
+    int index,
+    bool active,
+    ColorScheme scheme,
+  ) {
+    final TimedLyric line = widget.lines[index];
+    if (!active || !line.hasWords) return Text(line.text);
+
+    final List<InlineSpan> spans = <InlineSpan>[];
+    for (final TimedWord word in line.words!) {
+      final bool sung = word.time.inMilliseconds <= _positionMs;
+      spans.add(
+        TextSpan(
+          text: '${word.text} ',
+          style: TextStyle(
+            color: sung
+                ? scheme.primary
+                : scheme.onSurfaceVariant.withValues(alpha: 0.5),
+          ),
+        ),
+      );
+    }
+    return Text.rich(TextSpan(children: spans));
   }
 }

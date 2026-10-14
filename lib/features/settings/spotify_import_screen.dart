@@ -1,6 +1,7 @@
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 
+import '../../core/auth/inapp_login.dart';
 import '../../core/auth/webview_login.dart';
 import '../../data/sources/spotify_client.dart';
 import '../../data/sources/spotify_importer.dart';
@@ -43,8 +44,17 @@ class _SpotifyImportScreenState extends ConsumerState<SpotifyImportScreen> {
     });
 
     try {
-      final String cookies =
-          await WebviewLogin.openLogin(url: SpotifyClient.loginUrl);
+      // Панель входа есть либо в Linux (WebKitGTK), либо во встроенном
+      // браузере системы (WebView2 в Windows, WKWebView в macOS).
+      final String cookies = inAppLoginAvailable
+          ? (await openInAppLogin(
+                context,
+                url: SpotifyClient.loginUrl,
+                cookieHost: 'https://open.spotify.com',
+                isDone: (String value) => _cookieValue(value, 'sp_dc') != null,
+              ) ??
+              '')
+          : await WebviewLogin.openLogin(url: SpotifyClient.loginUrl);
       final String? spDc = _cookieValue(cookies, 'sp_dc');
       if (spDc == null) {
         throw const SpotifyException(

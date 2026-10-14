@@ -1,11 +1,13 @@
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 
+import '../../state/library_providers.dart';
 import '../../state/shell.dart';
 import '../explore/explore_screen.dart';
 import '../home/home_screen.dart';
 import '../library/library_screen.dart';
 import '../search/search_screen.dart';
+import 'destinations.dart';
 
 /// Ключ вложенного навигатора области содержимого.
 ///
@@ -44,11 +46,41 @@ class ContentNavigator extends StatelessWidget {
 }
 
 /// Верхнеуровневые разделы: переключаются индексом, без пересоздания.
-class _ContentRoot extends ConsumerWidget {
+class _ContentRoot extends ConsumerStatefulWidget {
   const _ContentRoot();
 
   @override
-  Widget build(BuildContext context, WidgetRef ref) {
+  ConsumerState<_ContentRoot> createState() => _ContentRootState();
+}
+
+class _ContentRootState extends ConsumerState<_ContentRoot>
+    with WidgetsBindingObserver {
+  @override
+  void initState() {
+    super.initState();
+    WidgetsBinding.instance.addObserver(this);
+  }
+
+  @override
+  void dispose() {
+    WidgetsBinding.instance.removeObserver(this);
+    super.dispose();
+  }
+
+  /// Библиотека перечитывается при возврате в приложение: списки меняются
+  /// на других устройствах, а кэш держится всё время работы.
+  @override
+  void didChangeAppLifecycleState(AppLifecycleState state) {
+    if (state == AppLifecycleState.resumed) refreshLibrary(ref);
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    // Открытие раздела «Библиотека» тоже обновляет её данные.
+    ref.listen<int>(shellIndexProvider, (int? previous, int next) {
+      if (next == ShellDestination.library.index) refreshLibrary(ref);
+    });
+
     final int index = ref.watch(shellIndexProvider);
 
     return IndexedStack(

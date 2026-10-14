@@ -1,9 +1,12 @@
+import 'package:flutter/gestures.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 
 import '../core/theme/layout.dart';
 import '../core/utils/format.dart';
 import '../data/models/models.dart';
+import '../features/common/navigation.dart';
+import '../state/catalog_providers.dart';
 import '../state/player_controller.dart';
 import 'artwork.dart';
 import 'track_menu.dart';
@@ -134,10 +137,9 @@ class TrackTile extends StatelessWidget {
                           ),
                         ),
                         const SizedBox(height: 2),
-                        Text(
-                          subtitleOverride ?? _subtitle(),
-                          maxLines: 1,
-                          overflow: TextOverflow.ellipsis,
+                        _TrackSubtitle(
+                          track: track,
+                          subtitleOverride: subtitleOverride,
                           style: text.bodySmall?.copyWith(
                             color: subtitleColor.withValues(
                               alpha: isDimmed
@@ -152,6 +154,7 @@ class TrackTile extends StatelessWidget {
                   if (trailing != null)
                     trailing!
                   else ...<Widget>[
+                    _LyricsMark(videoId: track.id),
                     if (showDuration && track.duration > Duration.zero)
                       Padding(
                         padding: const EdgeInsets.only(left: 8),
@@ -187,16 +190,113 @@ class TrackTile extends StatelessWidget {
     return SwipeToSongBox(track: track, child: tile);
   }
 
-  String _subtitle() {
-    final List<String> parts = <String>[];
-    if (track.artists.isNotEmpty) {
-      parts.add(cleanArtistName(track.artistLine));
+}
+
+/// Подпись строки: имена исполнителей кликабельны и ведут на их страницы,
+/// альбом — просто текст. Собирается как `Text.rich`, поэтому длинные
+/// подписи по-прежнему обрезаются многоточием, а не переносятся.
+class _TrackSubtitle extends StatefulWidget {
+  const _TrackSubtitle({
+    required this.track,
+    required this.style,
+    this.subtitleOverride,
+  });
+
+  final Track track;
+  final TextStyle? style;
+  final String? subtitleOverride;
+
+  @override
+  State<_TrackSubtitle> createState() => _TrackSubtitleState();
+}
+
+class _TrackSubtitleState extends State<_TrackSubtitle> {
+  final List<TapGestureRecognizer> _recognizers = <TapGestureRecognizer>[];
+
+  @override
+  void dispose() {
+    _disposeRecognizers();
+    super.dispose();
+  }
+
+  void _disposeRecognizers() {
+    for (final TapGestureRecognizer recognizer in _recognizers) {
+      recognizer.dispose();
     }
-    final String? album = track.album?.name;
-    if (album != null && album.isNotEmpty && album != track.title) {
-      parts.add(album);
+    _recognizers.clear();
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    final String? override = widget.subtitleOverride;
+    if (override != null) {
+      return Text(
+        override,
+        maxLines: 1,
+        overflow: TextOverflow.ellipsis,
+        style: widget.style,
+      );
     }
-    return parts.isEmpty ? 'Неизвестный исполнитель' : parts.join(' • ');
+
+    // Набор исполнителей мог смениться — распознаватели пересобираем.
+    _disposeRecognizers();
+
+    final List<ArtistRef> artists = widget.track.artists;
+    final List<InlineSpan> spans = <InlineSpan>[];
+    if (artists.isEmpty) {
+      spans.add(const TextSpan(text: 'Неизвестный исполнитель'));
+    } else {
+      for (int i = 0; i < artists.length; i++) {
+        if (i > 0) spans.add(const TextSpan(text: ', '));
+        final ArtistRef artist = artists[i];
+        final String name = cleanArtistName(artist.name);
+        if (artist.isNavigable) {
+          final TapGestureRecognizer recognizer = TapGestureRecognizer()
+            ..onTap = () => AppRoutes.artist(context, artist.id!);
+          _recognizers.add(recognizer);
+          spans.add(TextSpan(text: name, recognizer: recognizer));
+        } else {
+          spans.add(TextSpan(text: name));
+        }
+      }
+    }
+
+    final String? album = widget.track.album?.name;
+    if (album != null && album.isNotEmpty && album != widget.track.title) {
+      spans.add(TextSpan(text: ' • $album'));
+    }
+
+    return Text.rich(
+      TextSpan(children: spans),
+      maxLines: 1,
+      overflow: TextOverflow.ellipsis,
+      style: widget.style,
+    );
+  }
+}
+
+/// Значок «у этого трека есть текст» — появляется, если текст уже находили.
+class _LyricsMark extends ConsumerWidget {
+  const _LyricsMark({required this.videoId});
+
+  final String videoId;
+
+  @override
+  Widget build(BuildContext context, WidgetRef ref) {
+    final bool has = ref.watch(
+      lyricsAvailabilityProvider.select(
+        (Set<String> ids) => ids.contains(videoId),
+      ),
+    );
+    if (!has) return const SizedBox.shrink();
+    return Padding(
+      padding: const EdgeInsets.only(left: 8),
+      child: Icon(
+        Icons.lyrics_outlined,
+        size: 16,
+        color: Theme.of(context).colorScheme.onSurfaceVariant,
+      ),
+    );
   }
 }
 
