@@ -103,9 +103,14 @@ final Provider<({ThemeData light, ThemeData dark})> themeDataProvider =
   final AppSchemes schemes = ref.watch(effectiveSchemesProvider);
   final bool expressive =
       ref.watch(settingsControllerProvider.select((s) => s.useMaterialExpressive));
+  final bool pureBlack =
+      ref.watch(settingsControllerProvider.select((s) => s.pureBlack));
 
   return (
     light: AppTheme.build(scheme: schemes.light, expressive: expressive),
-    dark: AppTheme.build(scheme: schemes.dark, expressive: expressive),
+    dark: AppTheme.build(
+      scheme: pureBlack ? AppTheme.pureBlack(schemes.dark) : schemes.dark,
+      expressive: expressive,
+    ),
   );
 });

@@ -48,6 +48,21 @@ class AppTheme {
     );
   }
 
+  /// Делает тёмную схему «чисто чёрной»: фон и поверхности — #000000.
+  ///
+  /// Так в ArchiveTune выглядит отдельный переключатель: акценты остаются
+  /// прежними, а подложка становится абсолютно чёрной (удобно на OLED).
+  static ColorScheme pureBlack(ColorScheme scheme) {
+    if (scheme.brightness != Brightness.dark) return scheme;
+    return scheme.copyWith(
+      surface: Colors.black,
+      background: Colors.black,
+      surfaceContainerLowest: Colors.black,
+      surfaceContainerLow: Colors.black,
+      surfaceContainer: Colors.black,
+    );
+  }
+
   /// Собирает [ThemeData] для светлой и тёмной темы.
   static ThemeData build({
     required ColorScheme scheme,

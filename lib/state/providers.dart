@@ -74,6 +74,9 @@ class SettingsController extends Notifier<AppSettings> {
   Future<void> setUseMaterialExpressive(bool value) =>
       update((AppSettings s) => s.copyWith(useMaterialExpressive: value));
 
+  Future<void> setPureBlack(bool value) =>
+      update((AppSettings s) => s.copyWith(pureBlack: value));
+
   Future<void> setAudioQuality(AudioQuality quality) =>
       update((AppSettings s) => s.copyWith(audioQuality: quality));
 

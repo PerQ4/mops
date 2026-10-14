@@ -68,6 +68,7 @@ class AppSettings {
     this.colorSource = ColorSource.seed,
     this.seedColorIndex = 0,
     this.useMaterialExpressive = true,
+    this.pureBlack = false,
     this.audioQuality = AudioQuality.high,
     this.streamClient = StreamSource.auto,
     this.showLyricsInPlayer = true,
@@ -88,6 +89,10 @@ class AppSettings {
   final ColorSource colorSource;
   final int seedColorIndex;
   final bool useMaterialExpressive;
+
+  /// Чистый чёрный фон в тёмной теме — как отдельный переключатель в
+  /// ArchiveTune: фон и поверхности становятся #000000.
+  final bool pureBlack;
   final AudioQuality audioQuality;
 
   /// Клиент YouTube, у которого запрашивается ссылка на поток.
@@ -132,6 +137,7 @@ class AppSettings {
     ColorSource? colorSource,
     int? seedColorIndex,
     bool? useMaterialExpressive,
+    bool? pureBlack,
     AudioQuality? audioQuality,
     StreamSource? streamClient,
     bool? showLyricsInPlayer,
@@ -152,6 +158,7 @@ class AppSettings {
       colorSource: colorSource ?? this.colorSource,
       seedColorIndex: seedColorIndex ?? this.seedColorIndex,
       useMaterialExpressive: useMaterialExpressive ?? this.useMaterialExpressive,
+      pureBlack: pureBlack ?? this.pureBlack,
       audioQuality: audioQuality ?? this.audioQuality,
       streamClient: streamClient ?? this.streamClient,
       showLyricsInPlayer: showLyricsInPlayer ?? this.showLyricsInPlayer,
@@ -174,6 +181,7 @@ class AppSettings {
         'colorSource': colorSource.name,
         'seedColorIndex': seedColorIndex,
         'useMaterialExpressive': useMaterialExpressive,
+        'pureBlack': pureBlack,
         'audioQuality': audioQuality.name,
         'streamClient': streamClient.name,
         'showLyricsInPlayer': showLyricsInPlayer,
@@ -198,6 +206,7 @@ class AppSettings {
       colorSource: ColorSource.fromName(json['colorSource'] as String?),
       seedColorIndex: (json['seedColorIndex'] as num?)?.toInt() ?? 0,
       useMaterialExpressive: json['useMaterialExpressive'] as bool? ?? true,
+      pureBlack: json['pureBlack'] as bool? ?? false,
       audioQuality: AudioQuality.fromName(json['audioQuality'] as String?),
       streamClient: StreamSource.fromName(json['streamClient'] as String?),
       showLyricsInPlayer: json['showLyricsInPlayer'] as bool? ?? true,
