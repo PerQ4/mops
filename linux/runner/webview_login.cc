@@ -36,6 +36,9 @@ constexpr char kSignInUrl[] =
     "https://accounts.google.com/ServiceLogin?service=youtube"
     "&continue=https%3A%2F%2Fmusic.youtube.com%2F&hl=ru";
 
+/// Вход в Spotify (а не в аккаунт Google): у него свои cookie и свой признак.
+bool g_spotify_mode = false;
+
 GtkOverlay* g_overlay = nullptr;
 GtkWidget* g_flutter_view = nullptr;
 WebKitWebContext* g_context = nullptr;
@@ -110,11 +113,14 @@ std::string cookies_from_list(GList* cookies) {
     if (domain == nullptr) {
       continue;
     }
-    // Оставляем cookie доменов YouTube/Google (вход в аккаунт) и Spotify
-    // (перенос библиотеки) — остальное приложению не нужно.
-    const bool wanted = g_str_has_suffix(domain, "youtube.com") ||
-                        g_str_has_suffix(domain, "google.com") ||
-                        g_str_has_suffix(domain, "spotify.com");
+    // Оставляем только cookie нужного сервиса. Смешивать нельзя: после входа
+    // в Spotify в браузере остаётся sp_dc, и если отдавать всё подряд, панель
+    // входа в Google закрывается сразу, а приложение получает чужой набор
+    // cookie — аккаунт YouTube при этом перестаёт работать.
+    const bool wanted = g_spotify_mode
+        ? g_str_has_suffix(domain, "spotify.com")
+        : (g_str_has_suffix(domain, "youtube.com") ||
+           g_str_has_suffix(domain, "google.com"));
     if (!wanted) {
       continue;
     }
@@ -221,7 +227,10 @@ void on_cookies_for_finish(GObject* source, GAsyncResult* result,
   }
 
   // Без SAPISID вход не состоялся: остальные cookie приложению бесполезны.
-  if (!has_sapisid(cookie_string) && !has_sp_dc(cookie_string)) {
+  const bool ok = g_spotify_mode
+      ? has_sp_dc(cookie_string)
+      : (has_sapisid(cookie_string) && has_youtube_cookies(cookie_string));
+  if (!ok) {
     g_message("[Login] SAPISID не найден — вход не выполнен");
     respond_with_error(
         call,
@@ -333,11 +342,12 @@ void on_cookies_for_check(GObject* source, GAsyncResult* result,
   // Панель закрывается сама, только когда есть и вход Google, и cookie
   // YouTube: иначе в сессию попадут cookie google.com, и YouTube будет
   // считать нас гостем.
-  // Для Spotify достаточно его собственной cookie: cookie YouTube при этом
-  // входе не появляются.
-  if (g_pending_call != nullptr &&
-      ((has_sapisid(cookie_string) && has_youtube_cookies(cookie_string)) ||
-       has_sp_dc(cookie_string))) {
+  // Признак успеха зависит от того, куда мы входим: у Spotify своя cookie,
+  // у Google — SAPISID вместе с cookie YouTube.
+  const bool ok = g_spotify_mode
+      ? has_sp_dc(cookie_string)
+      : (has_sapisid(cookie_string) && has_youtube_cookies(cookie_string));
+  if (g_pending_call != nullptr && ok) {
     g_message("[Login] вход подтверждён, забираю cookie");
     request_finish();
   }
@@ -520,6 +530,7 @@ void method_call_cb(FlMethodChannel* /*channel*/, FlMethodCall* method_call,
     }
 
     g_pending_call = FL_METHOD_CALL(g_object_ref(method_call));
+    g_spotify_mode = url.find("spotify.com") != std::string::npos;
     open_panel(url);
     // Ответ отправим позже — когда вход завершится.
     return;
