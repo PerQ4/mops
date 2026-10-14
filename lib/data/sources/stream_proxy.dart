@@ -143,11 +143,6 @@ class StreamProxy {
   }
 
   Future<void> _handle(HttpRequest request) async {
-    // [DEBUG]
-    // ignore: avoid_print
-    print('[DBG-PROXY] запрос ${request.method} '
-        'range=${request.headers.value(HttpHeaders.rangeHeader)} '
-        'uri=${request.uri}');
     final String token =
         request.uri.pathSegments.isEmpty ? '' : request.uri.pathSegments.first;
     final _Source? source = _byToken[token];
@@ -236,7 +231,7 @@ class StreamProxy {
     }
 
     int offset = start;
-    String stopReason = 'не начат';
+    String stopReason = 'дошли до конца';
 
     // Сначала отдаём то, что успели скачать заранее. Именно это убирает
     // паузу при переключении на прогретый трек.
@@ -256,24 +251,21 @@ class StreamProxy {
           last < 0 ? offset + chunkSize - 1 : math.min(offset + chunkSize - 1, last);
       final List<int> bytes = await _fetchWithRetry(source, offset, chunkEnd);
       if (bytes.isEmpty) {
+        // Медиасервер кончился раньше обещанного размера: поток усечён.
         stopReason = 'пустой кусок на $offset';
         break;
       }
       request.response.add(bytes);
       await request.response.flush();
       offset += bytes.length;
-      stopReason = 'дошли до конца';
     }
-    if (offset <= last && last >= 0) stopReason = 'вышли из цикла раньше ($offset<=$last)';
-
-    // [DEBUG]
-    // ignore: avoid_print
-    print('[DBG-PROXY] _pipe конец: start=$start last=$last total=$total '
-        'отдано=${offset - start} причина=$stopReason');
 
     if (verbose) {
+      // Счётчик отданного вместе с ожидаемым `clen`: если `отдано` меньше,
+      // поток усечён (медиасервер не отдал весь файл), и виноват не плеер.
       // ignore: avoid_print
-      print('[Proxy] отдано ${offset - start} байт');
+      print('[Proxy] итог start=$start last=$last total=$total '
+          'отдано=${offset - start} причина=$stopReason');
     }
     await request.response.close();
   }

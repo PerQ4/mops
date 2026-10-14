@@ -46,6 +46,20 @@ class AudioplayersEngine implements AudioEngine {
   /// когда пользователь нажмёт «играть».
   bool _needsRecovery = false;
 
+  /// Последний загруженный источник. Нужен, чтобы поднять поток заново:
+  /// `audioplayers` на Linux в режиме release освобождает источник по
+  /// завершении, и тогда ни `resume`, ни `seek` трек уже не оживят.
+  String? _lastSource;
+  bool _lastIsLocal = false;
+
+  /// Источник сейчас загружен в нативный плеер.
+  ///
+  /// После EOS Linux-плагин делает `Stop()` и освобождает поток. Перемотка на
+  /// освобождённом потоке не доходит до конца: `audioplayers` ждёт событие
+  /// `onSeekComplete` и падает по таймауту через 30 секунд. Поэтому перед
+  /// любой перемоткой/возобновлением источник поднимается заново.
+  bool _sourceLoaded = false;
+
   @override
   Stream<PlaybackState> get stateStream => _controller.stream;
 
@@ -75,10 +89,6 @@ class AudioplayersEngine implements AudioEngine {
       PlayerState.stopped => PlaybackStatus.idle,
       PlayerState.disposed => PlaybackStatus.idle,
     };
-    // [DEBUG]
-    // ignore: avoid_print
-    print('[DBG] onPlayerState raw=$state -> ${mapped.name} '
-        'seeking=$_seeking needsRecovery=$_needsRecovery');
 
     // Завершение приходит и сюда, и в `onPlayerComplete`. Обрабатываем в
     // одном месте, чтобы фильтр «это не перемотка» сработал одинаково.
@@ -96,15 +106,13 @@ class AudioplayersEngine implements AudioEngine {
 
   /// Сообщает об окончании воспроизведения, отсекая ложный EOS перемотки.
   void _emitCompletion() {
-    // [DEBUG]
-    // ignore: avoid_print
-    print('[DBG] _emitCompletion seeking=$_seeking '
-        'needsRecovery=$_needsRecovery status=${_state.status.name} '
-        'duration=${_state.duration.inMilliseconds}');
     if (_seeking) {
       // Перемотка оборвала поток в EOS. Держим тот же трек и позицию:
       // очередь переключать нельзя, иначе «играть» включит следующий.
+      // Нативный плеер на EOS освободил поток — запоминаем это, чтобы
+      // «играть» подняло трек заново, а не перематывало пустоту.
       _needsRecovery = true;
+      _sourceLoaded = false;
       _emit(_state.copyWith(
         status: PlaybackStatus.paused,
         position: _lastSeekTarget,
@@ -114,6 +122,9 @@ class AudioplayersEngine implements AudioEngine {
     // Завершение приходит двумя путями — из `onPlayerComplete` и из смены
     // состояния. Сообщаем о нём один раз, иначе очередь перескочит дважды.
     if (_state.status == PlaybackStatus.completed) return;
+    // Источник освобождён нативным плеером — без повторного `setSourceUrl`
+    // повторное «играть» не сработает.
+    _sourceLoaded = false;
     _emit(_state.copyWith(
       status: PlaybackStatus.completed,
       position: _state.duration,
@@ -121,9 +132,6 @@ class AudioplayersEngine implements AudioEngine {
   }
 
   void _onLog(String message) {
-    // [DEBUG]
-    // ignore: avoid_print
-    print('[DBG] log: $message');
     // audioplayers пишет в лог и ошибки, и отладку. Понятный пользователю
     // текст формируем только для явных сбоев.
     final String lower = message.toLowerCase();
@@ -158,13 +166,15 @@ class AudioplayersEngine implements AudioEngine {
     bool autoplay = true,
     bool isLocal = false,
   }) async {
-    // [DEBUG]
-    // ignore: avoid_print
-    print('[DBG] load autoplay=$autoplay isLocal=$isLocal source=$source');
     // Новый трек — прежняя перемотка и её последствия больше не важны.
     _needsRecovery = false;
     _lastSeekTarget = Duration.zero;
     _endSeek();
+    // Запоминаем источник: если его потом освободит EOS, по этим данным
+    // поток можно поднять заново.
+    _lastSource = source;
+    _lastIsLocal = isLocal;
+    _sourceLoaded = false;
     _emit(_state.copyWith(
       status: PlaybackStatus.loading,
       position: Duration.zero,
@@ -178,6 +188,7 @@ class AudioplayersEngine implements AudioEngine {
       } else {
         await _player.setSourceUrl(source);
       }
+      _sourceLoaded = true;
       if (autoplay) {
         await _player.resume();
         // Часть платформ не отдаёт состояние сразу — выставляем сами.
@@ -186,6 +197,7 @@ class AudioplayersEngine implements AudioEngine {
         }
       }
     } on Exception catch (error) {
+      _sourceLoaded = false;
       _emit(_state.copyWith(
         status: PlaybackStatus.error,
         error: _humanizeError(error.toString()),
@@ -195,10 +207,16 @@ class AudioplayersEngine implements AudioEngine {
 
   @override
   Future<void> play() async {
-    // [DEBUG]
-    // ignore: avoid_print
-    print('[DBG] play needsRecovery=$_needsRecovery status=${_state.status.name} '
-        'lastSeek=${_lastSeekTarget.inMilliseconds}');
+    // Потока в плеере нет (трек доиграл, оборвался) — поднимаем его заново.
+    // Просто `seek`/`resume` здесь не работают: нативный плеер освобождён,
+    // а `seek` на нём ждёт событие и падает по таймауту через 30 секунд.
+    if (!_sourceLoaded || _state.status == PlaybackStatus.completed) {
+      // Прерванную перемотку продолжаем с её места, завершённый трек — с нуля.
+      final Duration target = _needsRecovery ? _lastSeekTarget : Duration.zero;
+      _needsRecovery = false;
+      await _restart(target);
+      return;
+    }
     // Если поток оборвался на перемотке, возвращаем его на выбранное место,
     // чтобы «играть» продолжило ТОТ ЖЕ трек, а не тишину.
     if (_needsRecovery) {
@@ -208,9 +226,6 @@ class AudioplayersEngine implements AudioEngine {
       } on Object catch (error) {
         debugPrint('Не удалось восстановить позицию после перемотки: $error');
       }
-    }
-    if (_state.status == PlaybackStatus.completed) {
-      await _player.seek(Duration.zero);
     }
     await _player.resume();
   }
@@ -222,15 +237,14 @@ class AudioplayersEngine implements AudioEngine {
   Future<void> stop() async {
     await _player.stop();
     _needsRecovery = false;
+    // На `stop` Linux-плагин освобождает поток — помним об этом.
+    _sourceLoaded = false;
     _emit(_state.copyWith(status: PlaybackStatus.idle, position: Duration.zero));
   }
 
   @override
   Future<void> seek(Duration position) async {
     final Duration clamped = position < Duration.zero ? Duration.zero : position;
-    // [DEBUG]
-    // ignore: avoid_print
-    print('[DBG] seek begin $clamped');
     _lastSeekTarget = clamped;
     _beginSeek();
 
@@ -238,11 +252,20 @@ class AudioplayersEngine implements AudioEngine {
     // а полоса не должна «отпрыгивать» назад.
     _emit(_state.copyWith(position: clamped));
 
+    // Источника в плеере нет — перематывать нечего. Поднимаем поток заново
+    // и начинаем с выбранного места (иначе `seek` уйдёт в 30-секундный таймаут).
+    if (!_sourceLoaded) {
+      _needsRecovery = false;
+      try {
+        await _restart(clamped, emitLoading: false);
+      } finally {
+        _endSeek();
+      }
+      return;
+    }
+
     try {
       await _player.seek(clamped);
-      // [DEBUG]
-      // ignore: avoid_print
-      print('[DBG] seek await вернулся');
     } on Object catch (error) {
       // Ошибку перемотки не показываем как сбой воспроизведения: звук
       // продолжает идти, плеер остаётся на прежнем месте.
@@ -252,22 +275,54 @@ class AudioplayersEngine implements AudioEngine {
     }
   }
 
+  /// Заново поднимает последний источник — после EOS или остановки.
+  ///
+  /// `audioplayers` на Linux освобождает поток по завершении, поэтому без
+  /// нового `setSourceUrl` ни «играть», ни перемотка не сработают. `target` —
+  /// куда встать после загрузки (ноль — с начала).
+  Future<void> _restart(Duration target, {bool emitLoading = true}) async {
+    final String? source = _lastSource;
+    if (source == null) return;
+    if (emitLoading) {
+      _emit(_state.copyWith(status: PlaybackStatus.loading, clearError: true));
+    }
+    try {
+      if (_lastIsLocal) {
+        await _player.setSourceDeviceFile(source);
+      } else {
+        await _player.setSourceUrl(source);
+      }
+      _sourceLoaded = true;
+      // `setSourceUrl` завершается только после подготовки потока, поэтому
+      // перемотка сразу за ним уже безопасна.
+      if (target > Duration.zero) {
+        await _player.seek(target);
+      }
+      await _player.resume();
+      _emit(_state.copyWith(
+        status: PlaybackStatus.playing,
+        position: target,
+        clearError: true,
+      ));
+    } on Object catch (error) {
+      _sourceLoaded = false;
+      _emit(_state.copyWith(
+        status: PlaybackStatus.error,
+        error: _humanizeError(error.toString()),
+      ));
+    }
+  }
+
   /// Включает защиту от ложного EOS на время перемотки.
   void _beginSeek() {
     _seeking = true;
     _seekSafetyTimer?.cancel();
-    // [DEBUG]
-    // ignore: avoid_print
-    print('[DBG] _beginSeek');
     // Страховка: если `onSeekComplete` не придёт (например, платформа его не
     // шлёт), снимаем флаг сами — иначе настоящий конец трека будет пропущен.
     _seekSafetyTimer = Timer(const Duration(seconds: 10), _endSeek);
   }
 
   void _endSeek() {
-    // [DEBUG]
-    // ignore: avoid_print
-    print('[DBG] _endSeek (was $_seeking)');
     _seeking = false;
     _seekSafetyTimer?.cancel();
     _seekSafetyTimer = null;
