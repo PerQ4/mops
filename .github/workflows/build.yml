@@ -106,34 +106,52 @@ jobs:
     if: startsWith(github.ref, 'refs/tags/v')
     runs-on: ubuntu-latest
     steps:
+      # Скачиваем БЕЗ слияния: иначе файлы всех платформ попадают в одну
+      # папку, и вместе с приложениями архивируются служебные каталоги
+      # (data, lib) — в релиз попадал мусор.
       - name: Скачать все сборки
         uses: actions/download-artifact@v4
         with:
           path: artifacts
-          merge-multiple: true
+          merge-multiple: false
 
-      # Windows не любит tar.gz: там архив открывается не всегда, поэтому
-      # для него кладём обычный zip. Остальные платформы — tar.gz.
+      # Каждый артефакт лежит своей папкой. Приложения упаковываем в архивы
+      # (Windows — zip, его система открывает сама), а установщик кладём
+      # в релиз как есть.
       - name: Собрать архивы
         run: |
           cd artifacts
-          for dir in *; do
+          for dir in mops-linux mops-windows mops-macos; do
             [ -d "$dir" ] || continue
-            case "$dir" in
-              *windows*) zip -qr "$dir.zip" "$dir" ;;
-              *) tar -czf "$dir.tar.gz" "$dir" ;;
-            esac
-            rm -rf "$dir"
+            if [ "$dir" = "mops-windows" ]; then
+              zip -qr "$dir.zip" "$dir"
+            else
+              tar -czf "$dir.tar.gz" "$dir"
+            fi
           done
-          ls -lh
+          rm -rf mops-linux mops-windows mops-macos
+          echo "В релиз пойдёт:"; find . -maxdepth 2 -type f | sort
+
+      # Сначала убираем то, что осталось от прошлых запусков: иначе в релизе
+      # накапливаются старые и мусорные файлы.
+      - name: Очистить старые файлы релиза
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          gh release view "${{ github.ref_name }}" --json assets \
+            -q '.assets[].name' 2>/dev/null | while read -r name; do
+              [ -n "$name" ] && gh release delete-asset "${{ github.ref_name }}" "$name" -y || true
+            done
+          exit 0
 
       - name: Опубликовать релиз
         uses: softprops/action-gh-release@v2
         with:
           files: |
-            artifacts/*.tar.gz
-            artifacts/*.zip
-            packaging/windows/Output/*.exe
+            artifacts/mops-linux.tar.gz
+            artifacts/mops-windows.zip
+            artifacts/mops-macos.tar.gz
+            artifacts/mops-installer/*.exe
           generate_release_notes: true
           body: |
             ## Как запустить
