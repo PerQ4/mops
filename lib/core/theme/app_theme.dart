@@ -85,9 +85,11 @@ class AppTheme {
         elevation: 0,
         scrolledUnderElevation: 3,
         centerTitle: false,
+        // Заголовок экрана в ArchiveTune — titleLarge, bold, цветом primary:
+        // он читается как акцент, а не как обычный текст.
         titleTextStyle: textTheme.titleLarge?.copyWith(
-          color: scheme.onSurface,
-          fontWeight: FontWeight.w600,
+          color: scheme.primary,
+          fontWeight: FontWeight.w700,
         ),
       ),
       navigationRailTheme: NavigationRailThemeData(
