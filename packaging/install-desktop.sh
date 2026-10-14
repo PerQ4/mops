@@ -36,11 +36,15 @@ fi
 
 echo
 echo "== 2/4 Иконка =="
-SOURCE_ICON="$PROJECT/packaging/mops.png"
+# Иконка приложения. Основная — та, что в assets/icon (её обновляют вместе
+# с интерфейсом); старая в packaging остаётся запасной.
+SOURCE_ICON="$PROJECT/assets/icon/mops_icon.png"
+[ -f "$SOURCE_ICON" ] || SOURCE_ICON="$PROJECT/packaging/mops.png"
 if [ ! -f "$SOURCE_ICON" ]; then
-  echo "  нет файла $SOURCE_ICON" >&2
+  echo "  нет файла иконки" >&2
   exit 1
 fi
+echo "  источник: $SOURCE_ICON"
 
 for size in 128 256 512; do
   target_dir="$DATA_HOME/icons/hicolor/${size}x${size}/apps"
