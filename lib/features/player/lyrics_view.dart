@@ -157,9 +157,21 @@ class _SyncedLyricsState extends ConsumerState<_SyncedLyrics> {
         itemCount: widget.lines.length,
         itemBuilder: (BuildContext context, int index) {
           final bool active = index == _activeIndex;
-          return Padding(
+          return AnimatedContainer(
             key: _keys[index],
-            padding: const EdgeInsets.symmetric(vertical: 8),
+            duration: const Duration(milliseconds: 220),
+            curve: Curves.easeOut,
+            margin: const EdgeInsets.symmetric(vertical: 4),
+            padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 6),
+            decoration: BoxDecoration(
+              // Подсветка активной строки: цветом акцента и мягкой подложкой.
+              // Раньше разница была только в жирности и оттенке, поэтому
+              // казалось, что подсветки нет вовсе.
+              color: active
+                  ? scheme.primary.withValues(alpha: 0.10)
+                  : Colors.transparent,
+              borderRadius: BorderRadius.circular(12),
+            ),
             child: AnimatedDefaultTextStyle(
               duration: const Duration(milliseconds: 220),
               curve: Curves.easeOut,
@@ -167,7 +179,7 @@ class _SyncedLyricsState extends ConsumerState<_SyncedLyrics> {
                 height: 1.45,
                 fontWeight: active ? FontWeight.w700 : FontWeight.w500,
                 color: active
-                    ? scheme.onSurface
+                    ? scheme.primary
                     : scheme.onSurfaceVariant.withValues(alpha: 0.55),
               ),
               child: Text(widget.lines[index].text),

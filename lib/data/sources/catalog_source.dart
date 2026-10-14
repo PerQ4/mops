@@ -1,3 +1,6 @@
+import 'dart:convert';
+import 'dart:io';
+
 import '../models/models.dart';
 import '../../core/innertube/innertube_client.dart';
 import '../../core/innertube/renderer.dart';
@@ -339,6 +342,72 @@ class CatalogSource {
       return Lyrics(plain: plain);
     } on Exception {
       // Текста может не быть — это не ошибка приложения.
+      return Lyrics.none;
+    }
+  }
+
+  /// Текст из субтитров видео — второй источник, как в ArchiveTune.
+  ///
+  /// У клипов и редких записей вкладки «Текст» нет, а субтитры есть. Разметка
+  /// приходит по адресу дорожки субтитров в формате json3: события со временем
+  /// и кусками текста.
+  Future<Lyrics> subtitleLyrics(String videoId) async {
+    try {
+      final Map<String, dynamic> player = await _client.post(
+        'player',
+        body: <String, dynamic>{
+          'videoId': videoId,
+          'contentCheckOk': true,
+          'racyCheckOk': true,
+        },
+      );
+
+      final List<dynamic> tracks = traverseList(player, <String>[
+        'captions',
+        'playerCaptionsTracklistRenderer',
+        'captionTracks',
+      ]);
+      if (tracks.isEmpty) return Lyrics.none;
+
+      final String? base = traverseString(tracks.first, <String>['baseUrl']);
+      if (base == null || base.isEmpty) return Lyrics.none;
+
+      final HttpClient http = HttpClient();
+      try {
+        final HttpClientRequest request =
+            await http.getUrl(Uri.parse('$base&fmt=json3'));
+        final HttpClientResponse response = await request.close();
+        final String body = await response.transform(utf8.decoder).join();
+        final dynamic decoded = jsonDecode(body);
+        if (decoded is! Map) return Lyrics.none;
+
+        final List<TimedLyric> timed = <TimedLyric>[];
+        for (final dynamic event
+            in decoded['events'] as List<dynamic>? ?? <dynamic>[]) {
+          if (event is! Map) continue;
+          final String text = (event['segs'] as List<dynamic>? ?? <dynamic>[])
+              .whereType<Map<dynamic, dynamic>>()
+              .map((Map<dynamic, dynamic> seg) => '${seg['utf8'] ?? ''}')
+              .join()
+              .trim();
+          if (text.isEmpty) continue;
+          timed.add(TimedLyric(
+            time: Duration(
+              milliseconds: (event['tStartMs'] as num?)?.toInt() ?? 0,
+            ),
+            text: text,
+          ));
+        }
+        if (timed.isEmpty) return Lyrics.none;
+        return Lyrics(
+          timed: timed,
+          plain: timed.map((TimedLyric l) => l.text).join('\n'),
+          source: 'Субтитры',
+        );
+      } finally {
+        http.close(force: true);
+      }
+    } on Exception {
       return Lyrics.none;
     }
   }

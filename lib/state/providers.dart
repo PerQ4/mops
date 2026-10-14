@@ -74,6 +74,9 @@ class SettingsController extends Notifier<AppSettings> {
   Future<void> setUseMaterialExpressive(bool value) =>
       update((AppSettings s) => s.copyWith(useMaterialExpressive: value));
 
+  Future<void> setLyricsSource(LyricsSource source) =>
+      update((AppSettings s) => s.copyWith(lyricsSource: source));
+
   Future<void> setSidebarWidth(double width) =>
       update((AppSettings s) => s.copyWith(sidebarWidth: width));
 

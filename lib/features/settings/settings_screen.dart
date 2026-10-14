@@ -89,6 +89,14 @@ class SettingsScreen extends ConsumerWidget {
               onSelected: controller.setSeedColorIndex,
             ),
 
+          ListTile(
+            leading: const Icon(Icons.lyrics_outlined),
+            title: const Text('Источник текста песни'),
+            subtitle: Text(settings.lyricsSource.label),
+            trailing: const Icon(Icons.chevron_right),
+            onTap: () => _pickLyricsSource(context, controller, settings),
+          ),
+
           SwitchListTile(
             title: const Text('Показывать текст в плеере'),
             subtitle: const Text('Открывать текст по умолчанию, если он есть'),
@@ -259,6 +267,21 @@ class SettingsScreen extends ConsumerWidget {
       label: (AudioQuality v) => v.label,
     );
     if (result != null) await controller.setAudioQuality(result);
+  }
+
+  Future<void> _pickLyricsSource(
+    BuildContext context,
+    SettingsController controller,
+    AppSettings settings,
+  ) async {
+    final LyricsSource? result = await _showChoice<LyricsSource>(
+      context,
+      title: 'Источник текста песни',
+      current: settings.lyricsSource,
+      values: LyricsSource.values,
+      label: (LyricsSource v) => v.label,
+    );
+    if (result != null) await controller.setLyricsSource(result);
   }
 
   Future<void> _pickPaletteStyle(

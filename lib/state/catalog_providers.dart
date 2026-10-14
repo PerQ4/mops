@@ -1,3 +1,4 @@
+import '../data/local/app_settings.dart';
 import 'package:flutter/foundation.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 
@@ -190,7 +191,17 @@ final searchSuggestionsProvider =
 
 /// Текст песни.
 final lyricsProvider = FutureProvider.family<Lyrics, String>((ref, videoId) async {
-  return ref.watch(catalogSourceProvider).lyrics(videoId);
+  // Источник текста выбирается в настройках: вкладка «Текст» или субтитры.
+  final LyricsSource source = ref.watch(
+    settingsControllerProvider.select((AppSettings s) => s.lyricsSource),
+  );
+  final CatalogSource catalog = ref.watch(catalogSourceProvider);
+  if (source == LyricsSource.subtitles) {
+    final Lyrics fromSubtitles = await catalog.subtitleLyrics(videoId);
+    // Если субтитров нет, не оставляем пустоту — пробуем обычный источник.
+    if (!fromSubtitles.isEmpty) return fromSubtitles;
+  }
+  return catalog.lyrics(videoId);
 });
 
 /// Пара «поисковый запрос + фильтр» — ключ кэша поиска.

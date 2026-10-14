@@ -60,6 +60,26 @@ enum StreamSource {
       );
 }
 
+/// Откуда брать текст песни.
+///
+/// В ArchiveTune источников два: вкладка «Текст» в YouTube Music и субтитры
+/// видео. У клипов и редких записей вкладки нет, а субтитры есть.
+enum LyricsSource {
+  music('Текст YouTube Music', 'Вкладка «Текст» — с подсветкой строк'),
+  subtitles('Субтитры видео', 'Разметка видео — когда текста нет');
+
+  const LyricsSource(this.label, this.description);
+
+  final String label;
+  final String description;
+
+  static LyricsSource fromName(String? name) =>
+      LyricsSource.values.firstWhere(
+        (LyricsSource v) => v.name == name,
+        orElse: () => LyricsSource.music,
+      );
+}
+
 /// Стиль палитры Material 3.
 ///
 /// В ArchiveTune стиль выбирается по насыщенности акцентного цвета, но
@@ -93,6 +113,7 @@ class AppSettings {
     this.paletteStyle = PaletteStylePreference.tonal,
     this.playerPanelWidth = 280,
     this.sidebarWidth = 280,
+    this.lyricsSource = LyricsSource.music,
     this.audioQuality = AudioQuality.high,
     this.streamClient = StreamSource.auto,
     this.showLyricsInPlayer = true,
@@ -114,6 +135,9 @@ class AppSettings {
   final ColorSource colorSource;
   final int seedColorIndex;
   final bool useMaterialExpressive;
+
+  /// Откуда брать текст песни.
+  final LyricsSource lyricsSource;
 
   /// Ширина боковой панели библиотеки. Меняется перетаскиванием за её край.
   final double sidebarWidth;
@@ -184,6 +208,7 @@ class AppSettings {
     PaletteStylePreference? paletteStyle,
     double? playerPanelWidth,
     double? sidebarWidth,
+    LyricsSource? lyricsSource,
     AudioQuality? audioQuality,
     StreamSource? streamClient,
     bool? showLyricsInPlayer,
@@ -209,6 +234,7 @@ class AppSettings {
       paletteStyle: paletteStyle ?? this.paletteStyle,
       playerPanelWidth: playerPanelWidth ?? this.playerPanelWidth,
       sidebarWidth: sidebarWidth ?? this.sidebarWidth,
+      lyricsSource: lyricsSource ?? this.lyricsSource,
       audioQuality: audioQuality ?? this.audioQuality,
       streamClient: streamClient ?? this.streamClient,
       showLyricsInPlayer: showLyricsInPlayer ?? this.showLyricsInPlayer,
@@ -236,6 +262,7 @@ class AppSettings {
         'paletteStyle': paletteStyle.name,
         'playerPanelWidth': playerPanelWidth,
         'sidebarWidth': sidebarWidth,
+        'lyricsSource': lyricsSource.name,
         'audioQuality': audioQuality.name,
         'streamClient': streamClient.name,
         'showLyricsInPlayer': showLyricsInPlayer,
@@ -266,6 +293,7 @@ class AppSettings {
           PaletteStylePreference.fromName(json['paletteStyle'] as String?),
       playerPanelWidth: (json['playerPanelWidth'] as num?)?.toDouble() ?? 280,
       sidebarWidth: (json['sidebarWidth'] as num?)?.toDouble() ?? 280,
+      lyricsSource: LyricsSource.fromName(json['lyricsSource'] as String?),
       audioQuality: AudioQuality.fromName(json['audioQuality'] as String?),
       streamClient: StreamSource.fromName(json['streamClient'] as String?),
       showLyricsInPlayer: json['showLyricsInPlayer'] as bool? ?? true,
