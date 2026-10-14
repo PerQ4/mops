@@ -34,7 +34,7 @@ class FloatingDock extends ConsumerWidget {
   static const double outerRadius = islandHeight / 2;
 
   /// Минимальное скругление на стыке двух островков.
-  static const double joinRadius = 6;
+  static const double joinRadius = AppLayout.junctionRadius;
 
   /// Зазор между островками.
   static const double gap = 8;

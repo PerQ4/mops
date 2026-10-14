@@ -13,7 +13,11 @@ class SeedColor {
 }
 
 /// Набор предустановленных палитр. Первый элемент — значение по умолчанию.
+///
+/// По умолчанию берём коралловый цвет ArchiveTune: из него Material строит ту
+/// же палитру, что и в оригинальном приложении.
 const List<SeedColor> kSeedColors = <SeedColor>[
+  SeedColor('Коралловый (ArchiveTune)', Color(0xFFED5564)),
   SeedColor('Индиго', Color(0xFF4F46E5)),
   SeedColor('Фиолетовый', Color(0xFF8B5CF6)),
   SeedColor('Розовый', Color(0xFFEC4899)),

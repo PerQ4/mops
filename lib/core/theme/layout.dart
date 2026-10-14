@@ -42,6 +42,40 @@ abstract final class AppLayout {
   static const double bottomNavHeight = 72;
   static const double miniPlayerHeight = 72;
 
+  // ---------------------------------------------------- размеры ArchiveTune
+  //
+  // Взяты из исходников ArchiveTune (`constants/Dimensions.kt`), чтобы
+  // интерфейс совпадал с оригиналом.
+
+  /// Ширина панели навигации на широком экране.
+  static const double navBarMaxWidth = 420;
+
+  /// Высота строки списка (трек, альбом, исполнитель).
+  static const double listItemHeight = 72;
+
+  /// Обложка в строке списка.
+  static const double listThumbnailSize = 56;
+
+  /// Обложка в сетке.
+  static const double gridThumbnailHeight = 128;
+
+  /// Крупная обложка альбома.
+  static const double albumThumbnailSize = 144;
+
+  /// Радиус обложки в списке и в сетке.
+  static const double thumbnailRadius = 10;
+  static const double gridThumbnailRadius = 8;
+
+  /// Ширина боковой панели с навигацией и библиотекой на широком экране.
+  static const double sidebarWidth = 280;
+
+  /// Высота шапки экрана.
+  static const double appBarHeight = 64;
+
+  /// Скругления: отдельный островок и стык с соседним.
+  static const double standaloneBarRadius = 32;
+  static const double junctionRadius = 12;
+
   /// Отступ снизу, чтобы содержимое экранов не уходило под плавающий островок.
   ///
   /// Высота островка (64) + его отступ от края окна (14) + запас (8).
