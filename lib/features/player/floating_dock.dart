@@ -33,7 +33,7 @@ class FloatingDock extends ConsumerWidget {
   ///
   /// Он выше плеера, поэтому именно по нему считается запас снизу
   /// (`AppLayout.floatingDockClearance`).
-  static const double islandHeight = 78;
+  static const double islandHeight = 70;
 
   /// Высота мини-плеера. ArchiveTune: 70.
   ///
