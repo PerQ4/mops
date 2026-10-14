@@ -92,6 +92,7 @@ class AppSettings {
     this.pureBlack = false,
     this.paletteStyle = PaletteStylePreference.tonal,
     this.playerPanelWidth = 280,
+    this.sidebarWidth = 280,
     this.audioQuality = AudioQuality.high,
     this.streamClient = StreamSource.auto,
     this.showLyricsInPlayer = true,
@@ -113,6 +114,9 @@ class AppSettings {
   final ColorSource colorSource;
   final int seedColorIndex;
   final bool useMaterialExpressive;
+
+  /// Ширина боковой панели библиотеки. Меняется перетаскиванием за её край.
+  final double sidebarWidth;
 
   /// Ширина правой панели плеера. Меняется перетаскиванием за её край.
   final double playerPanelWidth;
@@ -179,6 +183,7 @@ class AppSettings {
     bool? pureBlack,
     PaletteStylePreference? paletteStyle,
     double? playerPanelWidth,
+    double? sidebarWidth,
     AudioQuality? audioQuality,
     StreamSource? streamClient,
     bool? showLyricsInPlayer,
@@ -203,6 +208,7 @@ class AppSettings {
       pureBlack: pureBlack ?? this.pureBlack,
       paletteStyle: paletteStyle ?? this.paletteStyle,
       playerPanelWidth: playerPanelWidth ?? this.playerPanelWidth,
+      sidebarWidth: sidebarWidth ?? this.sidebarWidth,
       audioQuality: audioQuality ?? this.audioQuality,
       streamClient: streamClient ?? this.streamClient,
       showLyricsInPlayer: showLyricsInPlayer ?? this.showLyricsInPlayer,
@@ -229,6 +235,7 @@ class AppSettings {
         'pureBlack': pureBlack,
         'paletteStyle': paletteStyle.name,
         'playerPanelWidth': playerPanelWidth,
+        'sidebarWidth': sidebarWidth,
         'audioQuality': audioQuality.name,
         'streamClient': streamClient.name,
         'showLyricsInPlayer': showLyricsInPlayer,
@@ -258,6 +265,7 @@ class AppSettings {
       paletteStyle:
           PaletteStylePreference.fromName(json['paletteStyle'] as String?),
       playerPanelWidth: (json['playerPanelWidth'] as num?)?.toDouble() ?? 280,
+      sidebarWidth: (json['sidebarWidth'] as num?)?.toDouble() ?? 280,
       audioQuality: AudioQuality.fromName(json['audioQuality'] as String?),
       streamClient: StreamSource.fromName(json['streamClient'] as String?),
       showLyricsInPlayer: json['showLyricsInPlayer'] as bool? ?? true,

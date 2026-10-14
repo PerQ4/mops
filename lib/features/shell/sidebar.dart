@@ -19,33 +19,86 @@ import '../common/navigation.dart';
 /// плейлистов пользователя. Панель сворачивается в узкую полосу с обложками,
 /// а состояние запоминается в настройках — иначе при каждом переходе в
 /// широкую раскладку панель разворачивалась бы заново.
-class LibrarySidebar extends ConsumerWidget {
+class LibrarySidebar extends ConsumerStatefulWidget {
   const LibrarySidebar({super.key});
 
   @override
-  Widget build(BuildContext context, WidgetRef ref) {
+  ConsumerState<LibrarySidebar> createState() => _LibrarySidebarState();
+}
+
+class _LibrarySidebarState extends ConsumerState<LibrarySidebar> {
+  /// Ширина во время перетаскивания: настройку сохраняем только в конце,
+  /// иначе каждый пиксель писался бы в файл настроек.
+  double? _dragging;
+
+  /// Пределы, чтобы панель не превращалась ни в щель, ни в пол-экрана.
+  static const double _minWidth = 220;
+  static const double _maxWidth = 480;
+
+  @override
+  Widget build(BuildContext context) {
     final ColorScheme scheme = Theme.of(context).colorScheme;
     final bool collapsed = ref.watch(
       settingsControllerProvider.select(
         (AppSettings s) => s.sidebarCollapsed,
       ),
     );
+    final double saved = ref.watch(
+      settingsControllerProvider.select((AppSettings s) => s.sidebarWidth),
+    );
+    final double expanded = (_dragging ?? saved).clamp(_minWidth, _maxWidth);
 
     // Ширину анимируем: содержимое справа подстраивается плавно, без рывка.
+    // Во время перетаскивания анимация выключена — панель идёт за курсором.
     return AnimatedContainer(
-      duration: const Duration(milliseconds: 220),
+      duration: _dragging == null
+          ? const Duration(milliseconds: 220)
+          : Duration.zero,
       curve: Curves.easeOutCubic,
-      width: collapsed ? AppLayout.sidebarCollapsedWidth : AppLayout.sidebarWidth,
-      // Material одновременно даёт фон панели и подложку для InkWell.
+      width: collapsed ? AppLayout.sidebarCollapsedWidth : expanded,
       child: Material(
         color: scheme.surfaceContainer,
-        child: Column(
-          crossAxisAlignment: CrossAxisAlignment.stretch,
+        child: Stack(
           children: <Widget>[
-            const SizedBox(height: 8),
-            _SidebarHeader(collapsed: collapsed),
-            Expanded(child: _PlaylistList(collapsed: collapsed)),
-            const SizedBox(height: 8),
+            Column(
+              crossAxisAlignment: CrossAxisAlignment.stretch,
+              children: <Widget>[
+                const SizedBox(height: 8),
+                _SidebarHeader(collapsed: collapsed),
+                Expanded(child: _PlaylistList(collapsed: collapsed)),
+                const SizedBox(height: 8),
+              ],
+            ),
+            // Ручка ширины: тянем за правый край панели. В свёрнутом виде
+            // ширину менять нечего, поэтому ручки нет.
+            if (!collapsed)
+              Positioned(
+                right: 0,
+                top: 0,
+                bottom: 0,
+                child: MouseRegion(
+                  cursor: SystemMouseCursors.resizeLeftRight,
+                  child: GestureDetector(
+                    behavior: HitTestBehavior.translucent,
+                    onHorizontalDragUpdate: (DragUpdateDetails details) {
+                      setState(() {
+                        _dragging = ((_dragging ?? saved) + details.delta.dx)
+                            .clamp(_minWidth, _maxWidth);
+                      });
+                    },
+                    onHorizontalDragEnd: (DragEndDetails _) {
+                      final double? value = _dragging;
+                      if (value != null) {
+                        ref
+                            .read(settingsControllerProvider.notifier)
+                            .setSidebarWidth(value);
+                      }
+                      setState(() => _dragging = null);
+                    },
+                    child: const SizedBox(width: 8),
+                  ),
+                ),
+              ),
           ],
         ),
       ),
