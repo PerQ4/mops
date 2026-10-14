@@ -74,12 +74,29 @@ jobs:
         # вырезать: без этого часть иконок пропадает.
         run: flutter build ${{ matrix.os == 'ubuntu-latest' && 'linux' || matrix.os == 'windows-latest' && 'windows' || 'macos' }} --release --no-tree-shake-icons
 
-      - name: Артефакт
+      # Установщик собирается там же, где и приложение: Inno Setup есть только
+      # для Windows, в задаче релиза (она на Linux) его не запустить.
+      - name: Установщик Windows
+        if: matrix.os == 'windows-latest'
+        shell: cmd
+        run: |
+          choco install innosetup -y --no-progress
+          iscc /DAppVersion=${{ github.ref_name }} packaging\windows\mops.iss
+
+      - name: Артефакт приложения
         uses: actions/upload-artifact@v4
         with:
           name: ${{ matrix.artifact }}
           path: ${{ matrix.path }}
           if-no-files-found: error
+
+      - name: Артефакт установщика
+        if: matrix.os == 'windows-latest'
+        uses: actions/upload-artifact@v4
+        with:
+          name: mops-installer
+          path: packaging/windows/Output/*.exe
+          if-no-files-found: warn
 
   # Публикация в Releases: только при пуше тега (v1.0 и подобных) или когда
   # запуск отмечен вручную. Иначе каждый пуш засорял бы раздел релизов.
@@ -95,16 +112,40 @@ jobs:
           path: artifacts
           merge-multiple: true
 
+      # Windows не любит tar.gz: там архив открывается не всегда, поэтому
+      # для него кладём обычный zip. Остальные платформы — tar.gz.
       - name: Собрать архивы
         run: |
           cd artifacts
           for dir in *; do
-            [ -d "$dir" ] && tar -czf "$dir.tar.gz" "$dir" && rm -rf "$dir"
+            [ -d "$dir" ] || continue
+            case "$dir" in
+              *windows*) zip -qr "$dir.zip" "$dir" ;;
+              *) tar -czf "$dir.tar.gz" "$dir" ;;
+            esac
+            rm -rf "$dir"
           done
           ls -lh
 
       - name: Опубликовать релиз
         uses: softprops/action-gh-release@v2
         with:
-          files: artifacts/*.tar.gz
+          files: |
+            artifacts/*.tar.gz
+            artifacts/*.zip
+            packaging/windows/Output/*.exe
           generate_release_notes: true
+          body: |
+            ## Как запустить
+
+            **Windows.** Скачайте `mops-setup.exe` и запустите — установщик
+            положит приложение в меню «Пуск». Либо скачайте `mops-windows.zip`,
+            распакуйте в любую папку и запустите `mops.exe` (это портативный
+            вариант, установка не нужна).
+
+            **Linux.** Скачайте `mops-linux.tar.gz`, распакуйте и запустите
+            `mops`. Нужен `libmpv` — он ставится пакетом `mpv`
+            (`sudo pacman -S mpv` или `sudo apt install libmpv2`).
+
+            **macOS.** Скачайте `mops-macos.tar.gz`, распакуйте и запустите
+            приложение. Нужен `mpv`: `brew install mpv`.
