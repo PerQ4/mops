@@ -2,6 +2,8 @@ import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 
 import '../../core/theme/layout.dart';
+import '../../data/local/app_settings.dart';
+import '../../state/providers.dart';
 import '../../core/utils/artwork_urls.dart';
 import '../../data/models/models.dart';
 import '../../state/auth_controller.dart';
@@ -40,25 +42,79 @@ final NotifierProvider<PlayerRightPanelController, bool>
 /// и у сворачиваемой библиотеки: содержимое слева сужается плавно, без рывка.
 /// Панель при этом всегда построена и просто прячется под `ClipRect` — так
 /// при повторном развороте не мигает и не пересоздаётся.
-class PlayerRightPanelSlot extends StatelessWidget {
+class PlayerRightPanelSlot extends ConsumerStatefulWidget {
   const PlayerRightPanelSlot({super.key, required this.open});
 
   final bool open;
 
   @override
+  ConsumerState<PlayerRightPanelSlot> createState() =>
+      _PlayerRightPanelSlotState();
+}
+
+class _PlayerRightPanelSlotState extends ConsumerState<PlayerRightPanelSlot> {
+  /// Ширина во время перетаскивания: настройка сохраняется только в конце,
+  /// иначе каждый пиксель писался бы в файл настроек.
+  double? _dragging;
+
+  /// Пределы, чтобы панель не превращалась ни в щель, ни в пол-экрана.
+  static const double _minWidth = 260;
+  static const double _maxWidth = 560;
+
+  @override
   Widget build(BuildContext context) {
+    final double saved = ref.watch(
+      settingsControllerProvider.select((AppSettings s) => s.playerPanelWidth),
+    );
+    final double width = (_dragging ?? saved).clamp(_minWidth, _maxWidth);
+
     return AnimatedContainer(
-      duration: const Duration(milliseconds: 260),
+      duration: _dragging == null
+          ? const Duration(milliseconds: 260)
+          : Duration.zero,
       curve: Curves.easeOutCubic,
-      width: open ? AppLayout.sidebarWidth : 0,
+      width: widget.open ? width : 0,
       child: ClipRect(
         // Панель держим фиксированной ширины и «выезжаем» ею из-за края:
         // так при закрытии содержимое не сжимается, а уезжает за границу.
         child: OverflowBox(
           alignment: Alignment.centerLeft,
-          minWidth: AppLayout.sidebarWidth,
-          maxWidth: AppLayout.sidebarWidth,
-          child: const PlayerRightPanel(),
+          minWidth: width,
+          maxWidth: width,
+          child: Stack(
+            children: <Widget>[
+              const PlayerRightPanel(),
+              // Ручка ширины: тянем за левый край панели.
+              Positioned(
+                left: 0,
+                top: 0,
+                bottom: 0,
+                child: MouseRegion(
+                  cursor: SystemMouseCursors.resizeLeftRight,
+                  child: GestureDetector(
+                    behavior: HitTestBehavior.translucent,
+                    onHorizontalDragUpdate: (DragUpdateDetails details) {
+                      // Панель справа: сдвиг влево её расширяет.
+                      setState(() {
+                        _dragging = ((_dragging ?? saved) - details.delta.dx)
+                            .clamp(_minWidth, _maxWidth);
+                      });
+                    },
+                    onHorizontalDragEnd: (DragEndDetails _) {
+                      final double? value = _dragging;
+                      if (value != null) {
+                        ref
+                            .read(settingsControllerProvider.notifier)
+                            .setPlayerPanelWidth(value);
+                      }
+                      setState(() => _dragging = null);
+                    },
+                    child: const SizedBox(width: 8),
+                  ),
+                ),
+              ),
+            ],
+          ),
         ),
       ),
     );
