@@ -1,5 +1,6 @@
 #include "webview_login.h"
 
+#include <glib/gstdio.h>
 #include <gtk/gtk.h>
 #include <libsoup/soup.h>
 #include <webkit2/webkit2.h>
@@ -115,6 +116,21 @@ std::string cookies_from_list(GList* cookies) {
 bool has_sapisid(const std::string& cookies) {
   return cookies.find("SAPISID=") != std::string::npos ||
          cookies.find("__Secure-3PAPISID=") != std::string::npos;
+}
+
+// Диагностика: показывает, помнит ли браузер предыдущий вход.
+void on_cookies_for_diagnostic(GObject* source, GAsyncResult* result,
+                               gpointer /*data*/) {
+  GError* error = nullptr;
+  GList* cookies = webkit_cookie_manager_get_all_cookies_finish(
+      WEBKIT_COOKIE_MANAGER(source), result, &error);
+  const std::string cookie_string = cookies_from_list(cookies);
+  if (error != nullptr) {
+    g_error_free(error);
+  }
+  g_message("[Login] cookie браузера до входа: %zu символов, "
+            "сохранённый вход: %s",
+            cookie_string.size(), has_sapisid(cookie_string) ? "да" : "нет");
 }
 
 // Ответ на отложенный вызов после получения cookie.
@@ -306,14 +322,37 @@ bool ensure_panel() {
   gtk_header_bar_pack_start(header, cancel_button);
   gtk_box_pack_start(GTK_BOX(box), GTK_WIDGET(header), FALSE, FALSE, 0);
 
-  // Свой контекст с постоянным хранилищем cookie: так вход переживает
-  // перезапуск приложения.
-  WebKitWebContext* context = webkit_web_context_new();
+  // Постоянное хранилище: cookie входа должны переживать перезапуск
+  // приложения, иначе аккаунт придётся вводить заново каждый раз.
+  g_autofree gchar* data_dir = g_build_filename(
+      g_get_user_data_dir(), "com.mops.mops", "webkit", nullptr);
+  g_autofree gchar* cache_dir = g_build_filename(
+      g_get_user_cache_dir(), "com.mops.mops", "webkit", nullptr);
+  g_mkdir_with_parents(data_dir, 0700);
+  g_mkdir_with_parents(cache_dir, 0700);
+
+  WebKitWebsiteDataManager* data_manager = webkit_website_data_manager_new(
+      "base-data-directory", data_dir, "base-cache-directory", cache_dir,
+      nullptr);
+  WebKitWebContext* context =
+      webkit_web_context_new_with_website_data_manager(data_manager);
+  g_object_unref(data_manager);
+  g_message("[Login] хранилище браузера: %s", data_dir);
+
   WebKitCookieManager* manager = webkit_web_context_get_cookie_manager(context);
   webkit_cookie_manager_set_accept_policy(manager,
                                           WEBKIT_COOKIE_POLICY_ACCEPT_ALWAYS);
 
+  // Явно указываем файл cookie: без этого WebKit держит их только в памяти,
+  // и вход не переживает перезапуск.
+  g_autofree gchar* cookie_file =
+      g_build_filename(data_dir, "cookies.sqlite", nullptr);
+  webkit_cookie_manager_set_persistent_storage(
+      manager, cookie_file, WEBKIT_COOKIE_PERSISTENT_STORAGE_SQLITE);
+
   g_view = WEBKIT_WEB_VIEW(webkit_web_view_new_with_context(context));
+  webkit_cookie_manager_get_all_cookies(manager, nullptr,
+                                        on_cookies_for_diagnostic, nullptr);
   g_object_unref(context);
   gtk_box_pack_start(GTK_BOX(box), GTK_WIDGET(g_view), TRUE, TRUE, 0);
 
