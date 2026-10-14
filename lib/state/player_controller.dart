@@ -7,6 +7,7 @@ import 'package:flutter_riverpod/flutter_riverpod.dart';
 import '../core/audio/audio_engine.dart';
 import '../data/models/models.dart';
 import '../data/sources/stream_downloader.dart';
+import '../data/sources/stream_proxy.dart';
 import '../data/sources/stream_resolver.dart';
 import 'catalog_providers.dart';
 import 'providers.dart';
@@ -129,6 +130,15 @@ class PlayerController extends Notifier<PlayerUiState> {
   /// История проигранных индексов — нужна для «назад» при перемешивании.
   final List<int> _history = <int>[];
 
+  /// Идёт перемотка. Пока она не закончилась, завершение трека может прийти
+  /// ложно (GStreamer шлёт EOS на flush-перемотке потока) — его игнорируем,
+  /// иначе очередь перескочит на следующий.
+  bool _seeking = false;
+
+  /// Уже обрабатываем конец трека. Завершение может прийти дважды, и без
+  /// этого флага очередь перескочила бы через трек.
+  bool _handlingEnd = false;
+
   @override
   PlayerUiState build() {
     // Отписка от предыдущего движка (если нотификатор пересоздали).
@@ -139,9 +149,20 @@ class PlayerController extends Notifier<PlayerUiState> {
       if (playback.status == PlaybackStatus.error && playback.error != null) {
         state = state.copyWith(error: playback.error);
       }
-      if (playback.status == PlaybackStatus.completed) {
+      // На ошибке и во время перемотки вперёд не идём: «конец трека» здесь
+      // ложный, а настоящее завершение придёт без этих условий.
+      if (playback.status == PlaybackStatus.completed &&
+          !_seeking &&
+          !_handlingEnd &&
+          !playback.hasError) {
         // Не await: обработчик не должен блокировать поток событий.
-        unawaited(_handleTrackEnded());
+        _handlingEnd = true;
+        unawaited(
+          _handleTrackEnded()
+              .catchError((Object error) =>
+                  debugPrint('Ошибка обработки конца трека: $error'))
+              .whenComplete(() => _handlingEnd = false),
+        );
       }
     });
 
@@ -222,7 +243,10 @@ class PlayerController extends Notifier<PlayerUiState> {
       newIndex = state.index.clamp(0, queue.length - 1);
     }
     state = state.copyWith(queue: queue, index: queue.isEmpty ? -1 : newIndex);
-    if (queue.isEmpty) unawaited(_engine.stop());
+    if (queue.isEmpty) {
+      _releaseStreams();
+      unawaited(_engine.stop());
+    }
   }
 
   /// Переставляет элемент очереди.
@@ -251,6 +275,7 @@ class PlayerController extends Notifier<PlayerUiState> {
   Future<void> clearQueue() async {
     _history.clear();
     state = const PlayerUiState();
+    _releaseStreams();
     await _engine.stop();
   }
 
@@ -308,7 +333,19 @@ class PlayerController extends Notifier<PlayerUiState> {
     }
   }
 
-  Future<void> seek(Duration position) => _engine.seek(position);
+  Future<void> seek(Duration position) async {
+    // Перемотка поднимает флаг до самого её окончания: ложный EOS,
+    // пришедший в это окно, не должен переключать очередь.
+    _seeking = true;
+    try {
+      await _engine.seek(position);
+    } on Object catch (error) {
+      // Сбой перемотки не останавливает воспроизведение.
+      debugPrint('Перемотка не удалась: $error');
+    } finally {
+      _seeking = false;
+    }
+  }
 
   Future<void> seekFraction(double fraction) {
     final Duration duration = state.playback.duration;
@@ -341,6 +378,20 @@ class PlayerController extends Notifier<PlayerUiState> {
 
   /// Локальный адрес текущего потока — чтобы освободить прошлый.
   Uri? _localStream;
+
+  /// Локальный адрес предзагруженного следующего трека.
+  Uri? _warmedStream;
+
+  /// Освобождает оба опубликованных потока (текущий и прогретый).
+  void _releaseStreams() {
+    final Uri? current = _localStream;
+    final Uri? warmed = _warmedStream;
+    _localStream = null;
+    _warmedStream = null;
+    final StreamProxy proxy = ref.read(streamProxyProvider);
+    if (current != null) proxy.release(current);
+    if (warmed != null && warmed != current) proxy.release(warmed);
+  }
 
   // -------------------------------------------------------------- private
 
@@ -375,19 +426,27 @@ class PlayerController extends Notifier<PlayerUiState> {
             mimeType: resolved.mimeType,
           );
       if (state.current?.id != track.id) {
+        if (_warmedStream == local) _warmedStream = null;
         ref.read(streamProxyProvider).release(local);
         return;
       }
 
+      // Если это тот же поток, что мы прогрели заранее, он уже «текущий»:
+      // освобождать его нельзя, просто снимаем пометку «следующий».
+      if (_warmedStream == local) _warmedStream = null;
+
       // Прошлый поток больше не нужен.
       final Uri? previous = _localStream;
       _localStream = local;
-      if (previous != null) {
+      if (previous != null && previous != local) {
         ref.read(streamProxyProvider).release(previous);
       }
 
       await _engine.load(local.toString(), autoplay: true);
       state = state.copyWith(resolving: false);
+
+      // Следующий трек качаем заранее: тогда переключение пройдёт без паузы.
+      unawaited(_warmNext());
       return;
     } on StreamResolutionException catch (error) {
       state = state.copyWith(
@@ -420,6 +479,46 @@ class PlayerController extends Notifier<PlayerUiState> {
       if (name.isNotEmpty) name,
       if (kbps != null) '$kbps',
     ].join(' ');
+  }
+
+  /// Заранее качает следующий трек через посредника.
+  ///
+  /// Вызывается после запуска текущего. Ссылку резолвим сразу: у резолвера
+  /// кэш, поэтому при переключении `serve` вернёт уже прогретый поток —
+  /// и следующий трек начнётся без паузы.
+  Future<void> _warmNext() async {
+    // При перемешивании следующий трек случаен — предугадать нельзя.
+    if (state.shuffle) return;
+    final int nextIndex = state.index + 1;
+    if (nextIndex < 0 || nextIndex >= state.queue.length) return;
+
+    final Track next = state.queue[nextIndex];
+    final int fromIndex = state.index;
+    try {
+      final quality = ref.read(settingsControllerProvider).audioQuality;
+      final ResolvedStream resolved = await ref
+          .read(streamResolverProvider)
+          .resolve(next.id, quality: quality);
+
+      // Пока резолвили, очередь могла уйти вперёд — тогда прогрев не нужен.
+      if (state.index != fromIndex) return;
+
+      final Uri warmed = await ref.read(streamProxyProvider).warm(
+            resolved.url,
+            userAgent: resolved.userAgent,
+            mimeType: resolved.mimeType,
+          );
+      if (state.index != fromIndex) return;
+
+      final Uri? old = _warmedStream;
+      _warmedStream = warmed;
+      // Прошлый прогретый поток больше не актуален.
+      if (old != null && old != warmed && old != _localStream) {
+        ref.read(streamProxyProvider).release(old);
+      }
+    } on Object {
+      // Предзагрузка не критична: трек просто начнётся как обычно.
+    }
   }
 
   Future<void> _handleTrackEnded() async {

@@ -71,7 +71,6 @@ class AppTheme {
     if (scheme.brightness != Brightness.dark) return scheme;
     return scheme.copyWith(
       surface: Colors.black,
-      background: Colors.black,
       surfaceContainerLowest: Colors.black,
       surfaceContainerLow: Colors.black,
       surfaceContainer: Colors.black,

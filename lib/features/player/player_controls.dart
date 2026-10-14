@@ -36,7 +36,14 @@ class _PlayerSeekBarState extends ConsumerState<PlayerSeekBar> {
         : (player.current?.duration ?? Duration.zero);
     final bool seekable = duration > Duration.zero;
 
-    final double value = _dragValue ?? player.playback.progress;
+    // Прогресс считаем от выбранной длительности: у потока через посредника
+    // движок может не знать длительность, и его progress всегда ноль —
+    // ползунок тогда не двигался бы даже после перемотки.
+    final double progress = duration > Duration.zero
+        ? (player.playback.position.inMilliseconds / duration.inMilliseconds)
+            .clamp(0.0, 1.0)
+        : 0.0;
+    final double value = _dragValue ?? progress;
     final Duration shown = _dragValue == null
         ? player.playback.position
         : duration * _dragValue!;

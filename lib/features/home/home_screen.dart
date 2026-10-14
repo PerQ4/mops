@@ -23,8 +23,12 @@ class HomeScreen extends ConsumerWidget {
 
   @override
   Widget build(BuildContext context, WidgetRef ref) {
-    final AsyncValue<List<BrowseSection>> sections =
+    final AsyncValue<List<BrowseSection>> base =
         ref.watch(homeSectionsProvider);
+    // Догруженные секции и признак «идёт догрузка». Пока контроллер не готов,
+    // берём пустое состояние: оно ничего не ломает.
+    final HomeFeedState more =
+        ref.watch(homeFeedProvider).value ?? const HomeFeedState();
 
     return Scaffold(
       appBar: AppBar(
@@ -53,31 +57,108 @@ class HomeScreen extends ConsumerWidget {
             right: 0,
             child: _ToneGradient(),
           ),
-          sections.when(
-            data: (List<BrowseSection> data) => RefreshIndicator(
-              onRefresh: () async {
-                ref.invalidate(homeSectionsProvider);
-                await ref.read(homeSectionsProvider.future);
-              },
-              child: SectionListView(
-                // Порядок и подписи приводим к ArchiveTune, не меняя данные.
-                sections: curateHomeSections(data),
-                header: const _MoodRow(),
-                emptyPlaceholder: const EmptyState(
-                  icon: Icons.explore_off_outlined,
-                  title: 'Подборки недоступны',
-                  subtitle: 'YouTube Music не вернул ни одной секции. '
-                      'Попробуйте обновить или сменить регион в настройках.',
+          base.when(
+            data: (List<BrowseSection> data) {
+              // К порядку ArchiveTune приводим только первую порцию:
+              // догруженные секции идут в порядке ответа. Иначе при подгрузке
+              // секция с высоким приоритетом вставилась бы в середину и лента
+              // дёрнулась бы у пользователя под руками.
+              final List<BrowseSection> sections = <BrowseSection>[
+                ...curateHomeSections(data),
+                ...more.sections,
+              ];
+              return RefreshIndicator(
+                onRefresh: () async {
+                  ref.invalidate(homeSectionsProvider);
+                  await ref.read(homeSectionsProvider.future);
+                  // Накопленные порции тоже сбрасываем: лента собирается заново.
+                  await ref.read(homeFeedProvider.future);
+                },
+                child: NotificationListener<ScrollNotification>(
+                  // Догружаем, когда до конца остаётся примерно экран.
+                  onNotification: (ScrollNotification notification) =>
+                      _loadMoreNearEnd(notification, ref, !more.finished),
+                  child: SectionListView(
+                    sections: sections,
+                    header: const _MoodRow(),
+                    emptyPlaceholder: const EmptyState(
+                      icon: Icons.explore_off_outlined,
+                      title: 'Подборки недоступны',
+                      subtitle: 'YouTube Music не вернул ни одной секции. '
+                          'Попробуйте обновить или сменить регион в настройках.',
+                    ),
+                  ),
                 ),
-              ),
-            ),
+              );
+            },
             loading: () => const SectionSkeleton(),
             error: (Object error, StackTrace _) => ErrorState(
               message: describeError(error),
               onRetry: () => ref.invalidate(homeSectionsProvider),
             ),
           ),
+          // Индикатор догрузки висит над плавающим островком.
+          if (more.loadingMore)
+            const Positioned(
+              left: 0,
+              right: 0,
+              bottom: AppLayout.floatingDockClearance + 12,
+              child: Center(child: _LoadingMoreIndicator()),
+            ),
         ],
+      ),
+    );
+  }
+}
+
+/// Догружает ленту, когда до конца остаётся примерно экран.
+///
+/// Слушаем уведомления прокрутки: вертикальные идут от самой ленты,
+/// горизонтальные — от каруселей и строки настроений, их пропускаем.
+/// Уведомления о смене размеров сюда не приходят, поэтому при первом
+/// построении догрузка сама не запускается — только при прокрутке.
+bool _loadMoreNearEnd(
+  ScrollNotification notification,
+  WidgetRef ref,
+  bool hasMore,
+) {
+  if (!hasMore) return false;
+
+  final ScrollMetrics metrics = notification.metrics;
+  final AxisDirection direction = metrics.axisDirection;
+  final bool vertical =
+      direction == AxisDirection.up || direction == AxisDirection.down;
+  if (!vertical) return false;
+
+  if (metrics.extentAfter <= metrics.viewportDimension) {
+    ref.read(homeFeedProvider.notifier).loadMore();
+  }
+  // false — не перехватываем: уведомления нужны и RefreshIndicator.
+  return false;
+}
+
+/// Индикатор догрузки главной.
+///
+/// Показывается только пока идёт запрос следующей порции и не занимает места
+/// в раскладке: лежит поверх содержимого над плавающим островком.
+class _LoadingMoreIndicator extends StatelessWidget {
+  const _LoadingMoreIndicator();
+
+  @override
+  Widget build(BuildContext context) {
+    final ColorScheme scheme = Theme.of(context).colorScheme;
+    return DecoratedBox(
+      decoration: BoxDecoration(
+        color: scheme.surfaceContainerHigh.withValues(alpha: 0.94),
+        borderRadius: BorderRadius.circular(AppLayout.radiusXL),
+      ),
+      child: const Padding(
+        padding: EdgeInsets.symmetric(horizontal: 20, vertical: 14),
+        child: SizedBox(
+          width: 22,
+          height: 22,
+          child: CircularProgressIndicator(strokeWidth: 2.4),
+        ),
       ),
     );
   }

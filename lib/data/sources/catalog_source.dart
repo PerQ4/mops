@@ -46,14 +46,38 @@ class CatalogSource {
   static const String _browseHome = 'FEmusic_home';
   static const String _browseExplore = 'FEmusic_explore';
 
-  /// Главная страница (подборки, «для вас»).
-  Future<List<BrowseSection>> home() async {
+  /// Главная страница: порция секций и токен следующей порции.
+  ///
+  /// `continuation == null` — первый запрос. Если ответ содержит токен, его
+  /// нужно передать сюда же, чтобы получить ещё секции: YouTube Music отдаёт
+  /// главную порциями, как ленту. Проверено на живом ответе — первая порция
+  /// содержит 2 секции и токен, каждая следующая ещё по несколько секций,
+  /// пока токен не пропадёт.
+  ///
+  /// Возвращается записью, а не парой позиционных значений: у вызывающего
+  /// кода имена полей читаются лучше, и не нужно помнить порядок.
+  Future<({List<BrowseSection> sections, String? continuation})> homePage({
+    String? continuation,
+  }) async {
     final Map<String, dynamic> res = await _client.browse(
       _browseHome,
-      // Если пользователь вошёл, главная становится персональной.
+      continuation: continuation,
+      // Если пользователь вошёл, главная становится персональной. Для порций
+      // продолжения авторизация должна быть той же, что и у первого запроса.
       authenticated: _client.hasAuth,
     );
-    return BrowseParser.homeSections(res);
+    return (
+      sections: BrowseParser.homeSections(res),
+      continuation: BrowseParser.continuationToken(res),
+    );
+  }
+
+  /// Главная страница (подборки, «для вас»).
+  ///
+  /// Оставлен для мест, которым нужны только секции: это первая порция
+  /// [homePage]. Кто хочет докручивать ленту, должен брать [homePage].
+  Future<List<BrowseSection>> home() async {
+    return (await homePage()).sections;
   }
 
   /// Раздел «Обзор» (новые релизы, чарты, настроения).

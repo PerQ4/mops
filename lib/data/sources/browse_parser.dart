@@ -271,24 +271,33 @@ class BrowseParser {
     return tracks;
   }
 
-  /// Продолжение списка (для подгрузки «ещё») — токен и позиция.
+  /// Токен продолжения — им докручивается лента («ещё»).
+  ///
+  /// YouTube Music кладёт его двумя разными способами, встречаются оба:
+  ///  * в плейлистах и старой разметке —
+  ///    `continuations[0].nextContinuationData.continuation`;
+  ///  * в новых ответах (в том числе на главной) —
+  ///    `continuationItemRenderer.continuationEndpoint.continuationCommand.token`.
+  ///
+  /// Здесь именно `traverseList`, а не `traverse`: обход ответов «разворачивает»
+  /// список на последнем шаге, поэтому `traverse` вернул бы первый элемент
+  /// списка `continuations`, и токен бы не нашёлся (прежде так и было — главная
+  /// не докручивалась). `traverseList` отдаёт все элементы списка.
   static String? continuationToken(dynamic node) {
-    final dynamic value = traverse(node, <String>[
-      'continuations',
-    ]);
-    if (value is List) {
-      for (final dynamic c in value) {
-        if (c is Map) {
-          final dynamic token =
-              traverse(c, <String>['nextContinuationData', 'continuation']);
-          if (token is String) return token;
-        }
-      }
+    for (final dynamic c in traverseList(node, <String>['continuations'])) {
+      final String? token =
+          traverseString(c, <String>['nextContinuationData', 'continuation']);
+      if (token != null && token.isNotEmpty) return token;
     }
-    return traverseString(node, <String>[
-      'continuationContents',
-      'sectionListContinuation',
-    ]);
+    for (final dynamic token in traverseList(node, <String>[
+      'continuationItemRenderer',
+      'continuationEndpoint',
+      'continuationCommand',
+      'token',
+    ])) {
+      if (token is String && token.isNotEmpty) return token;
+    }
+    return null;
   }
 
   /// Универсальный разбор секций.

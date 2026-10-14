@@ -33,6 +33,23 @@ class SettingsScreen extends ConsumerWidget {
           // -------------------------------------------------------- внешний вид
           const _SectionHeader('Внешний вид'),
 
+          SwitchListTile(
+            title: const Text('Чистый чёрный фон'),
+            subtitle: const Text(
+              'В тёмной теме фон и панели становятся абсолютно чёрными',
+            ),
+            value: settings.pureBlack,
+            onChanged: controller.setPureBlack,
+          ),
+
+          ListTile(
+            leading: const Icon(Icons.gradient_outlined),
+            title: const Text('Стиль палитры'),
+            subtitle: Text(settings.paletteStyle.label),
+            trailing: const Icon(Icons.chevron_right),
+            onTap: () => _pickPaletteStyle(context, controller, settings),
+          ),
+
           ListTile(
             leading: const Icon(Icons.palette_outlined),
             title: const Text('Тема'),

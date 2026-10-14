@@ -31,6 +31,21 @@ class AudioplayersEngine implements AudioEngine {
   PlaybackState _state = PlaybackState.initial;
   bool _disposed = false;
 
+  /// Идёт перемотка. GStreamer на flush-перемотке сетевого потока иногда
+  /// присылает EOS: принимать его за конец трека нельзя, иначе очередь
+  /// перескочит на следующий. Флаг снимается по `onSeekComplete`, страховочным
+  /// таймером или в конце самой перемотки.
+  bool _seeking = false;
+  Timer? _seekSafetyTimer;
+
+  /// Куда перематывали в последний раз — чтобы восстановить тот же трек,
+  /// если поток всё же оборвался.
+  Duration _lastSeekTarget = Duration.zero;
+
+  /// Поток оборвался на перемотке и его нужно переставить на место,
+  /// когда пользователь нажмёт «играть».
+  bool _needsRecovery = false;
+
   @override
   Stream<PlaybackState> get stateStream => _controller.stream;
 
@@ -46,12 +61,8 @@ class AudioplayersEngine implements AudioEngine {
       _player.onDurationChanged.listen((Duration duration) {
         _emit(_state.copyWith(duration: duration));
       }),
-      _player.onPlayerComplete.listen((_) {
-        _emit(_state.copyWith(
-          status: PlaybackStatus.completed,
-          position: _state.duration,
-        ));
-      }),
+      _player.onPlayerComplete.listen((_) => _emitCompletion()),
+      _player.onSeekComplete.listen((_) => _endSeek()),
       _player.onLog.listen(_onLog),
     ]);
   }
@@ -64,7 +75,40 @@ class AudioplayersEngine implements AudioEngine {
       PlayerState.stopped => PlaybackStatus.idle,
       PlayerState.disposed => PlaybackStatus.idle,
     };
+
+    // Завершение приходит и сюда, и в `onPlayerComplete`. Обрабатываем в
+    // одном месте, чтобы фильтр «это не перемотка» сработал одинаково.
+    if (mapped == PlaybackStatus.completed) {
+      _emitCompletion();
+      return;
+    }
+
+    if (mapped == PlaybackStatus.playing) {
+      // Звук пошёл — восстанавливать позицию больше не нужно.
+      _needsRecovery = false;
+    }
     _emit(_state.copyWith(status: mapped, clearError: true));
+  }
+
+  /// Сообщает об окончании воспроизведения, отсекая ложный EOS перемотки.
+  void _emitCompletion() {
+    if (_seeking) {
+      // Перемотка оборвала поток в EOS. Держим тот же трек и позицию:
+      // очередь переключать нельзя, иначе «играть» включит следующий.
+      _needsRecovery = true;
+      _emit(_state.copyWith(
+        status: PlaybackStatus.paused,
+        position: _lastSeekTarget,
+      ));
+      return;
+    }
+    // Завершение приходит двумя путями — из `onPlayerComplete` и из смены
+    // состояния. Сообщаем о нём один раз, иначе очередь перескочит дважды.
+    if (_state.status == PlaybackStatus.completed) return;
+    _emit(_state.copyWith(
+      status: PlaybackStatus.completed,
+      position: _state.duration,
+    ));
   }
 
   void _onLog(String message) {
@@ -72,6 +116,8 @@ class AudioplayersEngine implements AudioEngine {
     // текст формируем только для явных сбоев.
     final String lower = message.toLowerCase();
     if (lower.contains('error') || lower.contains('failed')) {
+      // Сбой перемотки — не сбой трека: движок уже вернул позицию.
+      if (_seeking) return;
       _emit(_state.copyWith(
         status: PlaybackStatus.error,
         error: _humanizeError(message),
@@ -100,6 +146,10 @@ class AudioplayersEngine implements AudioEngine {
     bool autoplay = true,
     bool isLocal = false,
   }) async {
+    // Новый трек — прежняя перемотка и её последствия больше не важны.
+    _needsRecovery = false;
+    _lastSeekTarget = Duration.zero;
+    _endSeek();
     _emit(_state.copyWith(
       status: PlaybackStatus.loading,
       position: Duration.zero,
@@ -130,6 +180,16 @@ class AudioplayersEngine implements AudioEngine {
 
   @override
   Future<void> play() async {
+    // Если поток оборвался на перемотке, возвращаем его на выбранное место,
+    // чтобы «играть» продолжило ТОТ ЖЕ трек, а не тишину.
+    if (_needsRecovery) {
+      _needsRecovery = false;
+      try {
+        await _player.seek(_lastSeekTarget);
+      } on Object catch (error) {
+        debugPrint('Не удалось восстановить позицию после перемотки: $error');
+      }
+    }
     if (_state.status == PlaybackStatus.completed) {
       await _player.seek(Duration.zero);
     }
@@ -142,14 +202,44 @@ class AudioplayersEngine implements AudioEngine {
   @override
   Future<void> stop() async {
     await _player.stop();
+    _needsRecovery = false;
     _emit(_state.copyWith(status: PlaybackStatus.idle, position: Duration.zero));
   }
 
   @override
   Future<void> seek(Duration position) async {
     final Duration clamped = position < Duration.zero ? Duration.zero : position;
-    await _player.seek(clamped);
+    _lastSeekTarget = clamped;
+    _beginSeek();
+
+    // Позицию показываем сразу: перемотка сетевого потока занимает время,
+    // а полоса не должна «отпрыгивать» назад.
     _emit(_state.copyWith(position: clamped));
+
+    try {
+      await _player.seek(clamped);
+    } on Object catch (error) {
+      // Ошибку перемотки не показываем как сбой воспроизведения: звук
+      // продолжает идти, плеер остаётся на прежнем месте.
+      debugPrint('Перемотка не удалась: $error');
+    } finally {
+      _endSeek();
+    }
+  }
+
+  /// Включает защиту от ложного EOS на время перемотки.
+  void _beginSeek() {
+    _seeking = true;
+    _seekSafetyTimer?.cancel();
+    // Страховка: если `onSeekComplete` не придёт (например, платформа его не
+    // шлёт), снимаем флаг сами — иначе настоящий конец трека будет пропущен.
+    _seekSafetyTimer = Timer(const Duration(seconds: 10), _endSeek);
+  }
+
+  void _endSeek() {
+    _seeking = false;
+    _seekSafetyTimer?.cancel();
+    _seekSafetyTimer = null;
   }
 
   @override
@@ -172,6 +262,8 @@ class AudioplayersEngine implements AudioEngine {
   Future<void> dispose() async {
     if (_disposed) return;
     _disposed = true;
+    _seekSafetyTimer?.cancel();
+    _seekSafetyTimer = null;
     for (final StreamSubscription<dynamic> sub in _subs) {
       await sub.cancel();
     }
