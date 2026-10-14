@@ -43,9 +43,16 @@ jobs:
     steps:
       - uses: actions/checkout@v4
 
+      # Версию фиксируем: на `stable` конвейер может взять другую сборку
+      # Flutter, а проект собран под конкретную (см. flutter --version).
       - uses: subosito/flutter-action@v2
         with:
+          flutter-version: 3.47.7
           channel: stable
+          cache: true
+
+      - name: Версия Flutter
+        run: flutter --version
 
       # На Linux нужны библиотеки для сборки GTK-приложения и WebKitGTK
       # (встроенный браузер для входа в аккаунт).
