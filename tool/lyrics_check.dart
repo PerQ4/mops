@@ -1,3 +1,6 @@
+// Инструмент для проверки: печать в консоль здесь уместна.
+// ignore_for_file: avoid_print
+
 // Временный инструмент: что реально отдаёт YouTube Music как текст песни.
 //
 // Запуск: dart run tool/lyrics_check.dart [videoId ...]

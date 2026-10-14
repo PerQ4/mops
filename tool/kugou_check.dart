@@ -1,3 +1,6 @@
+// Инструмент для проверки: печать в консоль здесь уместна.
+// ignore_for_file: avoid_print
+
 // Проверка источника KuGou из кода приложения.
 import 'package:mops/data/sources/kugou_source.dart';
 

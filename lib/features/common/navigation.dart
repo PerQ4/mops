@@ -6,6 +6,7 @@ import '../player/now_playing_screen.dart';
 import '../playlist/playlist_screen.dart';
 import '../search/search_results_screen.dart';
 import '../settings/account_screen.dart';
+import '../settings/spotify_import_screen.dart';
 import '../settings/bypass_screen.dart';
 import '../settings/settings_screen.dart';
 import '../shell/content_navigator.dart';
@@ -105,6 +106,10 @@ abstract final class AppRoutes {
 
   static Future<void> account(BuildContext context) =>
       _push<void>(context, const AccountScreen());
+
+  /// Перенос библиотеки из Spotify.
+  static Future<void> spotifyImport(BuildContext context) =>
+      _push<void>(context, const SpotifyImportScreen());
 
   static Future<void> bypass(BuildContext context) =>
       _push<void>(context, const BypassScreen());

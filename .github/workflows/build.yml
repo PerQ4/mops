@@ -11,8 +11,13 @@ name: Сборки
 on:
   push:
     branches: [master, main]
+    # Пуш тега вида v1.0 публикует сборки в Releases.
+    tags: ['v*']
   pull_request:
   workflow_dispatch:
+
+permissions:
+  contents: write
 
 jobs:
   build:
@@ -75,3 +80,31 @@ jobs:
           name: ${{ matrix.artifact }}
           path: ${{ matrix.path }}
           if-no-files-found: error
+
+  # Публикация в Releases: только при пуше тега (v1.0 и подобных) или когда
+  # запуск отмечен вручную. Иначе каждый пуш засорял бы раздел релизов.
+  release:
+    name: Публикация сборок
+    needs: build
+    if: startsWith(github.ref, 'refs/tags/v')
+    runs-on: ubuntu-latest
+    steps:
+      - name: Скачать все сборки
+        uses: actions/download-artifact@v4
+        with:
+          path: artifacts
+          merge-multiple: true
+
+      - name: Собрать архивы
+        run: |
+          cd artifacts
+          for dir in *; do
+            [ -d "$dir" ] && tar -czf "$dir.tar.gz" "$dir" && rm -rf "$dir"
+          done
+          ls -lh
+
+      - name: Опубликовать релиз
+        uses: softprops/action-gh-release@v2
+        with:
+          files: artifacts/*.tar.gz
+          generate_release_notes: true

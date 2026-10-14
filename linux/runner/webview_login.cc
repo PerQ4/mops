@@ -107,7 +107,15 @@ std::string cookies_from_list(GList* cookies) {
     if (name == nullptr || value == nullptr) {
       continue;
     }
-    if (domain == nullptr || !g_str_has_suffix(domain, "youtube.com")) {
+    if (domain == nullptr) {
+      continue;
+    }
+    // Оставляем cookie доменов YouTube/Google (вход в аккаунт) и Spotify
+    // (перенос библиотеки) — остальное приложению не нужно.
+    const bool wanted = g_str_has_suffix(domain, "youtube.com") ||
+                        g_str_has_suffix(domain, "google.com") ||
+                        g_str_has_suffix(domain, "spotify.com");
+    if (!wanted) {
       continue;
     }
     if (!result.empty()) {
@@ -141,6 +149,11 @@ bool is_music_youtube_page(const gchar* uri) {
 bool has_sapisid(const std::string& cookies) {
   return cookies.find("SAPISID=") != std::string::npos ||
          cookies.find("__Secure-3PAPISID=") != std::string::npos;
+}
+
+// Вход в Spotify: у него своя cookie сессии.
+bool has_sp_dc(const std::string& cookies) {
+  return cookies.find("sp_dc=") != std::string::npos;
 }
 
 // Cookie именно домена YouTube. Без них YouTube считает нас гостем, даже
@@ -208,7 +221,7 @@ void on_cookies_for_finish(GObject* source, GAsyncResult* result,
   }
 
   // Без SAPISID вход не состоялся: остальные cookie приложению бесполезны.
-  if (!has_sapisid(cookie_string)) {
+  if (!has_sapisid(cookie_string) && !has_sp_dc(cookie_string)) {
     g_message("[Login] SAPISID не найден — вход не выполнен");
     respond_with_error(
         call,
@@ -320,8 +333,11 @@ void on_cookies_for_check(GObject* source, GAsyncResult* result,
   // Панель закрывается сама, только когда есть и вход Google, и cookie
   // YouTube: иначе в сессию попадут cookie google.com, и YouTube будет
   // считать нас гостем.
-  if (g_pending_call != nullptr && has_sapisid(cookie_string) &&
-      has_youtube_cookies(cookie_string)) {
+  // Для Spotify достаточно его собственной cookie: cookie YouTube при этом
+  // входе не появляются.
+  if (g_pending_call != nullptr &&
+      ((has_sapisid(cookie_string) && has_youtube_cookies(cookie_string)) ||
+       has_sp_dc(cookie_string))) {
     g_message("[Login] вход подтверждён, забираю cookie");
     request_finish();
   }

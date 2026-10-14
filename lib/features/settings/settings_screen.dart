@@ -232,6 +232,14 @@ class SettingsScreen extends ConsumerWidget {
             onTap: () => AppRoutes.account(context),
           ),
 
+          ListTile(
+            leading: const Icon(Icons.swap_horiz),
+            title: const Text('Перенос из Spotify'),
+            subtitle: const Text('Перенести плейлисты в YouTube Music'),
+            trailing: const Icon(Icons.chevron_right),
+            onTap: () => AppRoutes.spotifyImport(context),
+          ),
+
           const Divider(height: 24),
 
           const _SectionHeader('О приложении'),

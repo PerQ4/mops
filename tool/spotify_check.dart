@@ -1,3 +1,6 @@
+// Инструмент для проверки: печать в консоль здесь уместна.
+// ignore_for_file: avoid_print
+
 // Проверка механики Spotify: секрет, время сервера, код TOTP.
 import 'dart:io';
 import 'package:mops/data/sources/spotify_client.dart';

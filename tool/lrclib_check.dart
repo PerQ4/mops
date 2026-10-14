@@ -1,3 +1,6 @@
+// Инструмент для проверки: печать в консоль здесь уместна.
+// ignore_for_file: avoid_print
+
 // Проверка LRCLIB: приходит ли синхронизированный текст.
 import 'package:mops/data/sources/lrclib_source.dart';
 
