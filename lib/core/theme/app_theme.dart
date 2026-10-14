@@ -94,6 +94,13 @@ class AppTheme {
       visualDensity: VisualDensity.standard,
       // Полосы прокрутки на десктопе: тонкие и неяркие, чтобы не спорить
       // с содержимым.
+      // Выделение текста и курсор: в M3 это primary, а не системный синий.
+      // Раньше подсветка бралась из системной темы и выбивалась из палитры.
+      textSelectionTheme: TextSelectionThemeData(
+        cursorColor: scheme.primary,
+        selectionColor: scheme.primary.withValues(alpha: 0.4),
+        selectionHandleColor: scheme.primary,
+      ),
       scrollbarTheme: ScrollbarThemeData(
         thickness: const WidgetStatePropertyAll<double>(8),
         radius: const Radius.circular(4),
@@ -261,6 +268,11 @@ class AppTheme {
         ),
         contentPadding:
             const EdgeInsets.symmetric(horizontal: 24, vertical: 18),
+        // Текст поиска — как в ArchiveTune: обычный bodyLarge, подсказка
+        // приглушена, курсор цветом акцента.
+        hintStyle: textTheme.bodyLarge?.copyWith(
+          color: scheme.onSurfaceVariant,
+        ),
       ),
       switchTheme: SwitchThemeData(
         thumbColor: WidgetStateProperty.resolveWith((Set<WidgetState> states) {

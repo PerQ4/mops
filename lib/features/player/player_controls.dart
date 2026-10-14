@@ -64,9 +64,16 @@ class _PlayerSeekBarState extends ConsumerState<PlayerSeekBar> {
               // по ней заметно, где идёт воспроизведение, и легче попасть
               // курсором.
               trackHeight: 12,
-              thumbShape: const RoundSliderThumbShape(enabledThumbRadius: 9),
-              overlayShape: const RoundSliderOverlayShape(overlayRadius: 20),
+              // Ползунок крупнее дорожки и с обводкой фона: так он читается
+              // как отдельная «ручка», а не как утолщение полосы.
+              thumbShape: const RoundSliderThumbShape(
+                enabledThumbRadius: 10,
+                elevation: 0,
+              ),
+              overlayShape: const RoundSliderOverlayShape(overlayRadius: 22),
               trackShape: const RoundedRectSliderTrackShape(),
+              activeTickMarkColor: scheme.onPrimary,
+              inactiveTickMarkColor: scheme.onSurfaceVariant,
             ),
             child: Slider(
               value: value.clamp(0.0, 1.0),
