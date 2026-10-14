@@ -11,6 +11,7 @@ import '../../state/player_controller.dart';
 import '../../widgets/artwork.dart';
 import '../../widgets/track_menu.dart';
 import 'lyrics_view.dart';
+import 'queue_list.dart';
 import 'player_controls.dart';
 
 /// Полноэкранный плеер для узких экранов.
@@ -68,13 +69,17 @@ class _NowPlayingScreenState extends ConsumerState<NowPlayingScreen> {
                                   ),
                                   Expanded(
                                     flex: 4,
-                                    child: Center(
-                                      child: SingleChildScrollView(
-                                        child: _Controls(
+                                    child: Column(
+                                      children: <Widget>[
+                                        // Свободное место над полосой трека
+                                        // занимает очередь: на широком экране
+                                        // она иначе оставалась пустой.
+                                        const Expanded(child: QueueList()),
+                                        _Controls(
                                           track: track,
                                           player: player,
                                         ),
-                                      ),
+                                      ],
                                     ),
                                   ),
                                 ],
