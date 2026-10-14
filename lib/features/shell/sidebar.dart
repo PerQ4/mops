@@ -225,10 +225,17 @@ class _PlaylistList extends ConsumerWidget {
           ),
         );
       },
-      loading: () => const Center(
+      // В свёрнутой панели ширины мало: спиннер 36 с отступами по 24
+      // сжимался в «сплющенный» вид. Здесь размер и отступ зависят от
+      // состояния панели.
+      loading: () => Center(
         child: Padding(
-          padding: EdgeInsets.all(24),
-          child: CircularProgressIndicator(),
+          padding: EdgeInsets.all(collapsed ? 8 : 24),
+          child: SizedBox(
+            width: collapsed ? 20 : 32,
+            height: collapsed ? 20 : 32,
+            child: const CircularProgressIndicator(strokeWidth: 2),
+          ),
         ),
       ),
       error: (Object error, StackTrace _) => collapsed
