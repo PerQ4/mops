@@ -215,6 +215,12 @@ class _SignedOutView extends ConsumerWidget {
         const _WebviewLoginCard(),
         const SizedBox(height: 16),
 
+        // Вход по cookie вручную. Нужен там, где встроенного браузера нет:
+        // он построен на WebKitGTK и существует только на Linux, а на Windows
+        // и macOS остаётся этот путь.
+        const _CookieLoginCard(),
+        const SizedBox(height: 16),
+
         // ------------------------------------------------------- OAuth device flow
         Card(
           child: Padding(
@@ -494,6 +500,98 @@ class _WebviewLoginCard extends ConsumerStatefulWidget {
 
   @override
   ConsumerState<_WebviewLoginCard> createState() => _WebviewLoginCardState();
+}
+
+/// Вход по cookie: вставить строку cookie из браузера.
+class _CookieLoginCard extends ConsumerStatefulWidget {
+  const _CookieLoginCard();
+
+  @override
+  ConsumerState<_CookieLoginCard> createState() => _CookieLoginCardState();
+}
+
+class _CookieLoginCardState extends ConsumerState<_CookieLoginCard> {
+  final TextEditingController _controller = TextEditingController();
+  bool _busy = false;
+  String? _error;
+
+  @override
+  void dispose() {
+    _controller.dispose();
+    super.dispose();
+  }
+
+  Future<void> _submit() async {
+    setState(() {
+      _busy = true;
+      _error = null;
+    });
+    await ref
+        .read(authControllerProvider.notifier)
+        .signInWithCookies(_controller.text);
+    if (!mounted) return;
+    final String? error = ref.read(authControllerProvider).error;
+    setState(() {
+      _busy = false;
+      _error = error;
+    });
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    final TextTheme text = Theme.of(context).textTheme;
+    final ColorScheme scheme = Theme.of(context).colorScheme;
+
+    return Card(
+      child: Padding(
+        padding: const EdgeInsets.all(20),
+        child: Column(
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: <Widget>[
+            Text(
+              'Вход по cookie',
+              style: text.titleLarge?.copyWith(fontWeight: FontWeight.w700),
+            ),
+            const SizedBox(height: 8),
+            Text(
+              'Откройте music.youtube.com в браузере, скопируйте cookie '
+              'аккаунта (нужен SAPISID) и вставьте сюда. Этот способ работает '
+              'на любой системе.',
+              style: text.bodyMedium?.copyWith(color: scheme.onSurfaceVariant),
+            ),
+            const SizedBox(height: 12),
+            TextField(
+              controller: _controller,
+              maxLines: 3,
+              minLines: 2,
+              decoration: const InputDecoration(
+                hintText: 'SAPISID=…; SID=…; HSID=…',
+              ),
+            ),
+            const SizedBox(height: 12),
+            FilledButton.icon(
+              onPressed: _busy ? null : _submit,
+              icon: _busy
+                  ? const SizedBox(
+                      width: 18,
+                      height: 18,
+                      child: CircularProgressIndicator(strokeWidth: 2),
+                    )
+                  : const Icon(Icons.key),
+              label: Text(_busy ? 'Проверяем…' : 'Войти по cookie'),
+            ),
+            if (_error != null) ...<Widget>[
+              const SizedBox(height: 12),
+              Text(
+                _error!,
+                style: text.bodySmall?.copyWith(color: scheme.error),
+              ),
+            ],
+          ],
+        ),
+      ),
+    );
+  }
 }
 
 class _WebviewLoginCardState extends ConsumerState<_WebviewLoginCard> {
