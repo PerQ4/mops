@@ -73,7 +73,11 @@ class SectionListView extends ConsumerWidget {
 
     return ContentWidth(
       child: ListView.builder(
-      padding: padding,
+      // Отступ снизу под плавающий островок: содержимое по-прежнему уходит
+      // под него, но последние строки можно доскроллить выше.
+      padding: padding.copyWith(
+        bottom: padding.bottom + AppLayout.floatingDockClearance,
+      ),
       itemCount: sections.length + (header != null ? 1 : 0),
       itemBuilder: (BuildContext context, int index) {
         if (header != null) {
@@ -269,7 +273,10 @@ class TrackListView extends ConsumerWidget {
 
     return ContentWidth(
       child: ListView.builder(
-      padding: padding,
+      // Отступ снизу под плавающий островок.
+      padding: padding.copyWith(
+        bottom: padding.bottom + AppLayout.floatingDockClearance,
+      ),
       itemCount: tracks.length + (header != null ? 1 : 0),
       itemBuilder: (BuildContext context, int index) {
         if (header != null) {

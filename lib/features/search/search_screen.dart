@@ -3,6 +3,7 @@ import 'dart:async';
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 
+import '../../core/theme/layout.dart';
 import '../../data/models/models.dart';
 import '../../data/sources/catalog_source.dart';
 import '../../state/catalog_providers.dart';
@@ -180,7 +181,10 @@ class _Suggestions extends ConsumerWidget {
     final ColorScheme scheme = Theme.of(context).colorScheme;
 
     return ListView(
-      padding: const EdgeInsets.symmetric(vertical: 8),
+      padding: const EdgeInsets.only(
+        top: 8,
+        bottom: 8 + AppLayout.floatingDockClearance,
+      ),
       children: <Widget>[
         Padding(
           padding: const EdgeInsets.fromLTRB(16, 8, 16, 8),
