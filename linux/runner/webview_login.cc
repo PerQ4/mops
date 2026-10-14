@@ -40,6 +40,9 @@ GtkWidget* g_panel = nullptr;
 WebKitWebView* g_view = nullptr;
 FlMethodCall* g_pending_call = nullptr;
 
+// Идём на music.youtube.com, чтобы забрать cookie YouTube (LOGIN_INFO и прочие).
+bool g_waiting_home = false;
+
 // Ответ на отложенный вызов: строка cookie или ошибка.
 void respond_with_cookies(FlMethodCall* call, const std::string& cookies) {
   g_autoptr(FlValue) value = fl_value_new_string(cookies.c_str());
@@ -66,6 +69,7 @@ void hide_panel() {
 
 // Приводит состояние к «панель закрыта».
 void reset_state() {
+  g_waiting_home = false;
   if (g_pending_call != nullptr) {
     g_object_unref(g_pending_call);
     g_pending_call = nullptr;
@@ -147,7 +151,7 @@ void on_cookies_for_finish(GObject* source, GAsyncResult* result,
 }
 
 // Забирает cookie и отвечает на отложенный вызов.
-void finish_login() {
+void harvest_cookies() {
   if (g_pending_call == nullptr || g_view == nullptr) {
     reset_state();
     return;
@@ -156,6 +160,32 @@ void finish_login() {
       webkit_web_context_get_cookie_manager(webkit_web_view_get_context(g_view));
   webkit_cookie_manager_get_all_cookies(manager, nullptr,
                                         on_cookies_for_finish, nullptr);
+}
+
+// Завершает вход.
+//
+// Cookie YouTube (LOGIN_INFO и прочие) выдаются только на самом youtube.com,
+// а вход идёт на accounts.google.com. Поэтому если мы ещё не на YouTube Music,
+// сначала заходим туда, и забираем cookie уже после загрузки — иначе в сессию
+// попадут только cookie google.com, и YouTube будет считать нас гостем.
+void request_finish() {
+  if (g_pending_call == nullptr || g_view == nullptr) {
+    reset_state();
+    return;
+  }
+  if (g_waiting_home) {
+    return;  // уже идём за cookie
+  }
+
+  const gchar* uri = webkit_web_view_get_uri(g_view);
+  if (uri == nullptr || strstr(uri, "music.youtube.com") == nullptr) {
+    g_message("[Login] иду на music.youtube.com за cookie YouTube");
+    g_waiting_home = true;
+    webkit_web_view_load_uri(g_view, "https://music.youtube.com/");
+    return;
+  }
+
+  harvest_cookies();
 }
 
 // Закрывает панель, сообщая об отмене входа.
@@ -170,7 +200,7 @@ void cancel_login() {
 }
 
 void on_done_clicked(GtkButton* /*button*/, gpointer /*data*/) {
-  finish_login();
+  request_finish();
 }
 
 void on_cancel_clicked(GtkButton* /*button*/, gpointer /*data*/) {
@@ -212,20 +242,26 @@ void on_cookies_for_check(GObject* source, GAsyncResult* result,
 
   // Если вход уже выполнен, панель закрывается сама.
   if (g_pending_call != nullptr && has_sapisid(cookie_string)) {
-    finish_login();
+    request_finish();
   }
 }
 
-// Когда страница Google или YouTube загрузилась, проверяем, не выполнен ли
-// уже вход: после входа Google возвращает на music.youtube.com.
+// Загрузка закончилась. Проверяем вход только на самом music.youtube.com:
+// cookie YouTube выдаются лишь там, а на страницах Google их ещё нет.
 void on_load_changed(WebKitWebView* view, WebKitLoadEvent event,
                      gpointer /*data*/) {
   if (event != WEBKIT_LOAD_FINISHED || g_pending_call == nullptr) {
     return;
   }
   const gchar* uri = webkit_web_view_get_uri(view);
-  if (uri == nullptr || (strstr(uri, "google.com") == nullptr &&
-                         strstr(uri, "youtube.com") == nullptr)) {
+  if (uri == nullptr || strstr(uri, "music.youtube.com") == nullptr) {
+    return;
+  }
+
+  // Мы пришли сюда специально за cookie — забираем их сразу.
+  if (g_waiting_home) {
+    g_waiting_home = false;
+    harvest_cookies();
     return;
   }
 

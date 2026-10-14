@@ -231,8 +231,8 @@ final Provider<InnerTubeClient> innerTubeProvider = Provider<InnerTubeClient>(
 
 /// Получение ссылок на аудиопотоки.
 ///
-/// Пересоздаётся при смене авторизации: заголовки вшиваются в клиент
-/// библиотеки, поэтому после входа поток начинает отдаваться целиком.
+/// Пересоздаётся при смене авторизации, клиента и региона: и заголовки, и
+/// профиль клиента вшиваются в резолвер при создании.
 final Provider<StreamResolver> streamResolverProvider =
     Provider<StreamResolver>((ref) {
   final AuthSession? session =
@@ -243,6 +243,16 @@ final Provider<StreamResolver> streamResolverProvider =
   final StreamSource clientChoice = ref.watch(
     settingsControllerProvider.select((AppSettings s) => s.streamClient),
   );
+  final String locale = ref.watch(
+    settingsControllerProvider.select((AppSettings s) => s.streamingLanguage),
+  );
+  final String region = ref.watch(
+    settingsControllerProvider.select((AppSettings s) => s.streamingRegion),
+  );
+
+  // Тот же клиент InnerTube, что и у каталога: так запрос потока идёт теми же
+  // cookie и тем же соединением.
+  final InnerTubeClient client = ref.watch(innerTubeProvider);
 
   final Map<String, String> authHeaders =
       AuthenticatedYoutubeClient.headersForSession(
@@ -250,9 +260,12 @@ final Provider<StreamResolver> streamResolverProvider =
     bearerToken: session?.tokens?.accessToken,
   );
 
-  final StreamResolver resolver = YoutubeExplodeResolver(
-    authHeaders: authHeaders,
+  final StreamResolver resolver = YoutubeStreamResolver(
+    innerTube: client,
+    locale: locale,
+    region: region,
     clientChoice: clientChoice,
+    authHeaders: authHeaders,
   );
   ref.onDispose(resolver.dispose);
   return resolver;

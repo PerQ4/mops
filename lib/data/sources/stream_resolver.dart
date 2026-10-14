@@ -4,18 +4,15 @@ import 'package:flutter/foundation.dart';
 import 'package:http/http.dart' as http;
 import 'package:youtube_explode_dart/youtube_explode_dart.dart';
 
+import '../../core/innertube/innertube_client.dart';
 import '../local/app_settings.dart';
 import 'youtube_clients.dart';
 
 /// HTTP-клиент YouTube с добавленной авторизацией.
 ///
-/// Зачем: неавторизованному клиенту YouTube отдаёт поток с ограничением —
-/// сервер принимает только первые ~1 МБ трека, а на остальное отвечает 403.
-/// С выполненным входом условия выдачи другие, и поток отдаётся целиком.
-///
 /// Библиотека не умеет авторизоваться сама, но позволяет подменить заголовки,
 /// поэтому cookie (или токен) из настроек приложения добавляются к каждому
-/// её запросу.
+/// её запросу. Нужно это для запасного пути через `youtube_explode_dart`.
 class AuthenticatedYoutubeClient extends YoutubeHttpClient {
   AuthenticatedYoutubeClient(this.authHeaders, [http.Client? inner])
       : super(inner);
@@ -94,29 +91,54 @@ class StreamResolutionException implements Exception {
   String toString() => message;
 }
 
-/// Реализация поверх `youtube_explode_dart`.
+/// Один вариант аудиодорожки, приведённый к общему виду.
+class _AudioCandidate {
+  const _AudioCandidate({
+    required this.url,
+    required this.bitrateKbps,
+    required this.container,
+  });
+
+  final Uri url;
+  final int bitrateKbps;
+  final String container;
+}
+
+/// Получение потока.
 ///
-/// Библиотека сама разбирает `signatureCipher` (подпись ссылки), поэтому
-/// приложение не зависит от внешних бинарников вроде `yt-dlp` — важно для
-/// кроссплатформенности.
-class YoutubeExplodeResolver implements StreamResolver {
-  YoutubeExplodeResolver({
-    YoutubeExplode? client,
-    Map<String, String> authHeaders = const <String, String>{},
+/// Основной путь — запрос `player` нашим InnerTube-клиентом с профилем
+/// клиента YouTube (Android VR или iOS): эти профили не требуют ни входа,
+/// ни PO-токена. Запасной путь — `youtube_explode_dart` со своим клиентом
+/// по умолчанию: он работает всегда, но YouTube всё чаще требует для него
+/// PO-токен.
+class YoutubeStreamResolver implements StreamResolver {
+  YoutubeStreamResolver({
+    required this.innerTube,
+    required this.locale,
+    required this.region,
     this.clientChoice = StreamSource.auto,
-  }) : _client = client ??
+    Map<String, String> authHeaders = const <String, String>{},
+    YoutubeExplode? library,
+  }) : _library = library ??
             YoutubeExplode(
-              // Авторизация поднимает лимит на выдачу потока: без неё
-              // медиасервер отдаёт только первые мегабайты трека.
               httpClient: AuthenticatedYoutubeClient(authHeaders),
             );
 
-  final YoutubeExplode _client;
+  /// Клиент InnerTube — им выполняется запрос `player`.
+  final InnerTubeClient innerTube;
+
+  /// Язык интерфейса YouTube в запросе.
+  final String locale;
+
+  /// Регион выдачи YouTube в запросе.
+  final String region;
+
+  final YoutubeExplode _library;
 
   /// Какой клиент YouTube использовать для получения ссылки.
   final StreamSource clientChoice;
 
-  /// Кэш: видео-ссылки живут часами, а `getManifest` — довольно дорогая операция.
+  /// Кэш: ссылки живут часами, а запрос — довольно дорогая операция.
   final Map<String, ResolvedStream> _cache = <String, ResolvedStream>{};
 
   @override
@@ -128,63 +150,167 @@ class YoutubeExplodeResolver implements StreamResolver {
     final ResolvedStream? cached = _cache[key];
     if (cached != null && !cached.isExpired) return cached;
 
-    try {
-      // Клиент выбирается в настройках. Пустой список означает клиент
-      // библиотеки по умолчанию — тогда список не передаём вовсе.
-      final List<YoutubeApiClient> clients =
-          YoutubeClients.forChoice(clientChoice);
-      final StreamManifest manifest = await _client.videos.streamsClient
-          .getManifest(
-        videoId,
-        ytClients: clients.isEmpty ? null : clients,
-      );
+    final List<String> failures = <String>[];
 
-      final List<AudioOnlyStreamInfo> audio = manifest.audioOnly.toList();
-      if (audio.isEmpty) {
-        throw StreamResolutionException(
-          'У этого трека нет аудиодорожки — возможно, это видео без звука.',
-        );
+    for (final YoutubeClientProfile profile
+        in YoutubeClients.forChoice(clientChoice)) {
+      try {
+        final ResolvedStream? resolved =
+            await _resolveWithProfile(profile, videoId, quality);
+        if (resolved != null) {
+          _cache[key] = resolved;
+          return resolved;
+        }
+        failures.add('${profile.label}: ссылок нет');
+      } on Object catch (error) {
+        failures.add('${profile.label}: $error');
       }
+    }
 
-      // Выбираем поток, ближайший к желаемому битрейту снизу вверх.
-      audio.sort((AudioOnlyStreamInfo a, AudioOnlyStreamInfo b) =>
-          a.bitrate.kiloBitsPerSecond.compareTo(b.bitrate.kiloBitsPerSecond));
+    // Запасной путь — библиотека с её клиентом по умолчанию.
+    try {
+      final ResolvedStream? resolved =
+          await _resolveWithLibrary(videoId, quality);
+      if (resolved != null) {
+        _cache[key] = resolved;
+        return resolved;
+      }
+      failures.add('библиотека: ссылок нет');
+    } on Object catch (error) {
+      failures.add('библиотека: $error');
+    }
 
-      final int target = quality.targetKbps;
-      AudioOnlyStreamInfo chosen = audio.first;
-      for (final AudioOnlyStreamInfo stream in audio) {
-        if (stream.bitrate.kiloBitsPerSecond <= target) {
-          chosen = stream;
+    debugPrint('Не удалось получить поток для $videoId: ${failures.join("; ")}');
+    throw StreamResolutionException(
+      'Не удалось получить аудиопоток. Проверьте соединение и попробуйте снова.',
+    );
+  }
+
+  /// Запрос `player` выбранным профилем клиента.
+  Future<ResolvedStream?> _resolveWithProfile(
+    YoutubeClientProfile profile,
+    String videoId,
+    AudioQuality quality,
+  ) async {
+    final Map<String, dynamic> response = await innerTube.post(
+      'player',
+      body: <String, dynamic>{
+        'context': <String, dynamic>{
+          'client': profile.context(locale: locale, region: region),
+        },
+        'videoId': videoId,
+        'contentCheckOk': true,
+        'racyCheckOk': true,
+      },
+      extraHeaders: profile.headers,
+      authenticated: true,
+    );
+
+    final dynamic status = response['playabilityStatus'];
+    final String state = status is Map ? '${status['status']}' : '?';
+    if (state != 'OK') {
+      debugPrint('[Поток] ${profile.label}: $state '
+          '${status is Map ? status['reason'] ?? '' : ''}');
+      return null;
+    }
+
+    return _pickFromPlayerResponse(response, quality);
+  }
+
+  /// Запасной путь: библиотека со своим клиентом по умолчанию.
+  Future<ResolvedStream?> _resolveWithLibrary(
+    String videoId,
+    AudioQuality quality,
+  ) async {
+    final StreamManifest manifest =
+        await _library.videos.streamsClient.getManifest(videoId);
+
+    final List<AudioOnlyStreamInfo> audio = manifest.audioOnly.toList();
+    if (audio.isEmpty) return null;
+
+    final List<_AudioCandidate> candidates = audio
+        .map((AudioOnlyStreamInfo stream) => _AudioCandidate(
+              url: stream.url,
+              bitrateKbps: stream.bitrate.kiloBitsPerSecond.round(),
+              container: stream.container.name,
+            ))
+        .toList();
+
+    return _pickCandidate(candidates, quality);
+  }
+
+  /// Разбирает ответ `player` и выбирает дорожку.
+  ///
+  /// Подходят только дорожки с готовой ссылкой (`url`): если YouTube вернул
+  /// `signatureCipher`, расшифровать его мы не можем — тогда путь через
+  /// профиль не годится, и сработает запасной через библиотеку.
+  ResolvedStream? _pickFromPlayerResponse(
+    Map<String, dynamic> response,
+    AudioQuality quality,
+  ) {
+    final dynamic data = response['streamingData'];
+    if (data is! Map) return null;
+
+    final List<Map<String, dynamic>> formats = <dynamic>[
+      ...(data['adaptiveFormats'] as List<dynamic>? ?? <dynamic>[]),
+      ...(data['formats'] as List<dynamic>? ?? <dynamic>[]),
+    ].whereType<Map<String, dynamic>>().toList();
+
+    final List<_AudioCandidate> candidates = <_AudioCandidate>[];
+    for (final Map<String, dynamic> format in formats) {
+      final String mime = '${format['mimeType']}';
+      if (!mime.startsWith('audio')) continue;
+
+      final Object? url = format['url'];
+      if (url is! String || url.isEmpty) continue;
+
+      // Битрейт в ответе — в битах в секунду.
+      final int bitrate = ((format['bitrate'] as num?) ?? 0).toInt();
+      candidates.add(_AudioCandidate(
+        url: Uri.parse(url),
+        bitrateKbps: bitrate ~/ 1000,
+        container: mime.contains('webm') ? 'webm' : 'm4a',
+      ));
+    }
+
+    if (candidates.isEmpty) return null;
+    return _pickCandidate(candidates, quality);
+  }
+
+  /// Выбирает дорожку под желаемое качество.
+  ResolvedStream? _pickCandidate(
+    List<_AudioCandidate> candidates,
+    AudioQuality quality,
+  ) {
+    if (candidates.isEmpty) return null;
+
+    candidates.sort((_AudioCandidate a, _AudioCandidate b) =>
+        a.bitrateKbps.compareTo(b.bitrateKbps));
+
+    _AudioCandidate chosen = candidates.first;
+    if (quality == AudioQuality.high) {
+      chosen = candidates.last;
+    } else {
+      for (final _AudioCandidate candidate in candidates) {
+        if (candidate.bitrateKbps <= quality.targetKbps) {
+          chosen = candidate;
         } else {
           break;
         }
       }
-      if (quality == AudioQuality.high) {
-        // Для «максимума» всегда берём лучший доступный.
-        chosen = audio.last;
-      }
-
-      final ResolvedStream resolved = ResolvedStream(
-        url: chosen.url,
-        bitrateKbps: chosen.bitrate.kiloBitsPerSecond.round(),
-        container: chosen.container.name,
-        expiresAt: DateTime.now().add(const Duration(hours: 5)),
-      );
-      _cache[key] = resolved;
-      return resolved;
-    } on StreamResolutionException {
-      rethrow;
-    } on Exception catch (error) {
-      debugPrint('Не удалось получить поток для $videoId: $error');
-      throw StreamResolutionException(
-        'Не удалось получить аудиопоток. Проверьте соединение и попробуйте снова.',
-      );
     }
+
+    return ResolvedStream(
+      url: chosen.url,
+      bitrateKbps: chosen.bitrateKbps,
+      container: chosen.container,
+      expiresAt: DateTime.now().add(const Duration(hours: 5)),
+    );
   }
 
   @override
   void dispose() {
     _cache.clear();
-    _client.close();
+    _library.close();
   }
 }

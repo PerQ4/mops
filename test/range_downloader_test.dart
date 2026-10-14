@@ -160,8 +160,8 @@ void main() {
           (StreamDownloadException e) => e.message,
           'сообщение',
           allOf(
-            contains('ограничивает'),
-            contains('аккаунт'),
+            contains('403'),
+            contains('прокси'),
           ),
         ),
       ),

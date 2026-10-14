@@ -79,8 +79,12 @@ class AuthController extends Notifier<AuthState> {
     _applyAuth(client, initial);
 
     if (initial != null) {
-      // Обновляем токен в фоне, если срок близок к концу.
-      unawaited(_refreshIfNeeded());
+      // Обновляем токен в фоне. Обязательно после build(): внутри него
+      // `state` ещё не готов, и чтение состояния роняет провайдер
+      // («depending on itself»).
+      Future<void>.microtask(() async {
+        await _refreshIfNeeded();
+      });
     }
 
     ref.onDispose(() => _flow?.dispose());
