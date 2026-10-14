@@ -215,7 +215,11 @@ class YoutubeStreamResolver implements StreamResolver {
         'racyCheckOk': true,
       },
       extraHeaders: profile.headers,
-      authenticated: true,
+      // Вход здесь НЕ нужен, и с ним нельзя: если есть сессия, YouTube
+      // отвечает на этот запрос с VR-профилями (visionOS, Android VR, iOS)
+      // ошибкой 400. Без авторизации те же профили отдают ссылку, которая
+      // открывается обычным GET — именно так играют ArchiveTune и Metrolist.
+      authenticated: false,
     );
 
     final dynamic status = response['playabilityStatus'];

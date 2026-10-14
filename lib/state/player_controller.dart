@@ -376,6 +376,13 @@ class PlayerController extends Notifier<PlayerUiState> {
     state = state.copyWith(autoPlayRadio: value);
   }
 
+  /// Включена ли предзагрузка следующего трека через посредника.
+  ///
+  /// Сейчас выключена: ссылку играет libmpv напрямую, посредник не нужен.
+  /// Оставлена как выключатель, чтобы код предзагрузки не пришлось удалять:
+  /// он понадобится, если мы вернёмся к gapless через локальный поток.
+  static const bool _preloadEnabled = false;
+
   /// Локальный адрес текущего потока — чтобы освободить прошлый.
   Uri? _localStream;
 
@@ -416,58 +423,18 @@ class PlayerController extends Notifier<PlayerUiState> {
 
       state = state.copyWith(streamNote: _noteFor(resolved));
 
-      // Играем потоком через локального посредника: GStreamer подключается к
-      // нему, а данные у YouTube качает приложение запросами с диапазоном
-      // (обычный GET медиасервер отклоняет). Так трек начинает играть сразу,
-      // без полной загрузки, а прошлый трек звучит до последнего момента.
-      final Uri local = await ref.read(streamProxyProvider).serve(
-            resolved.url,
-            userAgent: resolved.userAgent,
-            mimeType: resolved.mimeType,
-          );
-      if (state.current?.id != track.id) {
-        if (_warmedStream == local) _warmedStream = null;
-        ref.read(streamProxyProvider).release(local);
-        return;
-      }
-
-      // Если это тот же поток, что мы прогрели заранее, он уже «текущий»:
-      // освобождать его нельзя, просто снимаем пометку «следующий».
-      if (_warmedStream == local) _warmedStream = null;
-
-      // Прошлый поток больше не нужен.
-      final Uri? previous = _localStream;
-      _localStream = local;
-      if (previous != null && previous != local) {
-        ref.read(streamProxyProvider).release(previous);
-      }
-
-      // Файл качаем сами и играем с диска.
-      //
-      // Почему не отдаём ссылку плееру напрямую (как ArchiveTune и Metrolist):
-      // там поток берёт ExoPlayer, а он запрашивает файл обычным GET. GStreamer
-      // (audioplayers на Linux) шлёт открытый диапазон `Range: bytes=0-`,
-      // а медиасервер YouTube отвечает на него 403 — в журнале «Forbidden».
-      // Ссылку от visionOS сервер отдаёт целиком (проверено: обычный GET — 200,
-      // диапазоны по мегабайту — 206), поэтому качаем её запросами с диапазоном
-      // и играем локальный файл: воспроизведение и перемотка работают надёжно.
-      state = state.copyWith(downloading: true, downloadProgress: 0);
-      final String path = await ref.read(streamDownloaderProvider).fetch(
-            resolved.url,
-            cacheKey: track.id,
-            onProgress: (double progress) {
-              if (state.current?.id == track.id) {
-                state = state.copyWith(downloadProgress: progress);
-              }
-            },
-          );
-      if (state.current?.id != track.id) return;
-
-      await _engine.load(path, autoplay: true, isLocal: true);
+      // Ссылку отдаём плееру напрямую. media_kit (libmpv) запрашивает поток
+      // обычным GET, который медиасервер принимает (проверено
+      // tool/plain_get_check.dart: обычный GET — 200, перемотка диапазоном —
+      // 206). Прежний GStreamer слал открытый диапазон `Range: bytes=0-` и
+      // получал 403 «Forbidden», из-за чего файл приходилось качать целиком.
+      await _engine.load(resolved.url.toString(), autoplay: true);
       state = state.copyWith(resolving: false, downloading: false);
 
-      // Следующий трек качаем заранее: тогда переключение пройдёт без паузы.
-      unawaited(_warmNext());
+      // Предзагрузку следующего трека через посредника не используем: она была
+      // нужна только GStreamer. Код оставлен под флагом — пригодится, если
+      // понадобится бесшовный переход (gapless).
+      if (_preloadEnabled) unawaited(_warmNext());
       return;
     } on StreamResolutionException catch (error) {
       state = state.copyWith(

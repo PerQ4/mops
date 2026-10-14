@@ -36,7 +36,17 @@ dependencies:
   cupertino_icons: ^1.0.8
   flutter_riverpod: ^3.4.3
   shared_preferences: ^2.5.6
-  audioplayers: ^6.8.1
+  # Аудиодвижок: libmpv (через media_kit). На Linux он запрашивает поток
+  # обычным GET — именно так отдаёт ссылку visionOS (проверено
+  # tool/plain_get_check.dart: обычный GET — 200). GStreamer из audioplayers
+  # слал `Range: bytes=0-` и получал 403, поэтому движок заменён.
+  media_kit: ^1.2.6
+  # Нативные библиотеки для Linux. ВАЖНО: этот пакет НЕ кладёт libmpv в поставку
+  # (он собирает только mimalloc) — нужен системный libmpv, который ставится
+  # пакетом `mpv`/`libmpv`/`libmpv-dev`. Без него `MediaKit.ensureInitialized()`
+  # падает с «Cannot find libmpv at the usual places». На других платформах
+  # нужны свои пакеты libs_* — подключаются, когда до них дойдёт дело.
+  media_kit_libs_linux: ^1.2.1
   youtube_explode_dart: ^3.1.0
   cached_network_image: ^4.0.4
   path_provider: ^2.1.6

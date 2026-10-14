@@ -61,6 +61,8 @@ APPS_DIR="$DATA_HOME/applications"
 mkdir -p "$APPS_DIR"
 DESKTOP_FILE="$APPS_DIR/$APP_ID.desktop"
 
+# media_kit (libmpv) ищет библиотеку по LIBMPV_LIBRARY_PATH: в поставке
+# media_kit_libs_linux самой libmpv нет, поэтому путь передаём в ярлыке.
 cat > "$DESKTOP_FILE" <<EOF
 [Desktop Entry]
 Type=Application
@@ -68,7 +70,7 @@ Version=1.0
 Name=$APP_NAME
 GenericName=Плеер YouTube Music
 Comment=Кросс-платформенный плеер YouTube Music с Material 3 Expressive
-Exec=$BINARY
+Exec=env LIBMPV_LIBRARY_PATH=$HOME/.local/lib/mops $BINARY
 Icon=$APP_ID
 Terminal=false
 Categories=AudioVideo;Player;

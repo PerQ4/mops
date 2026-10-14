@@ -1,5 +1,8 @@
+import 'dart:io';
+
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
+import 'package:media_kit/media_kit.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 
 import 'app.dart';
@@ -12,8 +15,28 @@ import 'state/ui_scale.dart';
 
 /// Асинхронно готовит всё, что нужно для первого кадра (настройки и сессию),
 /// после чего сразу отдаёт управление интерфейсу.
+/// Путь к libmpv, если она лежит рядом с приложением или задана переменной.
+String? _libmpvPath() {
+  final String? fromEnv = Platform.environment['LIBMPV_LIBRARY_PATH'];
+  final List<String> candidates = <String>[
+    if (fromEnv != null && fromEnv.isNotEmpty) '$fromEnv/libmpv.so.2',
+    '${Platform.environment['HOME'] ?? ''}/.local/lib/mops/libmpv.so.2',
+  ];
+  for (final String path in candidates) {
+    if (path.isNotEmpty && File(path).existsSync()) return path;
+  }
+  return null;
+}
+
 Future<void> main() async {
   WidgetsFlutterBinding.ensureInitialized();
+
+  // Аудиодвижок — media_kit (libmpv). Нативные библиотеки нужно подготовить
+  // до создания первого `Player`, иначе плеер не инициализируется.
+  // media_kit (libmpv) сам библиотеку не находит: в поставке
+  // media_kit_libs_linux её нет. Ищем по переменной окружения, затем в
+  // пользовательском каталоге, иначе отдаём выбор системе.
+  MediaKit.ensureInitialized(libmpv: _libmpvPath());
 
   final SharedPreferences prefs = await SharedPreferences.getInstance();
   final AppSettings settings =
