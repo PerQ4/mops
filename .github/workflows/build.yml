@@ -118,9 +118,18 @@ jobs:
   release:
     name: Публикация сборок
     needs: build
-    if: startsWith(github.ref, 'refs/tags/v')
+    # always(): даже если сборка упала, релиз надо почистить — иначе в нём
+    # остаётся мусор от прошлых запусков.
+    if: ${{ always() && startsWith(github.ref, 'refs/tags/v') }}
     runs-on: ubuntu-latest
     steps:
+      # Первым делом убираем прошлый релиз целиком: поштучное удаление файлов
+      # оставляло мусор, а обновление файлов его не убирает.
+      - name: Удалить прошлый релиз
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: gh release delete "${{ github.ref_name }}" -y --cleanup-tag=false || true
+
       # Скачиваем БЕЗ слияния: иначе файлы всех платформ попадают в одну
       # папку, и вместе с приложениями архивируются служебные каталоги
       # (data, lib) — в релиз попадал мусор.
@@ -147,13 +156,6 @@ jobs:
           done
           rm -rf mops-linux mops-windows mops-macos
           echo "В релиз пойдёт:"; find . -maxdepth 2 -type f | sort
-
-      # Релиз удаляем целиком и создаём заново. Поштучное удаление файлов
-      # оставляло мусор от прошлых запусков, а обновление файлов их не убирает.
-      - name: Удалить прошлый релиз
-        env:
-          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-        run: gh release delete "${{ github.ref_name }}" -y --cleanup-tag=false || true
 
       - name: Опубликовать релиз
         uses: softprops/action-gh-release@v2
