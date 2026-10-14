@@ -1,3 +1,5 @@
+import 'dart:async';
+
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 
@@ -358,6 +360,15 @@ class _PlayerIslandState extends ConsumerState<_PlayerIsland> {
           _dragDx += details.delta.dx,
       onHorizontalDragCancel: () => _dragDx = 0,
       onHorizontalDragEnd: _onSwipeEnd,
+      // Смахивание вниз убирает очередь целиком: островок плеера при этом
+      // исчезает, потому что играть больше нечего.
+      onVerticalDragEnd: (DragEndDetails details) {
+        if ((details.primaryVelocity ?? 0) > 250) {
+          unawaited(
+            ref.read(playerControllerProvider.notifier).clearQueue(),
+          );
+        }
+      },
       onTap: () => AppRoutes.nowPlaying(context),
       child: island,
     );

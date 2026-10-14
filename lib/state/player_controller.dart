@@ -236,17 +236,25 @@ class PlayerController extends Notifier<PlayerUiState> {
     if (index < 0 || index >= state.queue.length) return;
     final List<Track> queue = <Track>[...state.queue]..removeAt(index);
 
+    // Убрали играющий трек: на его место встаёт следующий, и играть должен
+    // именно он. Без перезагрузки состояние показывало бы новый трек, а звучал
+    // бы прежний — как раз этот случай и случался.
+    final bool removedCurrent = index == state.index;
+
     int newIndex = state.index;
     if (index < state.index) {
       newIndex = state.index - 1;
-    } else if (index == state.index) {
+    } else if (removedCurrent) {
       newIndex = state.index.clamp(0, queue.length - 1);
     }
     state = state.copyWith(queue: queue, index: queue.isEmpty ? -1 : newIndex);
+
     if (queue.isEmpty) {
       _releaseStreams();
       unawaited(_engine.stop());
+      return;
     }
+    if (removedCurrent) unawaited(_loadCurrent());
   }
 
   /// Переставляет элемент очереди.
