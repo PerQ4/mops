@@ -25,8 +25,13 @@ class AppShell extends ConsumerWidget {
 
   @override
   Widget build(BuildContext context, WidgetRef ref) {
-    // Следим за плеером, чтобы он жил всё время работы приложения.
-    ref.watch(playerControllerProvider);
+    // Плеер должен жить всё время работы приложения, но слушать всё его
+    // состояние нельзя: позиция меняется несколько раз в секунду, и оболочка
+    // перестраивалась бы вместе со всем содержимым. Следим только за тем,
+    // есть ли текущий трек, — этого достаточно, чтобы контроллер жил.
+    ref.watch(
+      playerControllerProvider.select((PlayerUiState s) => s.current?.id),
+    );
 
     final bool wide = context.isExpandedLayout;
 
