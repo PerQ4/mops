@@ -47,6 +47,9 @@ dependencies:
   # падает с «Cannot find libmpv at the usual places». На других платформах
   # нужны свои пакеты libs_* — подключаются, когда до них дойдёт дело.
   media_kit_libs_linux: ^1.2.1
+  # Платформенные сборки libmpv: без них конвейер не соберёт Windows и macOS.
+  media_kit_libs_windows_audio: ^1.0.9
+  media_kit_libs_macos_audio: ^1.0.9
   youtube_explode_dart: ^3.1.0
   cached_network_image: ^4.0.4
   path_provider: ^2.1.6
