@@ -60,9 +60,13 @@ class _PlayerSeekBarState extends ConsumerState<PlayerSeekBar> {
         children: <Widget>[
           SliderTheme(
             data: SliderTheme.of(context).copyWith(
-              trackHeight: 4,
-              thumbShape: const RoundSliderThumbShape(enabledThumbRadius: 7),
-              overlayShape: const RoundSliderOverlayShape(overlayRadius: 16),
+              // «Толстая» дорожка из ArchiveTune: 12 против прежних 4 —
+              // по ней заметно, где идёт воспроизведение, и легче попасть
+              // курсором.
+              trackHeight: 12,
+              thumbShape: const RoundSliderThumbShape(enabledThumbRadius: 9),
+              overlayShape: const RoundSliderOverlayShape(overlayRadius: 20),
+              trackShape: const RoundedRectSliderTrackShape(),
             ),
             child: Slider(
               value: value.clamp(0.0, 1.0),

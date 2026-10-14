@@ -305,13 +305,17 @@ class _PlayerIsland extends ConsumerStatefulWidget {
 }
 
 class _PlayerIslandState extends ConsumerState<_PlayerIsland> {
+  /// Накопленное смещение горизонтального свайпа. Порог считаем в конце
+  /// жеста, поэтому промежуточное значение нужно держать между вызовами.
+  double _dragDx = 0;
+
   @override
   Widget build(BuildContext context) {
     final PlayerUiState player = ref.watch(playerControllerProvider);
     final Track track = player.current!;
     final bool wide = context.isExpandedLayout;
 
-    return _DockSurface(
+    final Widget island = _DockSurface(
         // Слева всегда стоит остров навигации, поэтому левые углы почти
         // прямые: вместе островки читаются одной фигурой.
         radius: BorderRadius.only(
@@ -341,6 +345,43 @@ class _PlayerIslandState extends ConsumerState<_PlayerIsland> {
           ),
         ),
       );
+
+    // Жесты островка: свайп влево/вправо — следующий/предыдущий трек, тап по
+    // свободному месту — полноэкранный плеер. Кнопки управления лежат внутри
+    // и перехватывают нажатия сами, поэтому тап по ним этот жест не ломает.
+    // `opaque` — чтобы ловить и промежутки между элементами строки.
+    return GestureDetector(
+      behavior: HitTestBehavior.opaque,
+      onHorizontalDragUpdate: (DragUpdateDetails details) =>
+          _dragDx += details.delta.dx,
+      onHorizontalDragCancel: () => _dragDx = 0,
+      onHorizontalDragEnd: _onSwipeEnd,
+      onTap: () => AppRoutes.nowPlaying(context),
+      child: island,
+    );
+  }
+
+  void _onSwipeEnd(DragEndDetails details) {
+    // Ширину берём у самого островка (естественную — до масштабирования
+    // `FittedBox`).
+    final double width = context.size?.width ?? 360;
+    // Порог — четверть ширины: короткий случайный сдвиг не переключает трек.
+    // ArchiveTune выносит это в настройку чувствительности (по умолчанию 0.73
+    // ширины) — здесь сознательно упрощено. Быстрый «щелчок» срабатывает по
+    // скорости, не дожидаясь порога по расстоянию.
+    final double threshold = width * 0.25;
+    final double velocity = details.primaryVelocity ?? 0;
+    final double dx = _dragDx;
+    _dragDx = 0;
+
+    final PlayerController controller =
+        ref.read(playerControllerProvider.notifier);
+    // Влево — следующий, вправо — предыдущий (как в каруселях).
+    if (dx <= -threshold || velocity < -800) {
+      controller.next();
+    } else if (dx >= threshold || velocity > 800) {
+      controller.previous();
+    }
   }
 }
 

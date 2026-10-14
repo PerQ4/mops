@@ -7,6 +7,7 @@ import '../features/common/navigation.dart';
 import '../state/player_controller.dart';
 import 'artwork.dart';
 import 'media_card.dart';
+import 'track_menu.dart';
 import 'track_tile.dart';
 
 /// Открывает элемент карусели: треки играют, остальное открывается.
@@ -255,7 +256,7 @@ class _CardCarousel extends ConsumerWidget {
                 const SizedBox(width: 12),
             itemBuilder: (BuildContext context, int index) {
               final BrowseItem item = section.items[index];
-              return BrowseItemCard(
+              final Widget card = BrowseItemCard(
                 item: item,
                 width: cardWidth,
                 onTap: (BrowseItem value) => openBrowseItem(
@@ -265,6 +266,15 @@ class _CardCarousel extends ConsumerWidget {
                   playContext: tracksOf(section),
                 ),
               );
+              // У карточек треков долгое нажатие открывает то же меню, что и
+              // строка списка: иначе из карусели меню не вызвать вовсе.
+              if (item is TrackItem) {
+                return GestureDetector(
+                  onLongPress: () => showTrackMenu(context, item.track),
+                  child: card,
+                );
+              }
+              return card;
             },
           ),
         ),

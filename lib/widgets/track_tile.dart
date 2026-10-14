@@ -1,8 +1,10 @@
 import 'package:flutter/material.dart';
+import 'package:flutter_riverpod/flutter_riverpod.dart';
 
 import '../core/theme/layout.dart';
 import '../core/utils/format.dart';
 import '../data/models/models.dart';
+import '../state/player_controller.dart';
 import 'artwork.dart';
 import 'track_menu.dart';
 
@@ -25,6 +27,7 @@ class TrackTile extends StatelessWidget {
     this.subtitleOverride,
     this.showDuration = true,
     this.leadingNumber,
+    this.enableSwipe = true,
   });
 
   final Track track;
@@ -46,6 +49,11 @@ class TrackTile extends StatelessWidget {
   /// Показывать номер вместо обложки (страницы альбомов и плейлистов).
   final int? leadingNumber;
 
+  /// Включён ли свайп по строке: вправо — «играть следующим», влево —
+  /// «в очередь». В очереди выключаем: там эти действия дублируют саму
+  /// очередь, а горизонтальный жест мешал бы перетаскиванию.
+  final bool enableSwipe;
+
   @override
   Widget build(BuildContext context) {
     final ColorScheme scheme = Theme.of(context).colorScheme;
@@ -65,7 +73,7 @@ class TrackTile extends StatelessWidget {
     final VoidCallback openMenu =
         onMenu ?? () => showTrackMenu(context, track);
 
-    return SizedBox(
+    final Widget tile = SizedBox(
       height: AppLayout.trackRowHeight,
       // Внешний отступ строки — 8 по спецификации; внутренний добираем до
       // прежних 20, чтобы обложка не съезжала относительно заголовков секций.
@@ -172,6 +180,11 @@ class TrackTile extends StatelessWidget {
         ),
       ),
     );
+
+    // В очереди свайп не нужен, поэтому он отключается флагом; сам виджет
+    // ещё и не даёт свайпать играющий трек — у него действия бессмысленны.
+    if (!enableSwipe) return tile;
+    return SwipeToSongBox(track: track, child: tile);
   }
 
   String _subtitle() {
@@ -245,4 +258,190 @@ class _Leading extends StatelessWidget {
     );
   }
 }
+
+/// Свайп по строке трека — форма взята у `SwipeToSongBox` из ArchiveTune.
+///
+/// Вправо — «играть следующим», влево — «в очередь». Под строкой выезжает
+/// цветная полоса высотой 60 с иконкой и подписью; строка следует за пальцем
+/// на расстояние до 340. Жест только горизонтальный: арена жестов отдаёт
+/// победу тому направлению, по которому пошло движение, поэтому вертикальная
+/// прокрутка списка не ломается, а долгое нажатие на строке по-прежнему
+/// открывает меню.
+class SwipeToSongBox extends ConsumerStatefulWidget {
+  const SwipeToSongBox({super.key, required this.track, required this.child});
+
+  final Track track;
+  final Widget child;
+
+  @override
+  ConsumerState<SwipeToSongBox> createState() => _SwipeToSongBoxState();
+}
+
+class _SwipeToSongBoxState extends ConsumerState<SwipeToSongBox> {
+  /// Порог срабатывания по расстоянию. ArchiveTune: 300.
+  static const double _threshold = 300;
+
+  /// Предел хода строки. Чуть больше порога — иначе порог был бы недостижим
+  /// медленным свайпом.
+  static const double _maxReveal = 340;
+
+  /// Быстрый «щелчок» срабатывает раньше, чем набрано расстояние.
+  static const double _flickVelocity = 700;
+
+  /// Высота полосы под свайпом. ArchiveTune: 60.
+  static const double _bandHeight = 60;
+
+  /// Смещение строки под пальцем; знак задаёт сторону действия.
+  double _offset = 0;
+
+  /// Идёт перетаскивание — тогда возврат к нулю должен быть мгновенным.
+  bool _dragging = false;
+
+  @override
+  Widget build(BuildContext context) {
+    // У играющего трека «играть следующим» и «в очередь» бессмысленны —
+    // свайп не включаем, строку отдаём как есть.
+    final String? currentId = ref.watch(
+      playerControllerProvider.select((PlayerUiState s) => s.current?.id),
+    );
+    if (currentId != null && currentId == widget.track.id) {
+      return widget.child;
+    }
+
+    final ColorScheme scheme = Theme.of(context).colorScheme;
+    // Насколько проявлена полоса: 0 — строка на месте, 1 — порог набран.
+    final double progress = (_offset.abs() / _threshold).clamp(0.0, 1.0);
+
+    return GestureDetector(
+      // Ловим жест по всей строке, включая промежутки между элементами.
+      behavior: HitTestBehavior.opaque,
+      onHorizontalDragStart: (_) => setState(() => _dragging = true),
+      onHorizontalDragUpdate: _onDragUpdate,
+      onHorizontalDragEnd: _onDragEnd,
+      onHorizontalDragCancel: _reset,
+      child: Stack(
+        children: <Widget>[
+          // Полоса фона — всегда под строкой, видна по мере сдвига.
+          Positioned.fill(
+            child: Opacity(
+              opacity: progress,
+              child: Center(
+                child: SizedBox(
+                  height: _bandHeight,
+                  width: double.infinity,
+                  child: _SwipeBand(
+                    // Знак смещения задаёт сторону: вправо — «следующим».
+                    toEnd: _offset > 0,
+                    scheme: scheme,
+                  ),
+                ),
+              ),
+            ),
+          ),
+          AnimatedContainer(
+            // Во время перетаскивания строка идёт за пальцем без задержки, а
+            // после отпускания плавно возвращается на место.
+            duration: _dragging
+                ? Duration.zero
+                : const Duration(milliseconds: 220),
+            curve: Curves.easeOutCubic,
+            transform: Matrix4.translationValues(_offset, 0, 0),
+            child: widget.child,
+          ),
+        ],
+      ),
+    );
+  }
+
+  void _onDragUpdate(DragUpdateDetails details) {
+    setState(() {
+      _offset = (_offset + details.delta.dx).clamp(-_maxReveal, _maxReveal);
+    });
+  }
+
+  void _onDragEnd(DragEndDetails details) {
+    final double velocity = details.primaryVelocity ?? 0;
+    // По расстоянию или по скорости — что раньше.
+    final bool playNext = _offset >= _threshold || velocity > _flickVelocity;
+    final bool enqueue = _offset <= -_threshold || velocity < -_flickVelocity;
+
+    // Строку возвращаем сразу: решение уже принято.
+    _reset();
+
+    final PlayerController controller =
+        ref.read(playerControllerProvider.notifier);
+    if (playNext) {
+      controller.playNext(widget.track);
+      _toast('Играет следующим');
+    } else if (enqueue) {
+      controller.enqueue(widget.track);
+      _toast('Добавлено в очередь');
+    }
+  }
+
+  void _reset() {
+    if (!mounted) return;
+    setState(() {
+      _offset = 0;
+      _dragging = false;
+    });
+  }
+
+  /// Короткое подтверждение действия. `maybeOf` — потому что строка может
+  /// оказаться вне `Scaffold` (например, в тесте) — тогда просто молчим.
+  void _toast(String message) {
+    ScaffoldMessenger.maybeOf(context)?.showSnackBar(
+      SnackBar(content: Text(message)),
+    );
+  }
+}
+
+/// Полоса под свайпом: иконка и подпись у той стороны, откуда тянут строку.
+class _SwipeBand extends StatelessWidget {
+  const _SwipeBand({required this.toEnd, required this.scheme});
+
+  /// `true` — вправо («играть следующим»), `false` — влево («в очередь»).
+  final bool toEnd;
+  final ColorScheme scheme;
+
+  @override
+  Widget build(BuildContext context) {
+    final Color background =
+        toEnd ? scheme.primaryContainer : scheme.secondaryContainer;
+    final Color foreground =
+        toEnd ? scheme.onPrimaryContainer : scheme.onSecondaryContainer;
+
+    return DecoratedBox(
+      decoration: BoxDecoration(
+        color: background,
+        borderRadius: BorderRadius.circular(AppLayout.radiusS),
+      ),
+      child: Padding(
+        padding: const EdgeInsets.symmetric(horizontal: 20),
+        child: Align(
+          alignment: toEnd ? Alignment.centerLeft : Alignment.centerRight,
+          child: Row(
+            mainAxisSize: MainAxisSize.min,
+            children: <Widget>[
+              Icon(
+                toEnd ? Icons.queue_play_next : Icons.playlist_add,
+                size: 24,
+                color: foreground,
+              ),
+              const SizedBox(width: 10),
+              Text(
+                toEnd ? 'Играть следующим' : 'В очередь',
+                style: Theme.of(context).textTheme.labelLarge?.copyWith(
+                      color: foreground,
+                      fontWeight: FontWeight.w700,
+                    ),
+              ),
+            ],
+          ),
+        ),
+      ),
+    );
+  }
+}
+
 

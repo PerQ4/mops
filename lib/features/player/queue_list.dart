@@ -91,6 +91,9 @@ class QueueList extends ConsumerWidget {
               isCurrent: true,
               isPlaying: isPlaying,
               onTap: () {},
+              // В очереди свайп выключен: трек уже здесь, а горизонтальный
+              // жест мешал бы перетаскиванию строк.
+              enableSwipe: false,
             ),
           ),
         ],
@@ -134,6 +137,7 @@ class QueueList extends ConsumerWidget {
                 track: played[index],
                 isDimmed: true,
                 onTap: () => controller.jumpTo(index),
+                enableSwipe: false,
               );
             },
           ),
@@ -196,6 +200,8 @@ class _ReorderableTile extends StatelessWidget {
             // У строки очереди свой хвост (убрать + ручка перетаскивания),
             // поэтому штатная кнопка «…» не рисуется — добавляем её сами,
             // иначе из очереди не открыть меню трека.
+            // Свайп выключен: здесь он конфликтовал бы с перетаскиванием.
+            enableSwipe: false,
             trailing: Row(
               mainAxisSize: MainAxisSize.min,
               children: <Widget>[

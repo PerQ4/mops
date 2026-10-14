@@ -65,6 +65,21 @@ class _TrackMenuSheet extends ConsumerWidget {
       likedIdsProvider.select((Set<String> ids) => ids.contains(track.id)),
     );
 
+    // Состояние очереди берём через `select`: позиция воспроизведения
+    // меняется несколько раз в секунду, и без этого лист перестраивался бы на
+    // каждом тике. Нам нужны только текущий трек, его индекс и сама очередь —
+    // по ним решаем, чем заменить «играть следующим» и «в очередь».
+    final (String? currentId, int currentIndex, List<Track> queue) = ref.watch(
+      playerControllerProvider.select(
+        (PlayerUiState s) => (s.current?.id, s.index, s.queue),
+      ),
+    );
+    final bool isCurrent = currentId != null && currentId == track.id;
+    // Есть ли трек в очереди вообще: для играющего это всегда так, но пункт
+    // убираем только когда убирать действительно есть что.
+    final int queueIndex = queue.indexWhere((Track t) => t.id == track.id);
+    final bool inQueue = queueIndex >= 0;
+
     // Перейти можно только туда, где есть id. Если YouTube его не отдал,
     // пункт не показываем вовсе — «мёртвая» кнопка путает сильнее, чем её
     // отсутствие.
@@ -94,22 +109,41 @@ class _TrackMenuSheet extends ConsumerWidget {
                 onTap: () => _openAlbum(context, album),
               ),
             if (artist != null || album != null) const Divider(height: 1),
-            _MenuAction(
-              icon: Icons.queue_play_next,
-              title: 'Играть следующим',
-              onTap: () {
-                Navigator.pop(context);
-                ref.read(playerControllerProvider.notifier).playNext(track);
-              },
-            ),
-            _MenuAction(
-              icon: Icons.playlist_add,
-              title: 'В очередь',
-              onTap: () {
-                Navigator.pop(context);
-                ref.read(playerControllerProvider.notifier).enqueue(track);
-              },
-            ),
+            // Для играющего трека «играть следующим» и «в очередь»
+            // бессмысленны: он уже звучит. Вместо них — убрать из очереди.
+            // Для остальных действия прежние.
+            if (isCurrent && inQueue)
+              _MenuAction(
+                icon: Icons.remove_circle_outline,
+                title: 'Убрать из очереди',
+                onTap: () {
+                  Navigator.pop(context);
+                  // У играющего берём его настоящий индекс: при дублях
+                  // `indexWhere` вернул бы первое вхождение, а не то, что
+                  // звучит сейчас.
+                  ref.read(playerControllerProvider.notifier).removeFromQueue(
+                        currentIndex >= 0 ? currentIndex : queueIndex,
+                      );
+                },
+              )
+            else ...<Widget>[
+              _MenuAction(
+                icon: Icons.queue_play_next,
+                title: 'Играть следующим',
+                onTap: () {
+                  Navigator.pop(context);
+                  ref.read(playerControllerProvider.notifier).playNext(track);
+                },
+              ),
+              _MenuAction(
+                icon: Icons.playlist_add,
+                title: 'В очередь',
+                onTap: () {
+                  Navigator.pop(context);
+                  ref.read(playerControllerProvider.notifier).enqueue(track);
+                },
+              ),
+            ],
             _MenuAction(
               icon: liked ? Icons.favorite : Icons.favorite_border,
               title: liked ? 'Убрать из «Мне нравится»' : 'Мне нравится',

@@ -1,3 +1,5 @@
+import 'dart:math' as math;
+
 import 'package:flutter/material.dart';
 
 import '../../data/local/app_settings.dart';
@@ -294,10 +296,13 @@ class AppTheme {
 
   /// Типографика. Expressive-шкала — крупные заголовки и плотный основной текст.
   static TextTheme _textTheme(ColorScheme scheme) {
-    final TextTheme base = Typography.material2021().black.apply(
-      bodyColor: scheme.onSurface,
-      displayColor: scheme.onSurface,
-    );
+    // Poppins — шрифт ArchiveTune: вся типографика оригинала построена на нём.
+    final TextTheme base = Typography.material2021().black
+        .apply(
+          bodyColor: scheme.onSurface,
+          displayColor: scheme.onSurface,
+          fontFamily: 'Poppins',
+        );
 
     // Веса по спецификации ArchiveTune: заголовки экранов и секций — semibold,
     // названия треков — semibold, подписи — обычные и приглушённые.
@@ -349,8 +354,38 @@ class PlayerTheme extends ThemeExtension<PlayerTheme> {
   }
 }
 
+/// Кривая-пружина: приближает Motion-систему Material 3 Expressive.
+///
+/// В ArchiveTune переходы заданы пружинами (`Spring.StiffnessLow`,
+/// `DampingRatioNoBouncy`), а во Flutter пружинных кривых нет — есть только
+/// кубические. Здесь та же пружина, посчитанная как кривая: критически
+/// затухающий осциллятор, который без отскока приходит в цель.
+///
+/// Критическое затухание даёт формулу `1 - (1 + w·t)·e^(-w·t)`, где `w` —
+/// жёсткость. Чем больше `w`, тем резче движение.
+class SpringCurve extends Curve {
+  const SpringCurve({this.stiffness = 8});
+
+  /// Жёсткость: 8 — спокойно, 12 — живее.
+  final double stiffness;
+
+  @override
+  double transformInternal(double t) {
+    if (t <= 0) return 0;
+    if (t >= 1) return 1;
+    final double w = stiffness;
+    return 1 - (1 + w * t) * math.exp(-w * t);
+  }
+}
+
 /// Пружинные кривые, характерные для Motion-системы Material 3 Expressive.
 abstract final class AppMotion {
+  /// Пружина для размеров и положения: мягкая, без отскока.
+  static const Curve spring = SpringCurve();
+
+  /// Пружина порезче — для нажатий и переключателей.
+  static const Curve springSnappy = SpringCurve(stiffness: 12);
+
   /// Быстрая «пружина» — для нажатий и переключателей.
   static const Curve snappy = Cubic(0.2, 0.0, 0.0, 1.0);
 

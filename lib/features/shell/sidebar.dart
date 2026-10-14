@@ -60,14 +60,18 @@ class _LibrarySidebarState extends ConsumerState<LibrarySidebar> {
         color: scheme.surfaceContainer,
         child: Stack(
           children: <Widget>[
-            Column(
-              crossAxisAlignment: CrossAxisAlignment.stretch,
-              children: <Widget>[
-                const SizedBox(height: 8),
-                _SidebarHeader(collapsed: collapsed),
-                Expanded(child: _PlaylistList(collapsed: collapsed)),
-                const SizedBox(height: 8),
-              ],
+            // Подрезаем содержимое: во время анимации ширины ничего не должно
+            // вылезать за панель.
+            ClipRect(
+              child: Column(
+                crossAxisAlignment: CrossAxisAlignment.stretch,
+                children: <Widget>[
+                  const SizedBox(height: 8),
+                  _SidebarHeader(collapsed: collapsed),
+                  Expanded(child: _PlaylistList(collapsed: collapsed)),
+                  const SizedBox(height: 8),
+                ],
+              ),
             ),
             // Ручка ширины: тянем за правый край панели. В свёрнутом виде
             // ширину менять нечего, поэтому ручки нет.
@@ -160,6 +164,11 @@ class _SectionLabel extends StatelessWidget {
       padding: const EdgeInsets.fromLTRB(22, 18, 16, 6),
       child: Text(
         title,
+        // Подпись не должна вылезать за панель: при узкой ширине (и во время
+        // анимации сворачивания) она ломала раскладку.
+        maxLines: 1,
+        softWrap: false,
+        overflow: TextOverflow.ellipsis,
         style: Theme.of(context).textTheme.labelLarge?.copyWith(
           color: scheme.onSurfaceVariant,
           fontWeight: FontWeight.w700,
