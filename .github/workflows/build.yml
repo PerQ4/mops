@@ -1,0 +1,77 @@
+name: Сборки
+
+# Зачем это здесь.
+#
+# Flutter не умеет собирать под Windows с Linux: для Windows-сборки нужны
+# Visual Studio и Windows SDK, то есть сама Windows. Поэтому Windows-сборка
+# делается здесь, на серверах GitHub: при пуше в ветку или по кнопке
+# (Actions → Сборки → Run workflow) собираются все три платформы, а готовые
+# архивы лежат в артефактах запуска.
+
+on:
+  push:
+    branches: [master, main]
+  pull_request:
+  workflow_dispatch:
+
+jobs:
+  build:
+    name: ${{ matrix.name }}
+    runs-on: ${{ matrix.os }}
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - name: Linux
+            os: ubuntu-latest
+            artifact: mops-linux
+            path: build/linux/x64/release/bundle
+          - name: Windows
+            os: windows-latest
+            artifact: mops-windows
+            path: build/windows/x64/runner/Release
+          - name: macOS
+            os: macos-latest
+            artifact: mops-macos
+            path: build/macos/Build/Products/Release
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: subosito/flutter-action@v2
+        with:
+          channel: stable
+
+      # На Linux нужны библиотеки для сборки GTK-приложения и WebKitGTK
+      # (встроенный браузер для входа в аккаунт).
+      - name: Зависимости Linux
+        if: matrix.os == 'ubuntu-latest'
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y clang cmake ninja-build pkg-config libgtk-3-dev \
+            liblzma-dev libstdc++-12-dev libwebkit2gtk-4.1-dev libsoup-3.0-dev
+
+      # libmpv (движок воспроизведения) есть не во всех системах: на Linux
+      # её даёт пакет mpv, на Windows и macOS — соответствующие сборки.
+      - name: Зависимости Linux для звука
+        if: matrix.os == 'ubuntu-latest'
+        run: sudo apt-get install -y libmpv-dev
+
+      - name: Зависимости macOS для звука
+        if: matrix.os == 'macos-latest'
+        run: brew install mpv
+
+      - name: Пакеты Dart
+        run: flutter pub get
+
+      - name: Сборка
+        # Иконки лежат в перечислениях и записях, поэтому их нельзя
+        # вырезать: без этого часть иконок пропадает.
+        run: flutter build ${{ matrix.os == 'ubuntu-latest' && 'linux' || matrix.os == 'windows-latest' && 'windows' || 'macos' }} --release --no-tree-shake-icons
+
+      - name: Артефакт
+        uses: actions/upload-artifact@v4
+        with:
+          name: ${{ matrix.artifact }}
+          path: ${{ matrix.path }}
+          if-no-files-found: error
