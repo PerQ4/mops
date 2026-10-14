@@ -70,20 +70,21 @@ class FloatingDock extends ConsumerWidget {
             mainAxisSize: MainAxisSize.min,
             crossAxisAlignment: CrossAxisAlignment.end,
             children: <Widget>[
-              if (showNav)
-                _NavIsland(joinedOnRight: hasTrack),
-              if (showNav && hasTrack)
-                const SizedBox(width: gap),
+              // Плеер слева, навигация справа.
               // Появление и исчезновение плеера анимируем размером: группа
               // центрируется целиком, поэтому навигация плавно отъезжает.
               AnimatedSize(
                 duration: const Duration(milliseconds: 260),
                 curve: Curves.easeOutCubic,
-                alignment: Alignment.centerRight,
+                alignment: Alignment.centerLeft,
                 child: hasTrack
-                    ? _PlayerIsland(joinedOnLeft: showNav)
+                    ? _PlayerIsland(joinedOnRight: showNav)
                     : const SizedBox.shrink(),
               ),
+              if (showNav && hasTrack)
+                const SizedBox(width: gap),
+              if (showNav)
+                _NavIsland(joinedOnLeft: hasTrack),
             ],
           ),
         ],
@@ -95,10 +96,10 @@ class FloatingDock extends ConsumerWidget {
 /// ------------------------------------------------------- остров навигации
 
 class _NavIsland extends ConsumerWidget {
-  const _NavIsland({required this.joinedOnRight});
+  const _NavIsland({required this.joinedOnLeft});
 
-  /// Стоит ли справа островок плеера — тогда правые углы почти прямые.
-  final bool joinedOnRight;
+  /// Стоит ли слева островок плеера — тогда левые углы почти прямые.
+  final bool joinedOnLeft;
 
   @override
   Widget build(BuildContext context, WidgetRef ref) {
@@ -108,14 +109,14 @@ class _NavIsland extends ConsumerWidget {
     return _DockSurface(
       // У стыка скругление минимальное, снаружи — полное.
       radius: BorderRadius.only(
-        topLeft: const Radius.circular(FloatingDock.outerRadius),
-        bottomLeft: const Radius.circular(FloatingDock.outerRadius),
-        topRight: Radius.circular(
-          joinedOnRight ? FloatingDock.joinRadius : FloatingDock.outerRadius,
+        topLeft: Radius.circular(
+          joinedOnLeft ? FloatingDock.joinRadius : FloatingDock.outerRadius,
         ),
-        bottomRight: Radius.circular(
-          joinedOnRight ? FloatingDock.joinRadius : FloatingDock.outerRadius,
+        bottomLeft: Radius.circular(
+          joinedOnLeft ? FloatingDock.joinRadius : FloatingDock.outerRadius,
         ),
+        topRight: const Radius.circular(FloatingDock.outerRadius),
+        bottomRight: const Radius.circular(FloatingDock.outerRadius),
       ),
       child: SizedBox(
         height: FloatingDock.islandHeight,
@@ -236,10 +237,10 @@ class _NavButton extends StatelessWidget {
 /// --------------------------------------------------------- островок плеера
 
 class _PlayerIsland extends ConsumerStatefulWidget {
-  const _PlayerIsland({required this.joinedOnLeft});
+  const _PlayerIsland({required this.joinedOnRight});
 
   /// Стоит ли слева остров навигации — тогда левые углы почти прямые.
-  final bool joinedOnLeft;
+  final bool joinedOnRight;
 
   @override
   ConsumerState<_PlayerIsland> createState() => _PlayerIslandState();
@@ -260,14 +261,14 @@ class _PlayerIslandState extends ConsumerState<_PlayerIsland> {
       onExit: (_) => setState(() => _hovered = false),
       child: _DockSurface(
         radius: BorderRadius.only(
-            topLeft: Radius.circular(
-              widget.joinedOnLeft ? FloatingDock.joinRadius : radius,
+            topLeft: const Radius.circular(FloatingDock.outerRadius),
+            bottomLeft: const Radius.circular(FloatingDock.outerRadius),
+            topRight: Radius.circular(
+              widget.joinedOnRight ? FloatingDock.joinRadius : radius,
             ),
-            bottomLeft: Radius.circular(
-              widget.joinedOnLeft ? FloatingDock.joinRadius : radius,
+            bottomRight: Radius.circular(
+              widget.joinedOnRight ? FloatingDock.joinRadius : radius,
             ),
-            topRight: const Radius.circular(FloatingDock.outerRadius),
-            bottomRight: const Radius.circular(FloatingDock.outerRadius),
           ),
           elevation: _hovered ? 16 : 8,
           child: SizedBox(
