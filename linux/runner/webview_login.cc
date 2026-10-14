@@ -38,6 +38,7 @@ constexpr char kSignInUrl[] =
 
 GtkOverlay* g_overlay = nullptr;
 GtkWidget* g_flutter_view = nullptr;
+WebKitWebContext* g_context = nullptr;
 GtkWidget* g_panel = nullptr;
 WebKitWebView* g_view = nullptr;
 FlMethodCall* g_pending_call = nullptr;
@@ -87,8 +88,11 @@ void reset_state() {
 
 // Собирает строку cookie из списка WebKit.
 //
-// Оставляем только домены Google и YouTube: остальное приложению не нужно
-// и не должно попадать в файл сессии.
+// Оставляем только cookie домена YouTube. Это важно: браузер шлёт на
+// music.youtube.com именно их, а cookie домена google.com туда не попадают.
+// Если смешать оба набора, имена (SID, SAPISID, __Secure-3PAPISID) окажутся
+// в строке дважды, YouTube возьмёт значение не от того домена и ответит как
+// гостю — вход и библиотека перестанут работать.
 std::string cookies_from_list(GList* cookies) {
   if (cookies == nullptr) {
     return std::string();
@@ -103,9 +107,7 @@ std::string cookies_from_list(GList* cookies) {
     if (name == nullptr || value == nullptr) {
       continue;
     }
-    if (domain != nullptr && !g_str_has_suffix(domain, "youtube.com") &&
-        !g_str_has_suffix(domain, "google.com") &&
-        !g_str_has_suffix(domain, "googleusercontent.com")) {
+    if (domain == nullptr || !g_str_has_suffix(domain, "youtube.com")) {
       continue;
     }
     if (!result.empty()) {
@@ -146,6 +148,30 @@ bool has_sapisid(const std::string& cookies) {
 bool has_youtube_cookies(const std::string& cookies) {
   return cookies.find("LOGIN_INFO=") != std::string::npos ||
          cookies.find("VISITOR_INFO1_LIVE=") != std::string::npos;
+}
+
+// Ответ на запрос уже сохранённого входа.
+void on_cookies_for_stored(GObject* source, GAsyncResult* result,
+                           gpointer data) {
+  GError* error = nullptr;
+  GList* cookies = webkit_cookie_manager_get_all_cookies_finish(
+      WEBKIT_COOKIE_MANAGER(source), result, &error);
+  const std::string cookie_string = cookies_from_list(cookies);
+  if (error != nullptr) {
+    g_error_free(error);
+  }
+
+  FlMethodCall* call = FL_METHOD_CALL(data);
+  if (has_sapisid(cookie_string) && has_youtube_cookies(cookie_string)) {
+    g_message("[Login] сохранённый вход найден: %zu символов",
+              cookie_string.size());
+    respond_with_cookies(call, cookie_string);
+  } else {
+    g_message("[Login] сохранённого входа нет");
+    g_autoptr(FlValue) value = fl_value_new_string("");
+    fl_method_call_respond_success(call, value, nullptr);
+  }
+  g_object_unref(call);
 }
 
 // Диагностика: показывает, помнит ли браузер предыдущий вход.
@@ -326,6 +352,43 @@ void on_load_changed(WebKitWebView* view, WebKitLoadEvent event,
                                         on_cookies_for_check, nullptr);
 }
 
+// Создаёт контекст браузера с постоянным хранилищем cookie.
+//
+// Контекст один на всё приложение: так и панель, и чтение уже сохранённого
+// входа работают с одними и теми же cookie.
+WebKitWebContext* ensure_context() {
+  if (g_context != nullptr) {
+    return g_context;
+  }
+
+  g_autofree gchar* data_dir = g_build_filename(
+      g_get_user_data_dir(), "com.mops.mops", "webkit", nullptr);
+  g_autofree gchar* cache_dir = g_build_filename(
+      g_get_user_cache_dir(), "com.mops.mops", "webkit", nullptr);
+  g_mkdir_with_parents(data_dir, 0700);
+  g_mkdir_with_parents(cache_dir, 0700);
+
+  WebKitWebsiteDataManager* data_manager = webkit_website_data_manager_new(
+      "base-data-directory", data_dir, "base-cache-directory", cache_dir,
+      nullptr);
+  g_context = webkit_web_context_new_with_website_data_manager(data_manager);
+  g_object_unref(data_manager);
+
+  WebKitCookieManager* manager = webkit_web_context_get_cookie_manager(g_context);
+  webkit_cookie_manager_set_accept_policy(manager,
+                                          WEBKIT_COOKIE_POLICY_ACCEPT_ALWAYS);
+
+  // Явно указываем файл cookie: без этого WebKit держит их только в памяти,
+  // и вход не переживает перезапуск.
+  g_autofree gchar* cookie_file =
+      g_build_filename(data_dir, "cookies.sqlite", nullptr);
+  webkit_cookie_manager_set_persistent_storage(
+      manager, cookie_file, WEBKIT_COOKIE_PERSISTENT_STORAGE_SQLITE);
+
+  g_message("[Login] хранилище браузера: %s", data_dir);
+  return g_context;
+}
+
 // Создаёт панель один раз. Возвращает false, если окно ещё не готово.
 bool ensure_panel() {
   if (g_panel != nullptr) {
@@ -361,38 +424,12 @@ bool ensure_panel() {
   gtk_header_bar_pack_start(header, cancel_button);
   gtk_box_pack_start(GTK_BOX(box), GTK_WIDGET(header), FALSE, FALSE, 0);
 
-  // Постоянное хранилище: cookie входа должны переживать перезапуск
-  // приложения, иначе аккаунт придётся вводить заново каждый раз.
-  g_autofree gchar* data_dir = g_build_filename(
-      g_get_user_data_dir(), "com.mops.mops", "webkit", nullptr);
-  g_autofree gchar* cache_dir = g_build_filename(
-      g_get_user_cache_dir(), "com.mops.mops", "webkit", nullptr);
-  g_mkdir_with_parents(data_dir, 0700);
-  g_mkdir_with_parents(cache_dir, 0700);
-
-  WebKitWebsiteDataManager* data_manager = webkit_website_data_manager_new(
-      "base-data-directory", data_dir, "base-cache-directory", cache_dir,
-      nullptr);
-  WebKitWebContext* context =
-      webkit_web_context_new_with_website_data_manager(data_manager);
-  g_object_unref(data_manager);
-  g_message("[Login] хранилище браузера: %s", data_dir);
-
+  WebKitWebContext* context = ensure_context();
   WebKitCookieManager* manager = webkit_web_context_get_cookie_manager(context);
-  webkit_cookie_manager_set_accept_policy(manager,
-                                          WEBKIT_COOKIE_POLICY_ACCEPT_ALWAYS);
-
-  // Явно указываем файл cookie: без этого WebKit держит их только в памяти,
-  // и вход не переживает перезапуск.
-  g_autofree gchar* cookie_file =
-      g_build_filename(data_dir, "cookies.sqlite", nullptr);
-  webkit_cookie_manager_set_persistent_storage(
-      manager, cookie_file, WEBKIT_COOKIE_PERSISTENT_STORAGE_SQLITE);
 
   g_view = WEBKIT_WEB_VIEW(webkit_web_view_new_with_context(context));
   webkit_cookie_manager_get_all_cookies(manager, nullptr,
                                         on_cookies_for_diagnostic, nullptr);
-  g_object_unref(context);
   gtk_box_pack_start(GTK_BOX(box), GTK_WIDGET(g_view), TRUE, TRUE, 0);
 
   g_signal_connect(g_view, "load-changed", G_CALLBACK(on_load_changed),
@@ -469,6 +506,19 @@ void method_call_cb(FlMethodChannel* /*channel*/, FlMethodCall* method_call,
     g_pending_call = FL_METHOD_CALL(g_object_ref(method_call));
     open_panel(url);
     // Ответ отправим позже — когда вход завершится.
+    return;
+  }
+
+  if (g_strcmp0(method, "storedCookies") == 0) {
+    // Отдаём уже сохранённый вход, не открывая панель: приложение может
+    // подхватить его само после перезапуска.
+    WebKitCookieManager* manager =
+        webkit_web_context_get_cookie_manager(ensure_context());
+    // Ссылку держим до конца асинхронного ответа: иначе вызов освободится
+    // сразу после возврата из обработчика, и колбэк обратится к мусору.
+    FlMethodCall* pending = FL_METHOD_CALL(g_object_ref(method_call));
+    webkit_cookie_manager_get_all_cookies(manager, nullptr,
+                                          on_cookies_for_stored, pending);
     return;
   }
 

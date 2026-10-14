@@ -203,8 +203,14 @@ class InnerTubeClient {
     final String apiKey = _grab(html, r'"INNERTUBE_API_KEY":"(.*?)"');
     final String apiVersion =
         _grab(html, r'"INNERTUBE_API_VERSION":"(.*?)"', fallback: 'v1');
-    final String clientName =
+    String clientName =
         _grab(html, r'"INNERTUBE_CONTEXT_CLIENT_NAME":\s*"?(.*?)"?[,}]');
+    // На странице YouTube Music здесь число (67) — это идентификатор клиента,
+    // а не имя. С числом в `clientName` YouTube не узнаёт клиента и отвечает
+    // как гостю: вход и библиотека не работают. Подставляем настоящее имя.
+    if (clientName.isEmpty || int.tryParse(clientName) != null) {
+      clientName = 'WEB_REMIX';
+    }
     final String clientVersion =
         _grab(html, r'"INNERTUBE_CLIENT_VERSION":"(.*?)"');
     final String visitorData = _grab(html, r'"VISITOR_DATA":"(.*?)"');
@@ -253,8 +259,11 @@ class InnerTubeClient {
         .replace(
       queryParameters: <String, String>{
         ...query,
-        'alt': 'json',
+        // `alt=json` добавлять нельзя: с ним YouTube отвечает как гостю и
+        // игнорирует авторизацию (проверено — с ним `logged_in: 0`, без него
+        // приходят данные аккаунта).
         'key': cfg.apiKey,
+        'prettyPrint': 'false',
       },
     );
 

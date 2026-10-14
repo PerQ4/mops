@@ -60,12 +60,20 @@ class ResolvedStream {
     this.bitrateKbps,
     this.container,
     this.isLive = false,
+    this.userAgent,
+    this.mimeType,
   });
 
   final Uri url;
   final int? bitrateKbps;
   final String? container;
   final bool isLive;
+
+  /// Пользовательский агент, с которым запрашивался поток.
+  final String? userAgent;
+
+  /// Тип содержимого (`audio/webm`, `audio/mp4`) — нужен посреднику.
+  final String? mimeType;
 
   /// Ссылки googlevideo живут несколько часов; после этого нужен перезапрос.
   final DateTime expiresAt;
@@ -97,11 +105,15 @@ class _AudioCandidate {
     required this.url,
     required this.bitrateKbps,
     required this.container,
+    this.mimeType,
+    this.userAgent,
   });
 
   final Uri url;
   final int bitrateKbps;
   final String container;
+  final String? mimeType;
+  final String? userAgent;
 }
 
 /// Получение потока.
@@ -214,7 +226,7 @@ class YoutubeStreamResolver implements StreamResolver {
       return null;
     }
 
-    return _pickFromPlayerResponse(response, quality);
+    return _pickFromPlayerResponse(response, quality, profile);
   }
 
   /// Запасной путь: библиотека со своим клиентом по умолчанию.
@@ -233,6 +245,9 @@ class YoutubeStreamResolver implements StreamResolver {
               url: stream.url,
               bitrateKbps: stream.bitrate.kiloBitsPerSecond.round(),
               container: stream.container.name,
+              mimeType: stream.container.name == 'webm'
+                  ? 'audio/webm'
+                  : 'audio/mp4',
             ))
         .toList();
 
@@ -247,6 +262,7 @@ class YoutubeStreamResolver implements StreamResolver {
   ResolvedStream? _pickFromPlayerResponse(
     Map<String, dynamic> response,
     AudioQuality quality,
+    YoutubeClientProfile profile,
   ) {
     final dynamic data = response['streamingData'];
     if (data is! Map) return null;
@@ -270,6 +286,8 @@ class YoutubeStreamResolver implements StreamResolver {
         url: Uri.parse(url),
         bitrateKbps: bitrate ~/ 1000,
         container: mime.contains('webm') ? 'webm' : 'm4a',
+        mimeType: mime.contains('webm') ? 'audio/webm' : 'audio/mp4',
+        userAgent: profile.userAgent,
       ));
     }
 
@@ -304,6 +322,8 @@ class YoutubeStreamResolver implements StreamResolver {
       url: chosen.url,
       bitrateKbps: chosen.bitrateKbps,
       container: chosen.container,
+      mimeType: chosen.mimeType,
+      userAgent: chosen.userAgent,
       expiresAt: DateTime.now().add(const Duration(hours: 5)),
     );
   }

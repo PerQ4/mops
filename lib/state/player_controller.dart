@@ -339,6 +339,9 @@ class PlayerController extends Notifier<PlayerUiState> {
     state = state.copyWith(autoPlayRadio: value);
   }
 
+  /// Локальный адрес текущего потока — чтобы освободить прошлый.
+  Uri? _localStream;
+
   // -------------------------------------------------------------- private
 
   Future<void> _loadCurrent() async {
@@ -359,24 +362,29 @@ class PlayerController extends Notifier<PlayerUiState> {
 
       state = state.copyWith(streamNote: _noteFor(resolved));
 
-      // Файл всегда качает приложение, а не GStreamer. Медиасервер отдаёт
-      // данные только на запрос с диапазоном (`Range`), а GStreamer делает
-      // обычный GET и получает 403 — отсюда «не удалось воспроизвести трек».
-      // Скачанный файл играется из кэша.
-      state = state.copyWith(downloading: true, downloadProgress: 0);
-      final String path = await ref.read(streamDownloaderProvider).fetch(
+      // Играем потоком через локального посредника: GStreamer подключается к
+      // нему, а данные у YouTube качает приложение запросами с диапазоном
+      // (обычный GET медиасервер отклоняет). Так трек начинает играть сразу,
+      // без полной загрузки, а прошлый трек звучит до последнего момента.
+      final Uri local = await ref.read(streamProxyProvider).serve(
             resolved.url,
-            cacheKey: track.id,
-            onProgress: (double progress) {
-              if (state.current?.id == track.id) {
-                state = state.copyWith(downloadProgress: progress);
-              }
-            },
+            userAgent: resolved.userAgent,
+            mimeType: resolved.mimeType,
           );
-      if (state.current?.id != track.id) return;
+      if (state.current?.id != track.id) {
+        ref.read(streamProxyProvider).release(local);
+        return;
+      }
 
-      await _engine.load(path, autoplay: true, isLocal: true);
-      state = state.copyWith(resolving: false, downloading: false);
+      // Прошлый поток больше не нужен.
+      final Uri? previous = _localStream;
+      _localStream = local;
+      if (previous != null) {
+        ref.read(streamProxyProvider).release(previous);
+      }
+
+      await _engine.load(local.toString(), autoplay: true);
+      state = state.copyWith(resolving: false);
       return;
     } on StreamResolutionException catch (error) {
       state = state.copyWith(

@@ -5,6 +5,7 @@ import 'package:flutter_riverpod/flutter_riverpod.dart';
 
 import '../core/auth/oauth_device_flow.dart';
 import '../core/auth/token_store.dart';
+import '../core/auth/webview_login.dart';
 import '../core/innertube/innertube_client.dart';
 import '../data/sources/library_source.dart';
 import 'catalog_providers.dart';
@@ -84,6 +85,7 @@ class AuthController extends Notifier<AuthState> {
       // («depending on itself»).
       Future<void>.microtask(() async {
         await _refreshIfNeeded();
+        await _refreshCookiesFromBrowser();
       });
     }
 
@@ -256,6 +258,23 @@ class AuthController extends Notifier<AuthState> {
     }
 
     client.setAuth(const AnonymousAuth());
+  }
+
+  /// Обновляет cookie из браузера: там вход может быть свежее, чем в файле.
+  ///
+  /// Без этого после починки входа приходилось бы входить заново: в сессии
+  /// оставались cookie только домена google.com, а YouTube нужны cookie
+  /// youtube.com (SID, SAPISID, LOGIN_INFO).
+  Future<void> _refreshCookiesFromBrowser() async {
+    final AuthSession? session = state.session;
+    if (session == null || !session.isCookie) return;
+    if (!await WebviewLogin.isAvailable()) return;
+
+    final String fresh = await WebviewLogin.storedCookies();
+    if (fresh.isEmpty || fresh == session.cookieString) return;
+    if (!CookieAuth(fresh).isUsable) return;
+
+    await signInWithCookies(fresh);
   }
 
   /// Подтягивает имя и аватар аккаунта — полезно и как проверка, что вход удался.

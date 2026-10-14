@@ -10,6 +10,7 @@ import '../core/theme/seed_colors.dart';
 import '../core/theme/ui_scaler.dart';
 import '../data/local/app_settings.dart';
 import '../data/sources/stream_downloader.dart';
+import '../data/sources/stream_proxy.dart';
 import '../data/sources/stream_resolver.dart';
 import 'auth_controller.dart';
 
@@ -269,6 +270,14 @@ final Provider<StreamResolver> streamResolverProvider =
   );
   ref.onDispose(resolver.dispose);
   return resolver;
+});
+
+/// Локальный посредник: через него плеер играет поток, а данные у YouTube
+/// качает приложение запросами с диапазоном.
+final Provider<StreamProxy> streamProxyProvider = Provider<StreamProxy>((ref) {
+  final StreamProxy proxy = StreamProxy();
+  ref.onDispose(proxy.dispose);
+  return proxy;
 });
 
 /// Загрузка потока на диск — нужна при обходе блокировок, когда звук качает

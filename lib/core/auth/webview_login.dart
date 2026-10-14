@@ -65,6 +65,20 @@ abstract final class WebviewLogin {
     }
   }
 
+  /// Возвращает уже сохранённый в браузере вход, если он есть.
+  ///
+  /// Панель не открывается: приложение может подхватить вход, выполненный
+  /// в прошлый раз, сразу после запуска.
+  static Future<String> storedCookies() async {
+    try {
+      return await _channel.invokeMethod<String>('storedCookies') ?? '';
+    } on PlatformException {
+      return '';
+    } on MissingPluginException {
+      return '';
+    }
+  }
+
   /// Закрывает панель входа, если она открыта.
   static Future<void> close() async {
     try {
