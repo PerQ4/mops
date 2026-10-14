@@ -72,6 +72,7 @@ class InnerTubeConfig {
     required this.visitorData,
     required this.gl,
     required this.hl,
+    this.sts = '',
   });
 
   final String apiKey;
@@ -82,6 +83,11 @@ class InnerTubeConfig {
   final String gl;
   final String hl;
 
+  /// Метка времени подписи (`STS`) со страницы YouTube Music.
+  ///
+  /// Веб-клиенту она обязательна: без неё `player` отвечает «видео недоступно».
+  final String sts;
+
   InnerTubeConfig copyWith({String? gl, String? hl}) => InnerTubeConfig(
         apiKey: apiKey,
         apiVersion: apiVersion,
@@ -90,6 +96,7 @@ class InnerTubeConfig {
         visitorData: visitorData,
         gl: gl ?? this.gl,
         hl: hl ?? this.hl,
+        sts: sts,
       );
 }
 
@@ -201,6 +208,7 @@ class InnerTubeClient {
     final String clientVersion =
         _grab(html, r'"INNERTUBE_CLIENT_VERSION":"(.*?)"');
     final String visitorData = _grab(html, r'"VISITOR_DATA":"(.*?)"');
+    final String sts = _grab(html, r'"STS":\s*(\d+)');
 
     if (apiKey.isEmpty) {
       // Публичный ключ веб-клиента YouTube Music, он не является секретом:
@@ -213,6 +221,7 @@ class InnerTubeClient {
         visitorData: visitorData,
         gl: region,
         hl: locale,
+        sts: sts,
       );
       return _config!;
     }
@@ -223,6 +232,7 @@ class InnerTubeClient {
       clientName: clientName.isEmpty ? 'WEB_REMIX' : clientName,
       clientVersion: clientVersion.isEmpty ? '1.20240101.01.00' : clientVersion,
       visitorData: visitorData,
+      sts: sts,
       gl: region,
       hl: locale,
     );

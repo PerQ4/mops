@@ -33,8 +33,11 @@ enum AudioQuality {
 /// PO-токен, другим — вход. Профили ниже проверены на живых запросах
 /// и не требуют ни того, ни другого.
 enum StreamSource {
-  /// Сначала Android VR, затем iOS.
-  auto('Автоматически', 'Сначала Android VR, затем iOS'),
+  /// Сначала visionOS, затем Android VR и iOS.
+  auto('Автоматически', 'Сначала visionOS, затем Android VR и iOS'),
+
+  /// Клиент очков Apple Vision Pro — отдаёт поток целиком.
+  visionOs('visionOS', 'Отдаёт поток целиком — самый надёжный'),
 
   /// Клиент очков Oculus.
   androidVr('Android VR', 'Клиент очков — самый устойчивый'),

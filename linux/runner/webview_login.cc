@@ -245,6 +245,12 @@ gboolean on_key_press(GtkWidget* /*widget*/, GdkEventKey* event,
   return FALSE;
 }
 
+// Небольшая пауза перед сбором cookie.
+gboolean on_harvest_timeout(gpointer /*data*/) {
+  harvest_cookies();
+  return G_SOURCE_REMOVE;
+}
+
 // Проверка после загрузки: вход мог уже состояться.
 void on_cookies_for_check(GObject* source, GAsyncResult* result,
                           gpointer /*data*/) {
@@ -274,10 +280,11 @@ void on_load_changed(WebKitWebView* view, WebKitLoadEvent event,
     return;
   }
 
-  // Мы пришли сюда специально за cookie — забираем их сразу.
+  // Мы пришли сюда специально за cookie. Небольшая пауза — чтобы страница
+  // успела догрузить свои данные и выставить все нужные cookie.
   if (g_waiting_home) {
     g_waiting_home = false;
-    harvest_cookies();
+    g_timeout_add(1200, on_harvest_timeout, nullptr);
     return;
   }
 

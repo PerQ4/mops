@@ -62,6 +62,27 @@ class YoutubeClientProfile {
 
 /// Профили клиентов YouTube, проверенные на живых запросах.
 abstract final class YoutubeClients {
+  /// Клиент очков Apple Vision Pro.
+  ///
+  /// Внутренний клиент YouTube (может перестать работать в любой момент), но
+  /// именно он отдаёт поток целиком: Android VR и iOS получают только первый
+  /// мегабайт, а этот — весь файл. Проверено на живом соединении.
+  static const YoutubeClientProfile visionOs = YoutubeClientProfile(
+    label: 'visionOS',
+    name: 'VISIONOS',
+    version: '1.02',
+    numericId: '101',
+    userAgent: 'Mozilla/5.0 (Macintosh; Intel Mac OS X 15_7_3) '
+        'AppleWebKit/605.1.15 (KHTML, like Gecko) Version/26.0 '
+        'Safari/605.1.15',
+    extra: <String, Object?>{
+      'osName': 'visionOS',
+      'osVersion': '26.5.23O471',
+      'deviceMake': 'Apple',
+      'deviceModel': 'RealityDevice17,1',
+    },
+  );
+
   /// Клиент очков Oculus — не требует ни входа, ни PO-токена.
   ///
   /// Версия 1.65.10 отдаёт поток, а 1.61.48 уже отвечает «войдите, чтобы
@@ -105,7 +126,9 @@ abstract final class YoutubeClients {
   static List<YoutubeClientProfile> forChoice(StreamSource choice) {
     switch (choice) {
       case StreamSource.auto:
-        return <YoutubeClientProfile>[androidVr, ios];
+        return <YoutubeClientProfile>[visionOs, androidVr, ios];
+      case StreamSource.visionOs:
+        return <YoutubeClientProfile>[visionOs];
       case StreamSource.androidVr:
         return <YoutubeClientProfile>[androidVr];
       case StreamSource.ios:

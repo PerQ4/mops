@@ -8,6 +8,7 @@ import '../../core/auth/webview_login.dart';
 import '../../core/auth/token_store.dart';
 import '../../state/auth_controller.dart';
 import '../../state/providers.dart';
+import '../../state/shell.dart';
 
 /// Вход в аккаунт YouTube Music.
 ///
@@ -570,6 +571,11 @@ class _WebviewLoginCardState extends ConsumerState<_WebviewLoginCard> {
           .signInWithCookies(cookies);
       if (!mounted) return;
       setState(() => _busy = false);
+
+      // Показываем главную: после входа она перезагружается уже с данными
+      // аккаунта, и это сразу видно.
+      ref.read(shellIndexProvider.notifier).select(0);
+      Navigator.of(context).popUntil((Route<dynamic> route) => route.isFirst);
     } on WebviewLoginException catch (error) {
       if (!mounted) return;
       setState(() {

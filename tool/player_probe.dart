@@ -35,6 +35,21 @@ const String _webUa =
 
 final List<ClientProfile> profiles = <ClientProfile>[
   ClientProfile(
+    label: 'visionOS (отдаёт поток целиком)',
+    name: 'VISIONOS',
+    version: '1.02',
+    numericId: '101',
+    userAgent: 'Mozilla/5.0 (Macintosh; Intel Mac OS X 15_7_3) '
+        'AppleWebKit/605.1.15 (KHTML, like Gecko) Version/26.0 '
+        'Safari/605.1.15',
+    extra: <String, Object?>{
+      'osName': 'visionOS',
+      'osVersion': '26.5.23O471',
+      'deviceMake': 'Apple',
+      'deviceModel': 'RealityDevice17,1',
+    },
+  ),
+  ClientProfile(
     label: 'Android VR 1.61.48',
     name: 'ANDROID_VR',
     version: '1.61.48',
