@@ -180,7 +180,7 @@ class AppTheme {
         backgroundColor: scheme.surfaceContainerHigh,
         selectedColor: scheme.secondaryContainer,
         labelStyle: textTheme.labelLarge?.copyWith(fontWeight: FontWeight.w600),
-        padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 10),
+        padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 6),
       ),
       sliderTheme: SliderThemeData(
         trackHeight: 6,

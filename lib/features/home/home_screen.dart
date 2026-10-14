@@ -295,8 +295,9 @@ class _MoodRow extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     return SizedBox(
-      // Высота ряда чипов — ≥68 по спецификации; chip заполняет ряд.
-      height: 68,
+      // Высота ряда чипов. В спецификации ≥68, но такие «плиты» выглядят
+      // раздутыми — берём 48: строка читается как ряд чипов, а не кнопок.
+      height: 48,
       child: ListView.separated(
         scrollDirection: Axis.horizontal,
         padding: const EdgeInsets.symmetric(horizontal: 16),
@@ -342,17 +343,17 @@ class _MoodChip extends StatelessWidget {
     final ColorScheme scheme = Theme.of(context).colorScheme;
     return Material(
       color: scheme.surfaceContainerHigh.withValues(alpha: 0.78),
-      // Скругление-«капсула»: 68 / 2 ≈ 32.
-      borderRadius: BorderRadius.circular(AppLayout.radiusXL),
+      // Скругление-«капсула»: 48 / 2 = 24.
+      borderRadius: BorderRadius.circular(24),
       clipBehavior: Clip.antiAlias,
       child: InkWell(
         onTap: onTap,
         child: Padding(
-          padding: const EdgeInsets.symmetric(horizontal: 18),
+          padding: const EdgeInsets.symmetric(horizontal: 14),
           child: Row(
             mainAxisSize: MainAxisSize.min,
             children: <Widget>[
-              Icon(icon, size: 22, color: scheme.onSurfaceVariant),
+              Icon(icon, size: 18, color: scheme.onSurfaceVariant),
               const SizedBox(width: 10),
               Text(
                 label,
