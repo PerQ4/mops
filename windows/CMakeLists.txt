@@ -2,6 +2,14 @@
 cmake_minimum_required(VERSION 3.14)
 project(mops LANGUAGES CXX)
 
+# Встроенный браузер для Windows (flutter_inappwebview_windows) написан на
+# устаревшем /await и <experimental/coroutine>. Новый MSVC (14.5x) на раннере
+# останавливает из-за них сборку ошибкой C2338, хотя код рабочий. Этот макрос
+# снимает запрет — так советует само сообщение об ошибке.
+#
+# Объявляем до add_subdirectory плагинов, иначе определение до них не дойдёт.
+add_compile_definitions(_SILENCE_EXPERIMENTAL_COROUTINE_DEPRECATION_WARNINGS)
+
 # The name of the executable created for the application. Change this to change
 # the on-disk name of your application.
 set(BINARY_NAME "mops")
