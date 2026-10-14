@@ -61,7 +61,11 @@ jobs:
         run: |
           sudo apt-get update
           sudo apt-get install -y clang cmake ninja-build pkg-config libgtk-3-dev \
-            liblzma-dev libstdc++-12-dev libwebkit2gtk-4.1-dev libsoup-3.0-dev
+            liblzma-dev libstdc++-12-dev libwebkit2gtk-4.1-dev libsoup-3.0-dev \
+            || true
+          # Вход в браузере использует старый API libsoup — на новых Ubuntu
+          # он идёт отдельным пакетом, и без него сборка падает.
+          sudo apt-get install -y libsoup2.4-dev || true
 
       # libmpv (движок воспроизведения) есть не во всех системах: на Linux
       # её даёт пакет mpv, на Windows и macOS — соответствующие сборки.
