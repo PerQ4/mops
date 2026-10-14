@@ -141,12 +141,15 @@ class AppTheme {
           highlightColor: scheme.primary.withValues(alpha: 0.12),
         ),
       ),
+      // Чипы-капсулы без обводки: в ArchiveTune они отличаются от фона только
+      // заливкой, а выбранный — цветом secondaryContainer.
       chipTheme: ChipThemeData(
-        shape: RoundedRectangleBorder(borderRadius: _radius(12)),
-        side: BorderSide(color: scheme.outlineVariant),
-        backgroundColor: scheme.surfaceContainerLow,
+        shape: const StadiumBorder(),
+        side: BorderSide.none,
+        backgroundColor: scheme.surfaceContainerHigh,
         selectedColor: scheme.secondaryContainer,
-        labelStyle: textTheme.labelLarge,
+        labelStyle: textTheme.labelLarge?.copyWith(fontWeight: FontWeight.w600),
+        padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 10),
       ),
       sliderTheme: SliderThemeData(
         trackHeight: 6,
@@ -170,13 +173,13 @@ class AppTheme {
       ),
       dialogTheme: DialogThemeData(
         backgroundColor: scheme.surfaceContainerHigh,
-        shape: RoundedRectangleBorder(borderRadius: _radius(28)),
+        shape: RoundedRectangleBorder(borderRadius: _radius(24)),
       ),
       bottomSheetTheme: BottomSheetThemeData(
         backgroundColor: scheme.surfaceContainerLow,
         surfaceTintColor: scheme.surfaceTint,
         shape: RoundedRectangleBorder(
-          borderRadius: BorderRadius.vertical(top: Radius.circular(28)),
+          borderRadius: BorderRadius.vertical(top: Radius.circular(16)),
         ),
         showDragHandle: true,
         clipBehavior: Clip.antiAlias,
@@ -260,9 +263,20 @@ class AppTheme {
 
   /// Типографика. Expressive-шкала — крупные заголовки и плотный основной текст.
   static TextTheme _textTheme(ColorScheme scheme) {
-    return Typography.material2021().black.apply(
+    final TextTheme base = Typography.material2021().black.apply(
       bodyColor: scheme.onSurface,
       displayColor: scheme.onSurface,
+    );
+
+    // Веса по спецификации ArchiveTune: заголовки экранов и секций — semibold,
+    // названия треков — semibold, подписи — обычные и приглушённые.
+    return base.copyWith(
+      titleLarge: base.titleLarge?.copyWith(fontWeight: FontWeight.w600),
+      titleMedium: base.titleMedium?.copyWith(fontWeight: FontWeight.w500),
+      bodyLarge: base.bodyLarge?.copyWith(fontWeight: FontWeight.w500),
+      bodyMedium: base.bodyMedium?.copyWith(color: scheme.onSurfaceVariant),
+      bodySmall: base.bodySmall?.copyWith(color: scheme.onSurfaceVariant),
+      labelLarge: base.labelLarge?.copyWith(fontWeight: FontWeight.w600),
     );
   }
 }
