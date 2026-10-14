@@ -6,6 +6,7 @@ import '../../core/theme/seed_colors.dart';
 import '../../core/theme/ui_scaler.dart';
 import '../../data/local/app_settings.dart';
 import '../../state/auth_controller.dart';
+import '../../core/theme/layout.dart';
 import '../../state/providers.dart';
 import '../../state/ui_scale.dart';
 import '../common/navigation.dart';
@@ -23,13 +24,17 @@ class SettingsScreen extends ConsumerWidget {
 
     return Scaffold(
       appBar: AppBar(title: const Text('Настройки')),
-      body: ListView(
+      // На широком экране список растягивался бы на всю ширину — ограничиваем
+      // его, как и остальные экраны приложения.
+      body: ContentWidth(
+        child: ListView(
         padding: const EdgeInsets.only(bottom: 32),
         children: <Widget>[
           // -------------------------------------------------------- внешний вид
           const _SectionHeader('Внешний вид'),
 
           ListTile(
+            leading: const Icon(Icons.palette_outlined),
             title: const Text('Тема'),
             subtitle: Text(settings.themeMode.label),
             trailing: const Icon(Icons.chevron_right),
@@ -46,6 +51,7 @@ class SettingsScreen extends ConsumerWidget {
           ),
 
           ListTile(
+            leading: const Icon(Icons.aspect_ratio),
             title: const Text('Масштаб интерфейса'),
             subtitle: Text(_uiScaleLabel(context, ref, settings)),
             trailing: const Icon(Icons.chevron_right),
@@ -53,6 +59,7 @@ class SettingsScreen extends ConsumerWidget {
           ),
 
           ListTile(
+            leading: const Icon(Icons.format_paint_outlined),
             title: const Text('Палитра'),
             subtitle: Text(settings.colorSource.label),
             trailing: const Icon(Icons.chevron_right),
@@ -78,6 +85,7 @@ class SettingsScreen extends ConsumerWidget {
           const _SectionHeader('Воспроизведение'),
 
           ListTile(
+            leading: const Icon(Icons.graphic_eq),
             title: const Text('Качество звука'),
             subtitle: Text(settings.audioQuality.label),
             trailing: const Icon(Icons.chevron_right),
@@ -106,12 +114,14 @@ class SettingsScreen extends ConsumerWidget {
           // ------------------------------------------------------------- регион
           const _SectionHeader('Регион и язык'),
           ListTile(
+            leading: const Icon(Icons.public),
             title: const Text('Регион'),
             subtitle: Text(settings.streamingRegion),
             trailing: const Icon(Icons.chevron_right),
             onTap: () => _pickRegion(context, controller, settings),
           ),
           ListTile(
+            leading: const Icon(Icons.language),
             title: const Text('Язык'),
             subtitle: Text(settings.streamingLanguage),
             trailing: const Icon(Icons.chevron_right),
@@ -168,6 +178,7 @@ class SettingsScreen extends ConsumerWidget {
             isThreeLine: true,
           ),
         ],
+        ),
       ),
     );
   }
