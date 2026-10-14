@@ -2,6 +2,7 @@ import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 
 import '../core/theme/app_theme.dart';
+import '../data/local/app_settings.dart';
 import '../core/theme/seed_colors.dart';
 import '../data/models/models.dart';
 import '../widgets/artwork.dart';
@@ -28,17 +29,20 @@ final Provider<AppSchemes> seedSchemesProvider = Provider<AppSchemes>((ref) {
   final settings = ref.watch(settingsControllerProvider);
   final Color seed = kSeedColors[settings.safeSeedIndex].color;
   final bool expressive = settings.useMaterialExpressive;
+  final PaletteStylePreference style = settings.paletteStyle;
 
   return AppSchemes(
     light: AppTheme.schemeFromSeed(
       seed: seed,
       brightness: Brightness.light,
       expressive: expressive,
+      style: style,
     ),
     dark: AppTheme.schemeFromSeed(
       seed: seed,
       brightness: Brightness.dark,
       expressive: expressive,
+      style: style,
     ),
   );
 });
@@ -60,6 +64,7 @@ final FutureProvider<AppSchemes?> artworkSchemesProvider =
   if (cached != null) return cached;
 
   final bool expressive = settings.useMaterialExpressive;
+  final PaletteStylePreference style = settings.paletteStyle;
   try {
     final ImageProvider provider = artworkProvider(url);
     // Параллельно строим обе схемы — так переключение темы не ждёт сеть.
@@ -68,11 +73,13 @@ final FutureProvider<AppSchemes?> artworkSchemesProvider =
         provider: provider,
         brightness: Brightness.light,
         expressive: expressive,
+        style: style,
       ),
       AppTheme.schemeFromArtwork(
         provider: provider,
         brightness: Brightness.dark,
         expressive: expressive,
+        style: style,
       ),
     ]);
 

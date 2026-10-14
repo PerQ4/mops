@@ -1,5 +1,7 @@
 import 'package:flutter/material.dart';
 
+import '../../data/local/app_settings.dart';
+
 
 
 /// Сборка темы Material 3 / Material 3 Expressive.
@@ -19,19 +21,31 @@ class AppTheme {
   static const DynamicSchemeVariant standardVariant =
       DynamicSchemeVariant.tonalSpot;
 
-  static DynamicSchemeVariant variantFor(bool expressive) =>
-      expressive ? expressiveVariant : standardVariant;
+  static DynamicSchemeVariant variantFor(
+    bool expressive, [
+    PaletteStylePreference style = PaletteStylePreference.tonal,
+  ]) {
+    switch (style) {
+      case PaletteStylePreference.monochrome:
+        return DynamicSchemeVariant.monochrome;
+      case PaletteStylePreference.neutral:
+        return DynamicSchemeVariant.neutral;
+      case PaletteStylePreference.tonal:
+        return expressive ? expressiveVariant : standardVariant;
+    }
+  }
 
   /// Палитра из seed-цвета.
   static ColorScheme schemeFromSeed({
     required Color seed,
     required Brightness brightness,
     bool expressive = true,
+    PaletteStylePreference style = PaletteStylePreference.tonal,
   }) {
     return ColorScheme.fromSeed(
       seedColor: seed,
       brightness: brightness,
-      dynamicSchemeVariant: variantFor(expressive),
+      dynamicSchemeVariant: variantFor(expressive, style),
     );
   }
 
@@ -40,11 +54,12 @@ class AppTheme {
     required ImageProvider provider,
     required Brightness brightness,
     bool expressive = true,
+    PaletteStylePreference style = PaletteStylePreference.tonal,
   }) {
     return ColorScheme.fromImageProvider(
       provider: provider,
       brightness: brightness,
-      dynamicSchemeVariant: variantFor(expressive),
+      dynamicSchemeVariant: variantFor(expressive, style),
     );
   }
 

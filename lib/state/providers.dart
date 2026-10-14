@@ -74,6 +74,9 @@ class SettingsController extends Notifier<AppSettings> {
   Future<void> setUseMaterialExpressive(bool value) =>
       update((AppSettings s) => s.copyWith(useMaterialExpressive: value));
 
+  Future<void> setPaletteStyle(PaletteStylePreference style) =>
+      update((AppSettings s) => s.copyWith(paletteStyle: style));
+
   Future<void> setPureBlack(bool value) =>
       update((AppSettings s) => s.copyWith(pureBlack: value));
 

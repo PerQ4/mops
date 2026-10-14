@@ -231,6 +231,22 @@ class SettingsScreen extends ConsumerWidget {
     if (result != null) await controller.setAudioQuality(result);
   }
 
+  Future<void> _pickPaletteStyle(
+    BuildContext context,
+    SettingsController controller,
+    AppSettings settings,
+  ) async {
+    final PaletteStylePreference? result =
+        await _showChoice<PaletteStylePreference>(
+      context,
+      title: 'Стиль палитры',
+      current: settings.paletteStyle,
+      values: PaletteStylePreference.values,
+      label: (PaletteStylePreference v) => v.label,
+    );
+    if (result != null) await controller.setPaletteStyle(result);
+  }
+
   Future<void> _pickStreamClient(
     BuildContext context,
     SettingsController controller,

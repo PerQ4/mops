@@ -60,6 +60,27 @@ enum StreamSource {
       );
 }
 
+/// Стиль палитры Material 3.
+///
+/// В ArchiveTune стиль выбирается по насыщенности акцентного цвета, но
+/// пользователь может задать его и вручную: тональный — самый «цветной»,
+/// нейтральный — приглушённый, монохромный — почти серый с одним акцентом.
+enum PaletteStylePreference {
+  tonal('Тональная'),
+  neutral('Нейтральная'),
+  monochrome('Монохромная');
+
+  const PaletteStylePreference(this.label);
+
+  final String label;
+
+  static PaletteStylePreference fromName(String? name) =>
+      PaletteStylePreference.values.firstWhere(
+        (PaletteStylePreference v) => v.name == name,
+        orElse: () => PaletteStylePreference.tonal,
+      );
+}
+
 /// Все настройки приложения. Сериализуется в JSON и хранится в
 /// shared_preferences одной строкой — так меньше кода и атомарная запись.
 class AppSettings {
@@ -69,6 +90,7 @@ class AppSettings {
     this.seedColorIndex = 0,
     this.useMaterialExpressive = true,
     this.pureBlack = false,
+    this.paletteStyle = PaletteStylePreference.tonal,
     this.audioQuality = AudioQuality.high,
     this.streamClient = StreamSource.auto,
     this.showLyricsInPlayer = true,
@@ -89,6 +111,9 @@ class AppSettings {
   final ColorSource colorSource;
   final int seedColorIndex;
   final bool useMaterialExpressive;
+
+  /// Стиль палитры: тональная, нейтральная или монохромная.
+  final PaletteStylePreference paletteStyle;
 
   /// Чистый чёрный фон в тёмной теме — как отдельный переключатель в
   /// ArchiveTune: фон и поверхности становятся #000000.
@@ -138,6 +163,7 @@ class AppSettings {
     int? seedColorIndex,
     bool? useMaterialExpressive,
     bool? pureBlack,
+    PaletteStylePreference? paletteStyle,
     AudioQuality? audioQuality,
     StreamSource? streamClient,
     bool? showLyricsInPlayer,
@@ -159,6 +185,7 @@ class AppSettings {
       seedColorIndex: seedColorIndex ?? this.seedColorIndex,
       useMaterialExpressive: useMaterialExpressive ?? this.useMaterialExpressive,
       pureBlack: pureBlack ?? this.pureBlack,
+      paletteStyle: paletteStyle ?? this.paletteStyle,
       audioQuality: audioQuality ?? this.audioQuality,
       streamClient: streamClient ?? this.streamClient,
       showLyricsInPlayer: showLyricsInPlayer ?? this.showLyricsInPlayer,
@@ -182,6 +209,7 @@ class AppSettings {
         'seedColorIndex': seedColorIndex,
         'useMaterialExpressive': useMaterialExpressive,
         'pureBlack': pureBlack,
+        'paletteStyle': paletteStyle.name,
         'audioQuality': audioQuality.name,
         'streamClient': streamClient.name,
         'showLyricsInPlayer': showLyricsInPlayer,
@@ -207,6 +235,8 @@ class AppSettings {
       seedColorIndex: (json['seedColorIndex'] as num?)?.toInt() ?? 0,
       useMaterialExpressive: json['useMaterialExpressive'] as bool? ?? true,
       pureBlack: json['pureBlack'] as bool? ?? false,
+      paletteStyle:
+          PaletteStylePreference.fromName(json['paletteStyle'] as String?),
       audioQuality: AudioQuality.fromName(json['audioQuality'] as String?),
       streamClient: StreamSource.fromName(json['streamClient'] as String?),
       showLyricsInPlayer: json['showLyricsInPlayer'] as bool? ?? true,
