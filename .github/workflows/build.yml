@@ -76,8 +76,12 @@ jobs:
 
       # Установщик собирается там же, где и приложение: Inno Setup есть только
       # для Windows, в задаче релиза (она на Linux) его не запустить.
+      # Установщик — дополнительный шаг: если он не соберётся (например,
+      # NuGet или Inno Setup недоступны), приложение всё равно должно попасть
+      # в релиз, поэтому падение здесь сборку не останавливает.
       - name: Установщик Windows
         if: matrix.os == 'windows-latest'
+        continue-on-error: true
         shell: cmd
         run: |
           choco install innosetup -y --no-progress
@@ -114,6 +118,7 @@ jobs:
         with:
           path: artifacts
           merge-multiple: false
+        continue-on-error: true
 
       # Каждый артефакт лежит своей папкой. Приложения упаковываем в архивы
       # (Windows — zip, его система открывает сама), а установщик кладём
@@ -147,6 +152,7 @@ jobs:
             artifacts/mops-windows.zip
             artifacts/mops-macos.tar.gz
             artifacts/mops-installer/*.exe
+          fail_on_unmatched_files: false
           generate_release_notes: true
           body: |
             ## Как запустить
