@@ -442,8 +442,29 @@ class PlayerController extends Notifier<PlayerUiState> {
         ref.read(streamProxyProvider).release(previous);
       }
 
-      await _engine.load(local.toString(), autoplay: true);
-      state = state.copyWith(resolving: false);
+      // Файл качаем сами и играем с диска.
+      //
+      // Почему не отдаём ссылку плееру напрямую (как ArchiveTune и Metrolist):
+      // там поток берёт ExoPlayer, а он запрашивает файл обычным GET. GStreamer
+      // (audioplayers на Linux) шлёт открытый диапазон `Range: bytes=0-`,
+      // а медиасервер YouTube отвечает на него 403 — в журнале «Forbidden».
+      // Ссылку от visionOS сервер отдаёт целиком (проверено: обычный GET — 200,
+      // диапазоны по мегабайту — 206), поэтому качаем её запросами с диапазоном
+      // и играем локальный файл: воспроизведение и перемотка работают надёжно.
+      state = state.copyWith(downloading: true, downloadProgress: 0);
+      final String path = await ref.read(streamDownloaderProvider).fetch(
+            resolved.url,
+            cacheKey: track.id,
+            onProgress: (double progress) {
+              if (state.current?.id == track.id) {
+                state = state.copyWith(downloadProgress: progress);
+              }
+            },
+          );
+      if (state.current?.id != track.id) return;
+
+      await _engine.load(path, autoplay: true, isLocal: true);
+      state = state.copyWith(resolving: false, downloading: false);
 
       // Следующий трек качаем заранее: тогда переключение пройдёт без паузы.
       unawaited(_warmNext());
