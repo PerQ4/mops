@@ -80,11 +80,13 @@ class AppShell extends ConsumerWidget {
             Expanded(
               child: ClipRRect(
                 // Скруглены углы, примыкающие к панелям: слева — к библиотеке,
-                // справа — к плееру, когда он развёрнут.
+                // справа — к плееру, но только когда панель действительно
+                // раскрыта. Раньше закругление появлялось уже при одном
+                // играющем треке, хотя панель была свёрнута.
                 borderRadius: BorderRadius.horizontal(
                   left: const Radius.circular(AppLayout.contentPanelRadius),
                   right: Radius.circular(
-                    rightPanel ? AppLayout.contentPanelRadius : 0,
+                    panelOpen ? AppLayout.contentPanelRadius : 0,
                   ),
                 ),
                 child: ColoredBox(
