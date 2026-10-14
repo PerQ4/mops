@@ -132,17 +132,12 @@ jobs:
           rm -rf mops-linux mops-windows mops-macos
           echo "В релиз пойдёт:"; find . -maxdepth 2 -type f | sort
 
-      # Сначала убираем то, что осталось от прошлых запусков: иначе в релизе
-      # накапливаются старые и мусорные файлы.
-      - name: Очистить старые файлы релиза
+      # Релиз удаляем целиком и создаём заново. Поштучное удаление файлов
+      # оставляло мусор от прошлых запусков, а обновление файлов их не убирает.
+      - name: Удалить прошлый релиз
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-        run: |
-          gh release view "${{ github.ref_name }}" --json assets \
-            -q '.assets[].name' 2>/dev/null | while read -r name; do
-              [ -n "$name" ] && gh release delete-asset "${{ github.ref_name }}" "$name" -y || true
-            done
-          exit 0
+        run: gh release delete "${{ github.ref_name }}" -y --cleanup-tag=false || true
 
       - name: Опубликовать релиз
         uses: softprops/action-gh-release@v2
