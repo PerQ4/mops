@@ -1,6 +1,8 @@
 // Проверка локального посредника: обычный GET и запрос диапазона.
 //
-// Запуск: dart run tool/proxy_check.dart
+// Запуск: dart run tool/proxy_check.dart [videoId]
+// Без аргумента берётся короткий трек; для проверки длинной выдачи
+// (обрыв через минуту) подставьте идентификатор подольше.
 import 'dart:io';
 
 import 'package:mops/core/innertube/innertube_client.dart';
@@ -11,7 +13,8 @@ import 'package:mops/data/sources/stream_proxy.dart';
 const String _ua = 'Mozilla/5.0 (Macintosh; Intel Mac OS X 15_7_3) '
     'AppleWebKit/605.1.15 (KHTML, like Gecko) Version/26.0 Safari/605.1.15';
 
-Future<void> main() async {
+Future<void> main(List<String> args) async {
+  final String videoId = args.isNotEmpty ? args.first : 'dQw4w9WgXcQ';
   await BypassManager.instance.apply(const AntiDpiConfig());
   final InnerTubeClient client = InnerTubeClient(locale: 'en', region: 'US');
 
@@ -30,7 +33,7 @@ Future<void> main() async {
           'gl': 'US',
         },
       },
-      'videoId': 'dQw4w9WgXcQ',
+      'videoId': videoId,
       'contentCheckOk': true,
       'racyCheckOk': true,
     },
@@ -49,6 +52,11 @@ Future<void> main() async {
       .where((Map<String, dynamic> f) =>
           '${f['mimeType']}'.startsWith('audio') && f['url'] != null)
       .toList();
+  // Берём самый качественный поток — как при настройке «Максимум»
+  // (по умолчанию). Так кусок в 1 МБ соответствует меньшему времени
+  // и проверка длинной выдачи ближе к реальному плееру.
+  audio.sort((Map<String, dynamic> a, Map<String, dynamic> b) =>
+      ((b['bitrate'] as num?) ?? 0).compareTo((a['bitrate'] as num?) ?? 0));
   final Uri source = Uri.parse(audio.first['url'] as String);
   final String formatMime = '${audio.first['mimeType']}'.split(';').first;
   client.dispose();

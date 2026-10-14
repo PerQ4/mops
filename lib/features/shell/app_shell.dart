@@ -3,10 +3,8 @@ import 'package:flutter_riverpod/flutter_riverpod.dart';
 
 import '../../core/theme/layout.dart';
 import '../../state/player_controller.dart';
-import '../../state/shell.dart';
 import '../player/floating_dock.dart';
 import 'content_navigator.dart';
-import 'destinations.dart';
 import 'sidebar.dart';
 
 /// Каркас приложения.
@@ -15,10 +13,10 @@ import 'sidebar.dart';
 /// которого нарисован плавающий док. Поэтому подэкран — альбом, плейлист,
 /// исполнитель, настройки — не перекрывает док: он виден и там.
 ///
-///  * **широкая раскладка** — слева постоянная панель навигации и библиотеки,
-///    справа содержимое, внизу док из двух островков;
-///  * **узкая** — навигация остаётся обычной нижней панелью, внизу парит
-///    только островок плеера.
+///  * **широкая раскладка** — слева постоянная панель библиотеки, справа
+///    содержимое отдельной скруглённой панелью, внизу док из двух островков;
+///  * **узкая** — боковой панели нет, но док тот же: навигация остаётся
+///    плавающим островком, а не превращается в стандартную нижнюю панель.
 class AppShell extends ConsumerWidget {
   const AppShell({super.key});
 
@@ -27,7 +25,6 @@ class AppShell extends ConsumerWidget {
     // Следим за плеером, чтобы он жил всё время работы приложения.
     ref.watch(playerControllerProvider);
 
-    final int index = ref.watch(shellIndexProvider);
     final bool wide = context.isExpandedLayout;
 
     final Widget content = Stack(
@@ -38,34 +35,35 @@ class AppShell extends ConsumerWidget {
     );
 
     if (wide) {
-      // Панель занимает свою ширину, содержимое — всё остальное. Док
-      // центрируется по области содержимого, поэтому не наезжает на панель.
+      final ColorScheme scheme = Theme.of(context).colorScheme;
+      // Фон всего каркаса — цвет боковой панели. Основная область лежит на
+      // нём отдельной панелью со скруглением со стороны панели, поэтому в
+      // «вырезах» скругления виден именно фон панели: содержимое читается
+      // как самостоятельная панель поверх библиотеки (как в Spotify Desktop).
       return Scaffold(
+        backgroundColor: scheme.surfaceContainer,
         body: Row(
           children: <Widget>[
             const LibrarySidebar(),
-            Expanded(child: content),
+            Expanded(
+              child: ClipRRect(
+                // Скруглены только углы, примыкающие к боковой панели.
+                borderRadius: const BorderRadius.horizontal(
+                  left: Radius.circular(AppLayout.contentPanelRadius),
+                ),
+                child: ColoredBox(
+                  color: scheme.surface,
+                  child: content,
+                ),
+              ),
+            ),
           ],
         ),
       );
     }
 
-    return Scaffold(
-      body: content,
-      bottomNavigationBar: NavigationBar(
-        height: AppLayout.bottomNavHeight,
-        selectedIndex: index,
-        onDestinationSelected: (int value) =>
-            selectShellDestination(ref, value),
-        destinations: <NavigationDestination>[
-          for (final ShellDestination d in ShellDestination.values)
-            NavigationDestination(
-              icon: Icon(d.icon),
-              selectedIcon: Icon(d.selectedIcon),
-              label: d.label,
-            ),
-        ],
-      ),
-    );
+    // Узкая раскладка: навигация живёт в том же плавающем островке
+    // (см. [FloatingDock]), поэтому отдельная нижняя панель не нужна.
+    return Scaffold(body: content);
   }
 }

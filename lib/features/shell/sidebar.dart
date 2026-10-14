@@ -3,28 +3,39 @@ import 'package:flutter_riverpod/flutter_riverpod.dart';
 
 import '../../core/theme/layout.dart';
 import '../../core/utils/format.dart';
+import '../../data/local/app_settings.dart';
 import '../../data/models/models.dart';
 import '../../state/auth_controller.dart';
 import '../../state/catalog_providers.dart';
 import '../../state/library_providers.dart';
 import '../../state/player_controller.dart';
+import '../../state/providers.dart';
 import '../../widgets/artwork.dart';
 import '../common/navigation.dart';
 
 /// Постоянная левая панель широкой раскладки.
 ///
-/// Форма взята у Spotify Desktop: сверху навигация, ниже библиотека со списком
-/// плейлистов пользователя. Панель не сворачивается — ширина фиксирована
-/// константой, иначе содержимое «дёргалось» бы при каждом изменении окна.
-class LibrarySidebar extends StatelessWidget {
+/// Форма взята у Spotify Desktop: сверху заголовок библиотеки, ниже список
+/// плейлистов пользователя. Панель сворачивается в узкую полосу с обложками,
+/// а состояние запоминается в настройках — иначе при каждом переходе в
+/// широкую раскладку панель разворачивалась бы заново.
+class LibrarySidebar extends ConsumerWidget {
   const LibrarySidebar({super.key});
 
   @override
-  Widget build(BuildContext context) {
+  Widget build(BuildContext context, WidgetRef ref) {
     final ColorScheme scheme = Theme.of(context).colorScheme;
+    final bool collapsed = ref.watch(
+      settingsControllerProvider.select(
+        (AppSettings s) => s.sidebarCollapsed,
+      ),
+    );
 
-    return SizedBox(
-      width: AppLayout.sidebarWidth,
+    // Ширину анимируем: содержимое справа подстраивается плавно, без рывка.
+    return AnimatedContainer(
+      duration: const Duration(milliseconds: 220),
+      curve: Curves.easeOutCubic,
+      width: collapsed ? AppLayout.sidebarCollapsedWidth : AppLayout.sidebarWidth,
       // Material одновременно даёт фон панели и подложку для InkWell.
       child: Material(
         color: scheme.surfaceContainer,
@@ -32,11 +43,53 @@ class LibrarySidebar extends StatelessWidget {
           crossAxisAlignment: CrossAxisAlignment.stretch,
           children: <Widget>[
             const SizedBox(height: 8),
-            const _SectionLabel('Библиотека'),
-            const Expanded(child: _PlaylistList()),
+            _SidebarHeader(collapsed: collapsed),
+            Expanded(child: _PlaylistList(collapsed: collapsed)),
             const SizedBox(height: 8),
           ],
         ),
+      ),
+    );
+  }
+}
+
+/// Шапка панели: заголовок и кнопка сворачивания.
+///
+/// В свёрнутом виде остаётся только кнопка — она же и разворачивает панель.
+/// Прятать заголовок, но оставлять кнопку важно: иначе развернуть панель
+/// было бы нечем.
+class _SidebarHeader extends ConsumerWidget {
+  const _SidebarHeader({required this.collapsed});
+
+  final bool collapsed;
+
+  @override
+  Widget build(BuildContext context, WidgetRef ref) {
+    final SettingsController settings =
+        ref.read(settingsControllerProvider.notifier);
+    final IconButton toggle = IconButton(
+      tooltip: collapsed ? 'Развернуть библиотеку' : 'Свернуть библиотеку',
+      iconSize: 20,
+      icon: Icon(collapsed ? Icons.chevron_right : Icons.chevron_left),
+      onPressed: () => settings.update(
+        (AppSettings s) => s.copyWith(sidebarCollapsed: !collapsed),
+      ),
+    );
+
+    if (collapsed) {
+      return Padding(
+        padding: const EdgeInsets.only(top: 4, bottom: 4),
+        child: Center(child: toggle),
+      );
+    }
+
+    return Padding(
+      padding: const EdgeInsets.fromLTRB(10, 4, 4, 0),
+      child: Row(
+        children: <Widget>[
+          const Expanded(child: _SectionLabel('Библиотека')),
+          toggle,
+        ],
       ),
     );
   }
@@ -65,7 +118,10 @@ class _SectionLabel extends StatelessWidget {
 }
 
 class _PlaylistList extends ConsumerWidget {
-  const _PlaylistList();
+  const _PlaylistList({required this.collapsed});
+
+  /// Свёрнутая панель: строки заменяются одними обложками.
+  final bool collapsed;
 
   @override
   Widget build(BuildContext context, WidgetRef ref) {
@@ -79,6 +135,15 @@ class _PlaylistList extends ConsumerWidget {
     return playlists.when(
       data: (List<Playlist> data) {
         if (data.isEmpty) {
+          // В свёрнутой полосе места под текст нет — показываем только знак.
+          if (collapsed) {
+            return Center(
+              child: Icon(
+                signedIn ? Icons.queue_music : Icons.login_outlined,
+                color: Theme.of(context).colorScheme.onSurfaceVariant,
+              ),
+            );
+          }
           return _Hint(
             icon: signedIn ? Icons.queue_music : Icons.login_outlined,
             text: signedIn
@@ -92,8 +157,10 @@ class _PlaylistList extends ConsumerWidget {
         return ListView.builder(
           padding: const EdgeInsets.only(bottom: 12),
           itemCount: data.length,
-          itemBuilder: (BuildContext context, int index) =>
-              _PlaylistRow(playlist: data[index]),
+          itemBuilder: (BuildContext context, int index) => _PlaylistRow(
+            playlist: data[index],
+            compact: collapsed,
+          ),
         );
       },
       loading: () => const Center(
@@ -102,12 +169,19 @@ class _PlaylistList extends ConsumerWidget {
           child: CircularProgressIndicator(),
         ),
       ),
-      error: (Object error, StackTrace _) => _Hint(
-        icon: Icons.error_outline,
-        text: 'Не удалось загрузить плейлисты',
-        actionLabel: 'Повторить',
-        onAction: () => ref.invalidate(likedPlaylistsProvider),
-      ),
+      error: (Object error, StackTrace _) => collapsed
+          ? Center(
+              child: Icon(
+                Icons.error_outline,
+                color: Theme.of(context).colorScheme.onSurfaceVariant,
+              ),
+            )
+          : _Hint(
+              icon: Icons.error_outline,
+              text: 'Не удалось загрузить плейлисты',
+              actionLabel: 'Повторить',
+              onAction: () => ref.invalidate(likedPlaylistsProvider),
+            ),
     );
   }
 }
@@ -116,9 +190,12 @@ class _PlaylistList extends ConsumerWidget {
 /// как в ArchiveTune. Кнопки появляются при наведении, активная строка
 /// подсвечена фоном.
 class _PlaylistRow extends ConsumerStatefulWidget {
-  const _PlaylistRow({required this.playlist});
+  const _PlaylistRow({required this.playlist, this.compact = false});
 
   final Playlist playlist;
+
+  /// Свёрнутая панель: от строки остаётся только обложка в круге наведения.
+  final bool compact;
 
   @override
   ConsumerState<_PlaylistRow> createState() => _PlaylistRowState();
@@ -140,6 +217,13 @@ class _PlaylistRowState extends ConsumerState<_PlaylistRow> {
       ),
     );
     final bool showActions = _hovered || active;
+
+    if (widget.compact) {
+      return _CompactPlaylistButton(
+        playlist: widget.playlist,
+        active: active,
+      );
+    }
 
     return SizedBox(
       height: 64,
@@ -300,6 +384,48 @@ class _PlaylistRowState extends ConsumerState<_PlaylistRow> {
 }
 
 enum _RowAction { open, play }
+
+/// Строка плейлиста в свёрнутой панели: остаётся только обложка.
+///
+/// Текст в полосу шириной 72 не помещается, поэтому название уходит в
+/// подсказку при наведении, а обложка становится крупной целью для нажатия.
+class _CompactPlaylistButton extends StatelessWidget {
+  const _CompactPlaylistButton({required this.playlist, required this.active});
+
+  final Playlist playlist;
+  final bool active;
+
+  @override
+  Widget build(BuildContext context) {
+    final ColorScheme scheme = Theme.of(context).colorScheme;
+
+    return Padding(
+      padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 3),
+      child: Tooltip(
+        message: playlist.title,
+        child: InkWell(
+          onTap: () => AppRoutes.playlist(context, playlist.id),
+          borderRadius: BorderRadius.circular(AppLayout.radiusS),
+          child: Container(
+            padding: const EdgeInsets.all(4),
+            decoration: active
+                ? BoxDecoration(
+                    color: scheme.secondaryContainer,
+                    borderRadius: BorderRadius.circular(AppLayout.radiusS),
+                  )
+                : null,
+            child: Artwork(
+              url: playlist.thumbnails.sized(96),
+              size: 40,
+              radius: BorderRadius.circular(8),
+              icon: Icons.queue_music,
+            ),
+          ),
+        ),
+      ),
+    );
+  }
+}
 
 /// Короткая подсказка вместо пустого списка или ошибки.
 class _Hint extends StatelessWidget {

@@ -285,10 +285,10 @@ void main() {
     await pump(tester, const MopsApp(), size: const Size(412, 880));
 
     expect(tester.takeException(), isNull);
-    // На узком экране навигация — обычная нижняя панель.
-    expect(find.byType(NavigationBar), findsOneWidget);
+    // На узком экране навигация — тот же плавающий док, что и на широком:
+    // стандартной нижней панели Material больше нет (как в ArchiveTune).
+    expect(find.byType(NavigationBar), findsNothing);
     expect(find.byType(NavigationRail), findsNothing);
-    // Островок плеера парит над ней.
     expect(find.byType(FloatingDock), findsOneWidget);
 
     await expectLater(

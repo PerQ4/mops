@@ -81,6 +81,7 @@ class AppSettings {
     this.uiScale = 0.0,
     this.bypass = const AntiDpiConfig(),
     this.autoDetectProxy = true,
+    this.sidebarCollapsed = false,
   });
 
   final ThemeModePreference themeMode;
@@ -114,6 +115,13 @@ class AppSettings {
   /// поэтому приложение пробует найти его само.
   final bool autoDetectProxy;
 
+  /// Свёрнута ли боковая панель библиотеки в узкую полосу с обложками.
+  ///
+  /// Состояние хранится в настройках, а не в виджете: панель исчезает и
+  /// появляется вместе с раскладкой, и сворачивать её заново при каждом
+  /// переходе в широкий режим было бы навязчиво.
+  final bool sidebarCollapsed;
+
   bool get isUiScaleAuto => uiScale <= 0;
 
   int get safeSeedIndex =>
@@ -137,6 +145,7 @@ class AppSettings {
     double? uiScale,
     AntiDpiConfig? bypass,
     bool? autoDetectProxy,
+    bool? sidebarCollapsed,
   }) {
     return AppSettings(
       themeMode: themeMode ?? this.themeMode,
@@ -156,6 +165,7 @@ class AppSettings {
       uiScale: uiScale ?? this.uiScale,
       bypass: bypass ?? this.bypass,
       autoDetectProxy: autoDetectProxy ?? this.autoDetectProxy,
+      sidebarCollapsed: sidebarCollapsed ?? this.sidebarCollapsed,
     );
   }
 
@@ -177,6 +187,7 @@ class AppSettings {
         'uiScale': uiScale,
         'bypass': bypass.toJson(),
         'autoDetectProxy': autoDetectProxy,
+        'sidebarCollapsed': sidebarCollapsed,
       };
 
   String encode() => jsonEncode(toJson());
@@ -202,6 +213,7 @@ class AppSettings {
           ? AntiDpiConfig.fromJson(json['bypass'] as Map<String, dynamic>)
           : const AntiDpiConfig(),
       autoDetectProxy: json['autoDetectProxy'] as bool? ?? true,
+      sidebarCollapsed: json['sidebarCollapsed'] as bool? ?? false,
     );
   }
 

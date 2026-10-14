@@ -69,6 +69,12 @@ abstract final class AppLayout {
   /// Ширина боковой панели с навигацией и библиотекой на широком экране.
   static const double sidebarWidth = 280;
 
+  /// Ширина свёрнутой боковой панели — узкая полоса с обложками плейлистов.
+  ///
+  /// Панель не исчезает совсем: свернуть её «в ноль» значило бы потерять
+  /// доступ к своим плейлистам, а так остаётся быстрый доступ по обложкам.
+  static const double sidebarCollapsedWidth = 72;
+
   /// Высота шапки экрана.
   static const double appBarHeight = 64;
 
@@ -113,6 +119,13 @@ abstract final class AppLayout {
   static const double radiusM = 18;
   static const double radiusL = 24;
   static const double radiusXL = 32;
+
+  /// Радиус скругления основной области со стороны боковой панели.
+  ///
+  /// Благодаря ему содержимое читается отдельной панелью, лежащей поверх
+  /// фона боковой панели, — как в Spotify Desktop. Скруглены только углы,
+  /// примыкающие к боковой панели (левый верхний и левый нижний).
+  static const double contentPanelRadius = radiusL;
 
   /// Отступы страницы.
   static const double gutter = 20;

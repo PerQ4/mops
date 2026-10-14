@@ -4,10 +4,11 @@ import 'package:flutter_riverpod/flutter_riverpod.dart';
 import '../../core/theme/layout.dart';
 import '../../data/models/models.dart';
 import '../../state/auth_controller.dart';
-import '../../state/catalog_providers.dart';
+import '../../state/library_providers.dart';
 import '../../state/player_controller.dart';
 import '../../state/player_panel.dart';
 import '../../widgets/artwork.dart';
+import '../../widgets/track_menu.dart';
 import '../common/navigation.dart';
 import '../shell/content_navigator.dart';
 import '../shell/destinations.dart';
@@ -35,10 +36,12 @@ class FloatingDock extends ConsumerWidget {
   static const double islandHeight = 78;
 
   /// Высота мини-плеера. ArchiveTune: 70.
-  /// Высота островка плеера. Раньше была 70, как мини-плеер в ArchiveTune,
-  /// но там он примыкает сверху к панели навигации, а у нас островки стоят
-  /// рядом — при разной высоте они выглядят разнородно.
-  static const double playerIslandHeight = islandHeight;
+  ///
+  /// Островок плеера ниже навигации: так у островков разные «роли» — плеер
+  /// как мини-плеер ArchiveTune, а навигация повыше, потому что несёт подписи.
+  /// Стык при этом остаётся ровным: островки выровнены по нижнему краю
+  /// (`CrossAxisAlignment.end`), а скругление на стыке общее (`joinRadius`).
+  static const double playerIslandHeight = 70;
 
   /// Полное скругление — половина высоты островка.
   static const double outerRadius = islandHeight / 2;
@@ -64,12 +67,44 @@ class FloatingDock extends ConsumerWidget {
     final bool hasTrack = ref.watch(
       playerControllerProvider.select((PlayerUiState s) => s.current != null),
     );
-    final bool wide = context.isExpandedLayout;
 
-    // На узком экране навигация остаётся нижней панелью, поэтому здесь только
-    // плеер. На широком обе части живут внизу и стоят рядом.
-    final bool showNav = wide;
-    if (!showNav && !hasTrack) return const SizedBox.shrink();
+    // Боковая панель рисуется только в широкой раскладке и сама показывает
+    // библиотеку — тогда вкладка «Библиотека» в островке была бы дублем.
+    final bool sidebarVisible = context.isExpandedLayout;
+
+    // Появление и исчезновение плеера анимируем размером: группа
+    // центрируется целиком, поэтому навигация плавно отъезжает.
+    final Widget playerIsland = AnimatedSize(
+      duration: const Duration(milliseconds: 260),
+      curve: Curves.easeOutCubic,
+      alignment: Alignment.centerLeft,
+      child: hasTrack
+          ? const _PlayerIsland()
+          : const SizedBox.shrink(),
+    );
+
+    // Плеер и навигация всегда стоят рядом — и на узком экране тоже, как на
+    // широком. Раньше на узком внизу была обычная панель Material, а это
+    // ровно то, от чего уходим. Если места не хватает, док не переносится в
+    // столбик, а уменьшается целиком (`scaleDown`): форма и стык сохраняются,
+    // переполнения нет. Так же поступает ArchiveTune: мини-плеер и навигация
+    // остаются единой фигурой.
+    final Widget islands = FittedBox(
+      fit: BoxFit.scaleDown,
+      alignment: Alignment.bottomCenter,
+      child: Row(
+        mainAxisSize: MainAxisSize.min,
+        crossAxisAlignment: CrossAxisAlignment.end,
+        children: <Widget>[
+          playerIsland,
+          if (hasTrack) const SizedBox(width: gap),
+          _NavIsland(
+            joinedOnLeft: hasTrack,
+            sidebarVisible: sidebarVisible,
+          ),
+        ],
+      ),
+    );
 
     return Padding(
       padding: const EdgeInsets.fromLTRB(margin, 0, margin, margin),
@@ -77,27 +112,7 @@ class FloatingDock extends ConsumerWidget {
         mainAxisSize: MainAxisSize.min,
         children: <Widget>[
           const _DockPanel(),
-          Row(
-            mainAxisSize: MainAxisSize.min,
-            crossAxisAlignment: CrossAxisAlignment.end,
-            children: <Widget>[
-              // Плеер слева, навигация справа.
-              // Появление и исчезновение плеера анимируем размером: группа
-              // центрируется целиком, поэтому навигация плавно отъезжает.
-              AnimatedSize(
-                duration: const Duration(milliseconds: 260),
-                curve: Curves.easeOutCubic,
-                alignment: Alignment.centerLeft,
-                child: hasTrack
-                    ? _PlayerIsland(joinedOnRight: showNav)
-                    : const SizedBox.shrink(),
-              ),
-              if (showNav && hasTrack)
-                const SizedBox(width: gap),
-              if (showNav)
-                _NavIsland(joinedOnLeft: hasTrack),
-            ],
-          ),
+          islands,
         ],
       ),
     );
@@ -107,15 +122,28 @@ class FloatingDock extends ConsumerWidget {
 /// ------------------------------------------------------- остров навигации
 
 class _NavIsland extends ConsumerWidget {
-  const _NavIsland({required this.joinedOnLeft});
+  const _NavIsland({
+    required this.joinedOnLeft,
+    required this.sidebarVisible,
+  });
 
   /// Стоит ли слева островок плеера — тогда левые углы почти прямые.
   final bool joinedOnLeft;
+
+  /// Видна ли боковая панель библиотеки. Тогда вкладку «Библиотека» прячем:
+  /// её заменяет сама панель, и в островке она была бы дублем.
+  final bool sidebarVisible;
 
   @override
   Widget build(BuildContext context, WidgetRef ref) {
     final int index = ref.watch(shellIndexProvider);
     final ColorScheme scheme = Theme.of(context).colorScheme;
+
+    final List<ShellDestination> destinations = sidebarVisible
+        ? ShellDestination.values
+            .where((ShellDestination d) => d != ShellDestination.library)
+            .toList(growable: false)
+        : ShellDestination.values;
 
     return _DockSurface(
       // У стыка скругление минимальное, снаружи — полное.
@@ -135,7 +163,7 @@ class _NavIsland extends ConsumerWidget {
           mainAxisSize: MainAxisSize.min,
           children: <Widget>[
             const SizedBox(width: 10),
-            for (final ShellDestination d in ShellDestination.values)
+            for (final ShellDestination d in destinations)
               _NavButton(
                 destination: d,
                 selected: ShellDestination.values.indexOf(d) == index,
@@ -248,10 +276,7 @@ class _NavButton extends StatelessWidget {
 /// --------------------------------------------------------- островок плеера
 
 class _PlayerIsland extends ConsumerStatefulWidget {
-  const _PlayerIsland({required this.joinedOnRight});
-
-  /// Стоит ли слева остров навигации — тогда левые углы почти прямые.
-  final bool joinedOnRight;
+  const _PlayerIsland();
 
   @override
   ConsumerState<_PlayerIsland> createState() => _PlayerIslandState();
@@ -265,21 +290,18 @@ class _PlayerIslandState extends ConsumerState<_PlayerIsland> {
     final PlayerUiState player = ref.watch(playerControllerProvider);
     final Track track = player.current!;
     final bool wide = context.isExpandedLayout;
-    final double radius = FloatingDock.playerRadius;
 
     return MouseRegion(
       onEnter: (_) => setState(() => _hovered = true),
       onExit: (_) => setState(() => _hovered = false),
       child: _DockSurface(
+        // Справа всегда стоит остров навигации, поэтому правые углы почти
+        // прямые: вместе островки читаются одной фигурой.
         radius: BorderRadius.only(
             topLeft: Radius.circular(FloatingDock.playerRadius),
             bottomLeft: Radius.circular(FloatingDock.playerRadius),
-            topRight: Radius.circular(
-              widget.joinedOnRight ? FloatingDock.joinRadius : radius,
-            ),
-            bottomRight: Radius.circular(
-              widget.joinedOnRight ? FloatingDock.joinRadius : radius,
-            ),
+            topRight: const Radius.circular(FloatingDock.joinRadius),
+            bottomRight: const Radius.circular(FloatingDock.joinRadius),
           ),
           elevation: _hovered ? 16 : 8,
           child: SizedBox(
@@ -419,6 +441,13 @@ class _IslandControls extends ConsumerWidget {
     final bool signedIn = ref.watch(
       authControllerProvider.select((AuthState s) => s.isSignedIn),
     );
+    // Лайк текущего трека — из общего источника правды: кнопка в островке и
+    // в полноэкранном плеере всегда показывают одно и то же.
+    final bool liked = ref.watch(
+      likedIdsProvider.select(
+        (Set<String> ids) => ids.contains(player.current?.id),
+      ),
+    );
 
     return Row(
       mainAxisSize: MainAxisSize.min,
@@ -486,11 +515,15 @@ class _IslandControls extends ConsumerWidget {
             onPressed: controller.cycleRepeat,
           ),
         IconButton(
-          tooltip: 'Нравится',
+          tooltip: liked ? 'Убрать из «Мне нравится»' : 'Нравится',
           iconSize: 20,
-          icon: const Icon(Icons.favorite_border),
-          onPressed:
-              signedIn ? () => _like(context, ref, player.current!) : null,
+          icon: Icon(
+            liked ? Icons.favorite : Icons.favorite_border,
+            color: liked ? scheme.primary : null,
+          ),
+          onPressed: signedIn && player.current != null
+              ? () => _like(context, ref, player.current!)
+              : null,
         ),
         IconButton(
           tooltip: 'Очередь',
@@ -501,16 +534,33 @@ class _IslandControls extends ConsumerWidget {
               Icon(Icons.queue_music, size: 20, color: scheme.primary),
           onPressed: () => panel.toggle(PlayerPanelMode.queue),
         ),
+        // «…» ведёт к исполнителю, альбому и действиям над текущим треком —
+        // раньше из островка не было ни одного перехода к исполнителю.
+        IconButton(
+          tooltip: 'Действия',
+          iconSize: 20,
+          icon: const Icon(Icons.more_vert),
+          onPressed: player.current == null
+              ? null
+              : () => showTrackMenu(context, player.current!),
+        ),
       ],
     );
   }
 
   Future<void> _like(BuildContext context, WidgetRef ref, Track track) async {
     final ScaffoldMessengerState messenger = ScaffoldMessenger.of(context);
+    final bool wasLiked = ref.read(likedIdsProvider).contains(track.id);
     try {
-      await ref.read(librarySourceProvider).setLiked(track.id, liked: true);
+      // Переключатель, а не «поставить лайк»: повторное нажатие снимает —
+      // раньше лайк только добавлялся, и снять его из островка было нельзя.
+      await ref.read(likedIdsProvider.notifier).toggle(track.id);
       messenger.showSnackBar(
-        const SnackBar(content: Text('Добавлено в «Мне нравится»')),
+        SnackBar(
+          content: Text(wasLiked
+              ? 'Убрано из «Мне нравится»'
+              : 'Добавлено в «Мне нравится»'),
+        ),
       );
     } on Object {
       messenger.showSnackBar(
