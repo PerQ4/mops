@@ -73,11 +73,22 @@ abstract final class AppRoutes {
     );
   }
 
-  static Future<void> album(BuildContext context, String albumId) =>
-      _push<void>(context, AlbumScreen(albumId: albumId));
+  /// [root] — открыть поверх всего. Нужно полноэкранному плееру: он сам
+  /// лежит в корневом навигаторе, и подэкран во вложенном навигаторе остался
+  /// бы у него «под» экраном (см. `showTrackMenu`).
+  static Future<void> album(
+    BuildContext context,
+    String albumId, {
+    bool root = false,
+  }) =>
+      _push<void>(context, AlbumScreen(albumId: albumId), root: root);
 
-  static Future<void> artist(BuildContext context, String artistId) =>
-      _push<void>(context, ArtistScreen(artistId: artistId));
+  static Future<void> artist(
+    BuildContext context,
+    String artistId, {
+    bool root = false,
+  }) =>
+      _push<void>(context, ArtistScreen(artistId: artistId), root: root);
 
   static Future<void> playlist(BuildContext context, String playlistId) =>
       _push<void>(context, PlaylistScreen(playlistId: playlistId));

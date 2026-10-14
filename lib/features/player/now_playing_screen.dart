@@ -6,10 +6,10 @@ import '../../core/utils/artwork_urls.dart';
 import '../../core/utils/format.dart';
 import '../../data/models/models.dart';
 import '../../state/auth_controller.dart';
-import '../../state/catalog_providers.dart';
 import '../../state/library_providers.dart';
 import '../../state/player_controller.dart';
 import '../../widgets/artwork.dart';
+import '../../widgets/track_menu.dart';
 import 'lyrics_view.dart';
 import 'player_controls.dart';
 
@@ -199,29 +199,23 @@ class _TopBar extends StatelessWidget {
 }
 
 /// Название, исполнитель и кнопка «нравится».
-class _InfoRow extends ConsumerStatefulWidget {
+///
+/// Состояние берём из общего [likedIdsProvider], а не из локального флага:
+/// лайк, поставленный здесь, сразу виден в строках треков и островке плеера
+/// (и наоборот).
+class _InfoRow extends ConsumerWidget {
   const _InfoRow({required this.track, required this.player});
 
   final Track track;
   final PlayerUiState player;
 
   @override
-  ConsumerState<_InfoRow> createState() => _InfoRowState();
-}
-
-class _InfoRowState extends ConsumerState<_InfoRow> {
-  /// Локальное состояние лайка: список «Мне нравится» грузится отдельно,
-  /// а результат нажатия хочется видеть сразу.
-  bool? _liked;
-
-  Track get track => widget.track;
-  PlayerUiState get player => widget.player;
-
-  @override
-  Widget build(BuildContext context) {
+  Widget build(BuildContext context, WidgetRef ref) {
     final TextTheme text = Theme.of(context).textTheme;
     final ColorScheme scheme = Theme.of(context).colorScheme;
-    final bool liked = _isLiked(ref);
+    final bool liked = ref.watch(
+      likedIdsProvider.select((Set<String> ids) => ids.contains(track.id)),
+    );
     final bool signedIn = ref.watch(
       authControllerProvider.select((AuthState s) => s.isSignedIn),
     );
@@ -259,6 +253,16 @@ class _InfoRowState extends ConsumerState<_InfoRow> {
             ),
           ),
           const SizedBox(width: 8),
+          // «…» открывает то же меню, что и из островка: исполнитель, альбом,
+          // очередь и лайк. rootNavigator: плеер сам лежит в корневом
+          // навигаторе — иначе переход остался бы под его экраном.
+          IconButton(
+            tooltip: 'Действия',
+            icon: const Icon(Icons.more_vert, size: 20),
+            onPressed: () =>
+                showTrackMenu(context, track, rootNavigator: true),
+          ),
+          const SizedBox(width: 4),
           IconButton.filledTonal(
             tooltip: liked ? 'Убрать из «Мне нравится»' : 'Нравится',
             icon: Icon(
@@ -266,36 +270,21 @@ class _InfoRowState extends ConsumerState<_InfoRow> {
               size: 20,
               color: liked ? scheme.primary : null,
             ),
-            onPressed: signedIn ? () => _like(context) : null,
+            onPressed: signedIn ? () => _like(context, ref) : null,
           ),
         ],
       ),
     );
   }
 
-  /// Поставлен ли лайк этому треку.
-  ///
-  /// Источник правды — список «Мне нравится»; пока он не загружен, показываем
-  /// то, что только что выбрал пользователь.
-  bool _isLiked(WidgetRef ref) {
-    final bool? local = _liked;
-    if (local != null) return local;
-    final List<Track>? liked = ref.watch(likedSongsProvider).asData?.value;
-    return liked?.any((Track t) => t.id == track.id) ?? false;
-  }
-
-  Future<void> _like(BuildContext context) async {
+  Future<void> _like(BuildContext context, WidgetRef ref) async {
     final ScaffoldMessengerState messenger = ScaffoldMessenger.of(context);
-    final bool liked = _isLiked(ref);
+    final bool wasLiked = ref.read(likedIdsProvider).contains(track.id);
     try {
-      await ref.read(librarySourceProvider).setLiked(track.id, liked: !liked);
-      // Без сброса список «Мне нравится» останется прежним, и лайк будет
-      // выглядеть непоставленным.
-      ref.invalidate(likedSongsProvider);
-      if (mounted) setState(() => _liked = !liked);
+      await ref.read(likedIdsProvider.notifier).toggle(track.id);
       messenger.showSnackBar(
         SnackBar(
-          content: Text(liked
+          content: Text(wasLiked
               ? 'Убрано из «Мне нравится»'
               : 'Добавлено в «Мне нравится»'),
         ),

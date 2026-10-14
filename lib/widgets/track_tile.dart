@@ -1,11 +1,10 @@
 import 'package:flutter/material.dart';
-import 'package:flutter_riverpod/flutter_riverpod.dart';
 
 import '../core/theme/layout.dart';
 import '../core/utils/format.dart';
 import '../data/models/models.dart';
-import '../state/player_controller.dart';
 import 'artwork.dart';
+import 'track_menu.dart';
 
 /// Строка трека в списке.
 ///
@@ -61,6 +60,11 @@ class TrackTile extends StatelessWidget {
         : scheme.onSurfaceVariant;
     final double artworkSize = AppLayout.trackArtwork;
 
+    // Одна точка входа в меню: и кнопка «…», и долгое нажатие открывают одно
+    // и то же, поэтому действие не приходится искать по интерфейсу.
+    final VoidCallback openMenu =
+        onMenu ?? () => showTrackMenu(context, track);
+
     return SizedBox(
       height: AppLayout.trackRowHeight,
       // Внешний отступ строки — 8 по спецификации; внутренний добираем до
@@ -74,6 +78,7 @@ class TrackTile extends StatelessWidget {
           clipBehavior: Clip.antiAlias,
           child: InkWell(
             onTap: onTap,
+            onLongPress: openMenu,
             child: Padding(
               padding: const EdgeInsets.symmetric(horizontal: 12),
               child: Row(
@@ -157,7 +162,7 @@ class TrackTile extends StatelessWidget {
                       iconSize: 20,
                       color: scheme.onSurfaceVariant,
                       icon: const Icon(Icons.more_vert),
-                      onPressed: onMenu ?? () => showTrackActions(context, track),
+                      onPressed: openMenu,
                     ),
                   ],
                 ],
@@ -241,59 +246,3 @@ class _Leading extends StatelessWidget {
   }
 }
 
-/// Типовые действия над треком. Одна реализация на всё приложение.
-Future<void> showTrackActions(BuildContext context, Track track) {
-  return showModalBottomSheet<void>(
-    context: context,
-    showDragHandle: true,
-    builder: (BuildContext sheetContext) {
-      return SafeArea(
-        child: Column(
-          mainAxisSize: MainAxisSize.min,
-          children: <Widget>[
-            ListTile(
-              leading: const Icon(Icons.play_arrow_rounded),
-              title: const Text('Играть сейчас'),
-              onTap: () {
-                Navigator.pop(sheetContext);
-                playNow(sheetContext, track);
-              },
-            ),
-            ListTile(
-              leading: const Icon(Icons.queue_play_next),
-              title: const Text('Играть следующим'),
-              onTap: () {
-                Navigator.pop(sheetContext);
-                playNext(sheetContext, track);
-              },
-            ),
-            ListTile(
-              leading: const Icon(Icons.playlist_add),
-              title: const Text('В конец очереди'),
-              onTap: () {
-                Navigator.pop(sheetContext);
-                addToQueue(sheetContext, track);
-              },
-            ),
-          ],
-        ),
-      );
-    },
-  );
-}
-
-/// Обёртки, чтобы действия можно было вызывать и из списков, и из меню.
-void playNow(BuildContext context, Track track) {
-  final ProviderContainer container = ProviderScope.containerOf(context);
-  container.read(playerControllerProvider.notifier).playTrack(track);
-}
-
-void playNext(BuildContext context, Track track) {
-  final ProviderContainer container = ProviderScope.containerOf(context);
-  container.read(playerControllerProvider.notifier).playNext(track);
-}
-
-void addToQueue(BuildContext context, Track track) {
-  final ProviderContainer container = ProviderScope.containerOf(context);
-  container.read(playerControllerProvider.notifier).enqueue(track);
-}

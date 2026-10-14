@@ -33,7 +33,7 @@ class EmptyState extends StatelessWidget {
           child: Column(
             mainAxisSize: MainAxisSize.min,
             children: <Widget>[
-              Icon(icon, size: 56, color: scheme.onSurfaceVariant),
+              Icon(icon, size: 48, color: scheme.primary),
               const SizedBox(height: 16),
               Text(
                 title,
@@ -90,13 +90,13 @@ class ErrorState extends StatelessWidget {
             children: <Widget>[
               Icon(
                 Icons.cloud_off_outlined,
-                size: compact ? 40 : 56,
+                size: compact ? 40 : 48,
                 color: scheme.error,
               ),
               const SizedBox(height: 16),
               Text(
                 'Не удалось загрузить',
-                style: text.titleLarge,
+                style: text.titleLarge?.copyWith(fontWeight: FontWeight.w600),
                 textAlign: TextAlign.center,
               ),
               const SizedBox(height: 8),

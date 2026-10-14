@@ -5,6 +5,7 @@ import '../../core/theme/layout.dart';
 import '../../data/models/models.dart';
 import '../../state/player_controller.dart';
 import '../../widgets/empty_state.dart';
+import '../../widgets/track_menu.dart';
 import '../../widgets/track_tile.dart';
 
 /// Очередь воспроизведения.
@@ -192,11 +193,24 @@ class _ReorderableTile extends StatelessWidget {
           child: TrackTile(
             track: track,
             onTap: onTap,
-            onMenu: null,
-            trailing: IconButton(
-              tooltip: 'Убрать',
-              icon: const Icon(Icons.close, size: 18),
-              onPressed: onRemove,
+            // У строки очереди свой хвост (убрать + ручка перетаскивания),
+            // поэтому штатная кнопка «…» не рисуется — добавляем её сами,
+            // иначе из очереди не открыть меню трека.
+            trailing: Row(
+              mainAxisSize: MainAxisSize.min,
+              children: <Widget>[
+                IconButton(
+                  tooltip: 'Действия',
+                  iconSize: 20,
+                  icon: const Icon(Icons.more_vert),
+                  onPressed: () => showTrackMenu(context, track),
+                ),
+                IconButton(
+                  tooltip: 'Убрать',
+                  icon: const Icon(Icons.close, size: 18),
+                  onPressed: onRemove,
+                ),
+              ],
             ),
           ),
         ),
