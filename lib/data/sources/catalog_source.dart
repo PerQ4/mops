@@ -36,6 +36,20 @@ enum ExploreSection {
   final String browseId;
 }
 
+/// Профиль клиента, которым запрашиваются субтитры.
+///
+/// Субтитры отдаёт только «плеер» мобильного/очкового клиента; веб-клиент
+/// (`WEB_REMIX`) отвечает `UNPLAYABLE` и дорожек не присылает. Значения взяты
+/// из `youtube_clients.dart`, но продублированы здесь намеренно: тот файл
+/// тянет за собой настройки и Flutter, а `catalog_source.dart` импортируют
+/// консольные инструменты, которые запускаются обычным `dart run`.
+const String _captionClientName = 'ANDROID_VR';
+const String _captionClientVersion = '1.65.10';
+const String _captionClientNumericId = '28';
+const String _captionUserAgent =
+    'com.google.android.apps.youtube.vr.oculus/1.65.10 '
+    '(Linux; U; Android 12L; eureka-user Build/SQ3A.220605.009.A1) gzip';
+
 /// Источник контента YouTube Music.
 ///
 /// Один код-путь и для гостевого режима, и для входа в аккаунт: на публичные
@@ -328,7 +342,11 @@ class CatalogSource {
 
       final List<TimedLyric> timed = _parseTimedLyrics(lyricsRes);
       if (timed.isNotEmpty) {
-        return Lyrics(timed: timed, plain: timed.map((TimedLyric l) => l.text).join('\n'));
+        return Lyrics(
+          timed: timed,
+          plain: timed.map((TimedLyric l) => l.text).join('\n'),
+          source: 'YouTube Music',
+        );
       }
 
       final List<String> lines =
@@ -339,7 +357,7 @@ class CatalogSource {
           .trim();
 
       if (plain.isEmpty) return Lyrics.none;
-      return Lyrics(plain: plain);
+      return Lyrics(plain: plain, source: 'YouTube Music');
     } on Exception {
       // Текста может не быть — это не ошибка приложения.
       return Lyrics.none;
@@ -351,15 +369,42 @@ class CatalogSource {
   /// У клипов и редких записей вкладки «Текст» нет, а субтитры есть. Разметка
   /// приходит по адресу дорожки субтитров в формате json3: события со временем
   /// и кусками текста.
+  ///
+  /// Важная деталь: субтитры отдаёт только «плеер» мобильного/очкового
+  /// клиента. Веб-клиент (`WEB_REMIX`), которым ходят остальные запросы
+  /// каталога, на `player` отвечает `UNPLAYABLE`, и дорожек нет вовсе —
+  /// поэтому здесь подставляется профиль Android VR с его заголовками.
   Future<Lyrics> subtitleLyrics(String videoId) async {
     try {
       final Map<String, dynamic> player = await _client.post(
         'player',
         body: <String, dynamic>{
+          'context': <String, dynamic>{
+            'client': <String, dynamic>{
+              'clientName': _captionClientName,
+              'clientVersion': _captionClientVersion,
+              'hl': _client.locale,
+              'gl': _client.region,
+              'utcOffsetMinutes': 0,
+              'userAgent': _captionUserAgent,
+              'osName': 'Android',
+              'osVersion': '12L',
+              'deviceMake': 'Oculus',
+              'deviceModel': 'Quest 3',
+              'androidSdkVersion': 32,
+            },
+          },
           'videoId': videoId,
           'contentCheckOk': true,
           'racyCheckOk': true,
         },
+        extraHeaders: <String, String>{
+          'X-Youtube-Client-Name': _captionClientNumericId,
+          'X-Youtube-Client-Version': _captionClientVersion,
+          'User-Agent': _captionUserAgent,
+        },
+        // Со входом VR-профили получают ошибку 400 (как и при запросе потока).
+        authenticated: false,
       );
 
       final List<dynamic> tracks = traverseList(player, <String>[
@@ -369,13 +414,15 @@ class CatalogSource {
       ]);
       if (tracks.isEmpty) return Lyrics.none;
 
-      final String? base = traverseString(tracks.first, <String>['baseUrl']);
+      // Берём дорожку на языке интерфейса, иначе — первую доступную.
+      final Map<dynamic, dynamic> track = _pickCaptionTrack(tracks);
+      final String? base = track['baseUrl'] as String?;
       if (base == null || base.isEmpty) return Lyrics.none;
 
       final HttpClient http = HttpClient();
       try {
         final HttpClientRequest request =
-            await http.getUrl(Uri.parse('$base&fmt=json3'));
+            await http.getUrl(Uri.parse(_withJsonFormat(base)));
         final HttpClientResponse response = await request.close();
         final String body = await response.transform(utf8.decoder).join();
         final dynamic decoded = jsonDecode(body);
@@ -398,7 +445,10 @@ class CatalogSource {
             text: text,
           ));
         }
-        if (timed.isEmpty) return Lyrics.none;
+        // Без единого времени синхронизации нет: подсветка «залипнет».
+        if (timed.isEmpty || !timed.any((TimedLyric l) => l.time > Duration.zero)) {
+          return Lyrics.none;
+        }
         return Lyrics(
           timed: timed,
           plain: timed.map((TimedLyric l) => l.text).join('\n'),
@@ -412,26 +462,82 @@ class CatalogSource {
     }
   }
 
+  /// Выбирает дорожку субтитров: сначала на языке интерфейса и без `asr`
+  /// (ручную), затем — любую на этом языке, затем первую доступную.
+  Map<dynamic, dynamic> _pickCaptionTrack(List<dynamic> tracks) {
+    final List<Map<dynamic, dynamic>> maps =
+        tracks.whereType<Map<dynamic, dynamic>>().toList();
+    if (maps.isEmpty) return <dynamic, dynamic>{};
+
+    final String locale = _client.locale.split('-').first.toLowerCase();
+    Map<dynamic, dynamic>? manual;
+    Map<dynamic, dynamic>? auto;
+    for (final Map<dynamic, dynamic> track in maps) {
+      final String lang =
+          '${track['languageCode'] ?? ''}'.split('-').first.toLowerCase();
+      final bool asr = '${track['kind'] ?? ''}' == 'asr';
+      if (lang == locale) {
+        if (asr && auto == null) auto = track;
+        if (!asr && manual == null) manual = track;
+      }
+    }
+    return manual ?? auto ?? maps.first;
+  }
+
+  /// Добавляет к адресу субтитров `fmt=json3`, убирая прежний формат.
+  ///
+  /// Параметр `fmt` у разных клиентов уже может стоять (`srv3`); просто
+  /// дописать второй нельзя — сработает не всегда, поэтому старый убираем.
+  String _withJsonFormat(String base) {
+    final String stripped =
+        base.replaceAll(RegExp(r'[&?]fmt=[^&]*'), '');
+    final String separator = stripped.contains('?') ? '&' : '?';
+    return '$stripped${separator}fmt=json3';
+  }
+
   List<TimedLyric> _parseTimedLyrics(Map<String, dynamic> response) {
-    final dynamic data = traverse(response, <String>[
-      'contents',
-      'type',
-      'lyricsData',
-    ]);
-    if (data is! Map) return const <TimedLyric>[];
+    // Путь к синхронному тексту у YouTube менялся: раньше был
+    // `contents.type.lyricsData`, сейчас встречается обёртка
+    // `...timedLyricsModel.lyricsData`. `traverseList` ищет ключ на любой
+    // глубине, поэтому цепляемся сразу за `timedLyricsData` — разбор не
+    // отвалится при очередной смене обёртки.
+    final List<dynamic> raw =
+        traverseList(response, <String>['timedLyricsData']);
 
     final List<TimedLyric> result = <TimedLyric>[];
-    for (final dynamic line in traverseList(data, <String>['timedLyricsData'])) {
+    for (final dynamic line in raw) {
       if (line is! Map) continue;
-      final String? text = textOf(line);
-      final dynamic startMs = line['lyricLineStartTimeMs'];
-      if (text == null || startMs is! num) continue;
+      final Object? start = line['lyricLineStartTimeMs'] ??
+          line['startTimeMs'] ??
+          line['startTime'] ??
+          line['time'];
+      if (start is! num) continue;
+      // Текст строки лежит то как `runs`/`simpleText`/`text`, то отдельным
+      // полем `lyricLineText` — раньше второе имя не читалось, и строки
+      // молча пропускались.
+      final String? text = textOf(line) ?? _lyricLineText(line);
+      if (text == null || text.trim().isEmpty) continue;
       result.add(TimedLyric(
-        time: Duration(milliseconds: startMs.toInt()),
+        time: Duration(milliseconds: start.toInt()),
         text: text.trim(),
       ));
     }
+
+    result.sort((TimedLyric a, TimedLyric b) => a.time.compareTo(b.time));
     return result;
+  }
+
+  String? _lyricLineText(dynamic line) {
+    if (line is! Map) return null;
+    for (final String key in <String>[
+      'lyricLineText',
+      'lyricsLineText',
+      'lyricText',
+    ]) {
+      final dynamic value = line[key];
+      if (value is String && value.trim().isNotEmpty) return value;
+    }
+    return null;
   }
 
   // --------------------------------------------------------------- helpers

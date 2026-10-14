@@ -317,7 +317,29 @@ class Lyrics {
   final String? source;
 
   bool get isEmpty => (plain == null || plain!.isEmpty) && (timed?.isEmpty ?? true);
-  bool get isSynced => timed != null && timed!.isNotEmpty;
+
+  /// Годится ли текст для подсветки и автопрокрутки.
+  ///
+  /// Мало того, чтобы времена были: нужны хотя бы два **разных** и хотя бы
+  /// одно ненулевое. Если все метки нулевые (так приходят субтитры без
+  /// стартовых времён или битый синхротекст), подсветка «залипала» бы на
+  /// последней строке, а прокрутка не сдвинулась бы ни на пиксель. В таком
+  /// случае честнее показать обычный текст без выделения.
+  bool get isSynced {
+    final List<TimedLyric>? lines = timed;
+    if (lines == null || lines.length < 2) return false;
+
+    bool hasPositive = false;
+    int distinct = 0;
+    int? previous;
+    for (final TimedLyric line in lines) {
+      final int ms = line.time.inMilliseconds;
+      if (ms > 0) hasPositive = true;
+      if (ms != previous) distinct++;
+      previous = ms;
+    }
+    return hasPositive && distinct >= 2;
+  }
 
   static const Lyrics none = Lyrics();
 }

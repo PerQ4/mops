@@ -1,3 +1,5 @@
+import 'dart:ui';
+
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 
@@ -6,10 +8,12 @@ import '../../core/utils/artwork_urls.dart';
 import '../../core/utils/format.dart';
 import '../../data/models/models.dart';
 import '../../state/auth_controller.dart';
+import '../../state/catalog_providers.dart';
 import '../../state/library_providers.dart';
 import '../../state/player_controller.dart';
 import '../../widgets/artwork.dart';
 import '../../widgets/track_menu.dart';
+import 'lyrics_actions.dart';
 import 'lyrics_view.dart';
 import 'queue_list.dart';
 import 'player_controls.dart';
@@ -48,6 +52,7 @@ class _NowPlayingScreenState extends ConsumerState<NowPlayingScreen> {
                   child: Column(
                     children: <Widget>[
                       _TopBar(
+                        track: track,
                         showLyrics: _showLyrics,
                         onToggleLyrics: () =>
                             setState(() => _showLyrics = !_showLyrics),
@@ -170,20 +175,28 @@ class _ArtworkBackdrop extends StatelessWidget {
       fit: StackFit.expand,
       children: <Widget>[
         if (variants.isNotEmpty)
-          Artwork(
-            url: variants.first,
-            fallbacks: variants.length > 1 ? variants.sublist(1) : const <String>[],
-            fit: BoxFit.cover,
-            radius: BorderRadius.zero,
+          // Размытие: резкая обложка на всю площадь отвлекала от управления,
+          // а размытая читается как фон.
+          ImageFiltered(
+            imageFilter: ImageFilter.blur(sigmaX: 28, sigmaY: 28),
+            child: Artwork(
+              url: variants.first,
+              fallbacks:
+                  variants.length > 1 ? variants.sublist(1) : const <String>[],
+              fit: BoxFit.cover,
+              radius: BorderRadius.zero,
+            ),
           ),
         DecoratedBox(
           decoration: BoxDecoration(
             gradient: LinearGradient(
               begin: Alignment.topCenter,
               end: Alignment.bottomCenter,
+              // Затемнение сильнее прежнего: фон не должен спорить
+              // с обложкой и управлением на переднем плане.
               colors: <Color>[
-                scheme.surface.withValues(alpha: 0.55),
-                scheme.surface.withValues(alpha: 0.85),
+                scheme.surface.withValues(alpha: 0.72),
+                scheme.surface.withValues(alpha: 0.92),
                 scheme.surface,
               ],
               stops: const <double>[0.2, 0.6, 0.92],
@@ -230,14 +243,22 @@ class _ArtworkStage extends StatelessWidget {
   }
 }
 
-class _TopBar extends StatelessWidget {
-  const _TopBar({required this.showLyrics, required this.onToggleLyrics});
+class _TopBar extends ConsumerWidget {
+  const _TopBar({
+    required this.track,
+    required this.showLyrics,
+    required this.onToggleLyrics,
+  });
 
+  final Track track;
   final bool showLyrics;
   final VoidCallback onToggleLyrics;
 
   @override
-  Widget build(BuildContext context) {
+  Widget build(BuildContext context, WidgetRef ref) {
+    // Метаданные для внешней базы текста (LRCLIB) — из играющего трека.
+    final LyricsRequest request = LyricsRequest.fromTrack(track);
+
     return Padding(
       padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 4),
       child: Row(
@@ -256,12 +277,14 @@ class _TopBar extends StatelessWidget {
                 ?.copyWith(fontWeight: FontWeight.w600),
           ),
           const Spacer(),
-          IconButton.filledTonal(
-            tooltip: showLyrics ? 'Скрыть текст' : 'Показать текст',
-            isSelected: showLyrics,
-            icon: const Icon(Icons.lyrics_outlined, size: 20),
-            selectedIcon: const Icon(Icons.lyrics, size: 20),
-            onPressed: onToggleLyrics,
+          // Источник текста можно сменить, даже пока текст скрыт: пункт
+          // «найти в другом источнике» из меню текста.
+          // Одна кнопка вместо двух: меню текста уже содержит
+          // «Показать/скрыть», и отдельная кнопка дублировала действие.
+          LyricsMenuButton(
+            request: request,
+            onToggleVisibility: onToggleLyrics,
+            lyricsVisible: showLyrics,
           ),
           const SizedBox(width: 8),
         ],

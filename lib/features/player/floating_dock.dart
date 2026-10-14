@@ -5,6 +5,7 @@ import '../../core/theme/layout.dart';
 import '../../data/local/app_settings.dart';
 import '../../data/models/models.dart';
 import '../../state/auth_controller.dart';
+import '../../state/catalog_providers.dart';
 import '../../state/library_providers.dart';
 import '../../state/player_controller.dart';
 import '../../state/player_panel.dart';
@@ -16,6 +17,7 @@ import '../shell/content_navigator.dart';
 import '../shell/destinations.dart';
 import '../shell/player_panel.dart';
 import '../../state/shell.dart';
+import 'lyrics_actions.dart';
 import 'lyrics_view.dart';
 import 'queue_list.dart';
 
@@ -365,11 +367,14 @@ class _PlayerIslandState extends ConsumerState<_PlayerIsland> {
     // Ширину берём у самого островка (естественную — до масштабирования
     // `FittedBox`).
     final double width = context.size?.width ?? 360;
-    // Порог — четверть ширины: короткий случайный сдвиг не переключает трек.
-    // ArchiveTune выносит это в настройку чувствительности (по умолчанию 0.73
-    // ширины) — здесь сознательно упрощено. Быстрый «щелчок» срабатывает по
-    // скорости, не дожидаясь порога по расстоянию.
-    final double threshold = width * 0.25;
+    // Порог — доля ширины из настройки: раньше он был зашит четвертью, и
+    // «тугой» свайп раздражал. Чувствительность вынесена в настройки, как
+    // в ArchiveTune. Быстрый «щелчок» всё так же срабатывает по скорости.
+    final SwipeSensitivity sensitivity = ref.read(
+      settingsControllerProvider
+          .select((AppSettings s) => s.miniSwipeSensitivity),
+    );
+    final double threshold = width * sensitivity.thresholdFraction;
     final double velocity = details.primaryVelocity ?? 0;
     final double dx = _dragDx;
     _dragDx = 0;
@@ -396,7 +401,10 @@ class _ArtworkWithProgress extends StatelessWidget {
   Widget build(BuildContext context) {
     final ColorScheme scheme = Theme.of(context).colorScheme;
     const double side = 44;
-    const double ring = 3;
+    // Кольцо заметнее, пока играет: у паузы оно тоньше и бледнее, поэтому
+    // состояние читается без отдельной подписи.
+    final bool playing = player.isPlaying;
+    final double ring = playing ? 3.5 : 2.5;
     final List<String> variants = track.artworkFallbacks(
       (side * MediaQuery.devicePixelRatioOf(context)).round(),
     );
@@ -417,8 +425,10 @@ class _ArtworkWithProgress extends StatelessWidget {
                   ? player.playback.progress
                   : 0,
               strokeWidth: ring,
+              strokeCap: StrokeCap.round,
               color: scheme.primary,
-              backgroundColor: scheme.onSurface.withValues(alpha: 0.12),
+              backgroundColor:
+                  scheme.onSurface.withValues(alpha: playing ? 0.18 : 0.10),
             ),
           ),
           Artwork(
@@ -684,7 +694,7 @@ class _DockPanel extends ConsumerWidget {
                     child: Column(
                       mainAxisSize: MainAxisSize.min,
                       children: <Widget>[
-                        _PanelHeader(mode: mode),
+                        _PanelHeader(mode: mode, track: track),
                         Divider(height: 1, color: scheme.outlineVariant),
                         Flexible(
                           child: mode == PlayerPanelMode.lyrics
@@ -707,9 +717,12 @@ class _DockPanel extends ConsumerWidget {
 }
 
 class _PanelHeader extends ConsumerWidget {
-  const _PanelHeader({required this.mode});
+  const _PanelHeader({required this.mode, required this.track});
 
   final PlayerPanelMode mode;
+
+  /// Играющий трек — нужен, чтобы сменить источник текста отсюда же.
+  final Track track;
 
   @override
   Widget build(BuildContext context, WidgetRef ref) {
@@ -735,6 +748,17 @@ class _PanelHeader extends ConsumerWidget {
             icon: const Icon(Icons.lyrics_outlined, size: 20),
             selectedIcon: Icon(Icons.lyrics, size: 20, color: scheme.primary),
             onPressed: () => controller.toggle(PlayerPanelMode.lyrics),
+          ),
+          // Смена источника текста прямо из островка: раньше из меню
+          // островка этого нельзя было сделать вовсе.
+          LyricsMenuButton(
+            request: LyricsRequest.fromTrack(track),
+            // Когда открыт текст, пункт «скрыть» закрывает ящик целиком —
+            // другого «показать/скрыть» у островка нет.
+            onToggleVisibility: mode == PlayerPanelMode.lyrics
+                ? controller.close
+                : null,
+            lyricsVisible: mode == PlayerPanelMode.lyrics,
           ),
           const Spacer(),
           IconButton(

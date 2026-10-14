@@ -5,6 +5,9 @@ import 'package:flutter_riverpod/flutter_riverpod.dart';
 import '../data/models/models.dart';
 import '../data/sources/catalog_source.dart';
 import '../data/sources/library_source.dart';
+import '../data/sources/kugou_source.dart';
+import '../data/sources/lrclib_source.dart';
+import '../core/utils/format.dart';
 import 'providers.dart';
 
 /// Провайдеры доступа к каталогу YouTube Music.
@@ -178,10 +181,57 @@ final playlistProvider =
 final searchResultsProvider =
     FutureProvider.family<List<BrowseSection>, SearchQuery>((ref, query) async {
   if (query.text.trim().isEmpty) return const <BrowseSection>[];
+  final SearchSource source = ref.watch(
+    settingsControllerProvider.select((AppSettings s) => s.searchSource),
+  );
+  if (source == SearchSource.libraryOnly) {
+    return _searchLibrary(ref, query.text);
+  }
   return ref
       .watch(catalogSourceProvider)
       .search(query.text, filter: query.filter);
 });
+
+/// Поиск только по своей библиотеке.
+///
+/// YouTube не умеет искать внутри аккаунта, поэтому лайкнутые и сохранённые
+/// треки забираем целиком и фильтруем сами по названию и исполнителю.
+/// Выдача — одна секция: разделение по типам здесь не нужно, пользователь
+/// искал среди того, что уже сохранил.
+Future<List<BrowseSection>> _searchLibrary(Ref ref, String text) async {
+  final String needle = text.trim().toLowerCase();
+  if (needle.isEmpty) return const <BrowseSection>[];
+
+  try {
+    final LibrarySource library = ref.watch(librarySourceProvider);
+    final List<Track> liked = await library.likedSongs();
+    final List<Track> saved = await library.librarySongs();
+
+    // Один трек может лежать и в лайках, и в сохранённых — убираем дубли
+    // по id, иначе он показался бы дважды.
+    final Map<String, Track> unique = <String, Track>{};
+    for (final Track track in <Track>[...liked, ...saved]) {
+      unique.putIfAbsent(track.id, () => track);
+    }
+
+    final List<Track> matches = unique.values
+        .where((Track t) =>
+            t.title.toLowerCase().contains(needle) ||
+            t.artistLine.toLowerCase().contains(needle))
+        .toList();
+    if (matches.isEmpty) return const <BrowseSection>[];
+
+    return <BrowseSection>[
+      BrowseSection(
+        title: 'В библиотеке — ${matches.length}',
+        items: matches.map((Track t) => TrackItem(t)).toList(),
+      ),
+    ];
+  } on Object {
+    // Без входа библиотека недоступна — это не ошибка поиска.
+    return const <BrowseSection>[];
+  }
+}
 
 /// Подсказки при вводе.
 final searchSuggestionsProvider =
@@ -189,19 +239,182 @@ final searchSuggestionsProvider =
   return ref.watch(catalogSourceProvider).searchSuggestions(query);
 });
 
+/// Открытая база синхронизированных текстов (LRCLIB).
+///
+/// YouTube Music отдаёт текст без времён, поэтому подсветить и прокрутить его
+/// нельзя. LRCLIB хранит LRC — по нему и работает автопрокрутка.
+/// Клиент KuGou: внешняя база текстов. Из этой сети LRCLIB отвечает
+/// заглушкой, а KuGou отдаёт настоящий LRC — с временами строк.
+final kugouSourceProvider = Provider<KugouSource>((ref) {
+  final KugouSource source = KugouSource();
+  ref.onDispose(source.dispose);
+  return source;
+});
+
+final lrclibSourceProvider = Provider<LrclibSource>((ref) {
+  final LrclibSource source = LrclibSource();
+  ref.onDispose(source.dispose);
+  return source;
+});
+
+/// Запрос текста: id трека плюс метаданные.
+///
+/// Метаданные нужны внешней базе (LRCLIB), а не YouTube: она ищет по названию,
+/// исполнителю, альбому и длительности. Если их нет — источник просто
+/// пропускается.
+@immutable
+class LyricsRequest {
+  const LyricsRequest({
+    required this.videoId,
+    this.title,
+    this.artist,
+    this.album,
+    this.duration,
+  });
+
+  final String videoId;
+  final String? title;
+  final String? artist;
+  final String? album;
+  final Duration? duration;
+
+  /// Хватает ли данных, чтобы спросить внешнюю базу.
+  bool get canQueryExternal =>
+      (title?.trim().isNotEmpty ?? false) &&
+      (artist?.trim().isNotEmpty ?? false);
+
+  /// Собирает запрос из трека, приводя имя исполнителя к «чистому» виду:
+  /// YouTube добавляет авто-каналам суффикс « - Topic», и по нему внешняя
+  /// база ничего не находит.
+  factory LyricsRequest.fromTrack(Track track) => LyricsRequest(
+        videoId: track.id,
+        title: track.title,
+        artist: track.artists.isEmpty
+            ? null
+            : cleanArtistName(track.artists.first.name),
+        album: track.album?.name,
+        duration: track.duration,
+      );
+
+  @override
+  bool operator ==(Object other) =>
+      other is LyricsRequest &&
+      other.videoId == videoId &&
+      other.title == title &&
+      other.artist == artist &&
+      other.album == album &&
+      other.duration == duration;
+
+  @override
+  int get hashCode => Object.hash(videoId, title, artist, album, duration);
+}
+
+/// Источник текста, выбранный вручную для конкретного трека.
+///
+/// Отдельно от настройки: пользователь может для одного клипа включить
+/// субтитры кнопкой в плеере, не меняя источник по умолчанию для остальных.
+class LyricsSourceOverride extends Notifier<Map<String, LyricsSource>> {
+  @override
+  Map<String, LyricsSource> build() => const <String, LyricsSource>{};
+
+  void setSource(String videoId, LyricsSource source) =>
+      state = <String, LyricsSource>{...state, videoId: source};
+}
+
+final NotifierProvider<LyricsSourceOverride, Map<String, LyricsSource>>
+    lyricsSourceOverrideProvider =
+    NotifierProvider<LyricsSourceOverride, Map<String, LyricsSource>>(
+  LyricsSourceOverride.new,
+);
+
 /// Текст песни.
-final lyricsProvider = FutureProvider.family<Lyrics, String>((ref, videoId) async {
-  // Источник текста выбирается в настройках: вкладка «Текст» или субтитры.
-  final LyricsSource source = ref.watch(
+///
+/// Источников три. «Текст YouTube Music» отдаёт слова без времён; чтобы
+/// подсветка и автопрокрутка всё-таки работали, к нему параллельно
+/// запрашивается LRCLIB (синхронизированный LRC). «LRCLIB» и «Субтитры» —
+/// явный выбор пользователя; если там пусто, не оставляем пустоту и падаем
+/// на обычный текст YouTube Music.
+final lyricsProvider =
+    FutureProvider.family<Lyrics, LyricsRequest>((ref, request) async {
+  final LyricsSource defaultSource = ref.watch(
     settingsControllerProvider.select((AppSettings s) => s.lyricsSource),
   );
+  final LyricsSource? override = ref.watch(
+    lyricsSourceOverrideProvider
+        .select((Map<String, LyricsSource> m) => m[request.videoId]),
+  );
+  final LyricsSource source = override ?? defaultSource;
+
   final CatalogSource catalog = ref.watch(catalogSourceProvider);
+
+  Future<Lyrics> fetchLrclib() {
+    if (!request.canQueryExternal) return Future<Lyrics>.value(Lyrics.none);
+    return ref
+        .watch(lrclibSourceProvider)
+        .fetch(
+          title: request.title!.trim(),
+          artist: request.artist!.trim(),
+          album: request.album,
+          duration: request.duration,
+        )
+        // Ограничиваем ожидание: если база недоступна (бывает за
+        // блокировками), не заставляем пользователя ждать её таймаут.
+        .timeout(const Duration(seconds: 6), onTimeout: () => Lyrics.none);
+  }
+
+  Future<Lyrics> fetchKugou() {
+    if (!request.canQueryExternal) return Future<Lyrics>.value(Lyrics.none);
+    return ref
+        .watch(kugouSourceProvider)
+        .fetch(
+          title: request.title!.trim(),
+          artist: request.artist!.trim(),
+          duration: request.duration,
+        )
+        .timeout(const Duration(seconds: 8), onTimeout: () => Lyrics.none);
+  }
+
+  // Явно выбранная база KuGou.
+  if (source == LyricsSource.kugou) {
+    final Lyrics fromKugou = await fetchKugou();
+    if (!fromKugou.isEmpty) return fromKugou;
+  }
+
+  // Явно выбранная открытая база: она и есть ответ, YouTube не трогаем.
+  if (source == LyricsSource.lrclib) {
+    final Lyrics fromLrclib = await fetchLrclib();
+    if (!fromLrclib.isEmpty) return fromLrclib;
+    // База не нашла — не оставляем пустоту, идём обычным путём.
+  }
+
   if (source == LyricsSource.subtitles) {
-    final Lyrics fromSubtitles = await catalog.subtitleLyrics(videoId);
+    final Lyrics fromSubtitles = await catalog.subtitleLyrics(request.videoId);
     // Если субтитров нет, не оставляем пустоту — пробуем обычный источник.
     if (!fromSubtitles.isEmpty) return fromSubtitles;
   }
-  return catalog.lyrics(videoId);
+
+  // Обычный текст YouTube запускаем сразу, а для основного источника рядом
+  // запрашиваем LRCLIB — он отдаёт LRC, то есть синхронизацию строк, ради
+  // которой и существует подсветка. Запросы идут параллельно, поэтому
+  // внешняя база не добавляет к ожиданию время YouTube.
+  final Future<Lyrics> fromMusicFuture = catalog.lyrics(request.videoId);
+  // Для основного источника рядом спрашиваем KuGou: только он отдаёт
+  // времена строк, ради которых и существует подсветка.
+  final Future<Lyrics>? fromLrclibFuture =
+      (source == LyricsSource.music && request.canQueryExternal)
+          ? fetchKugou()
+          : null;
+
+  final Lyrics fromMusic = await fromMusicFuture;
+  if (fromMusic.isSynced) return fromMusic;
+
+  if (fromLrclibFuture != null) {
+    final Lyrics fromLrclib = await fromLrclibFuture;
+    if (fromLrclib.isSynced) return fromLrclib;
+    if (fromMusic.isEmpty && !fromLrclib.isEmpty) return fromLrclib;
+  }
+
+  return fromMusic;
 });
 
 /// Пара «поисковый запрос + фильтр» — ключ кэша поиска.

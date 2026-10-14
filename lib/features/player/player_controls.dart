@@ -49,6 +49,7 @@ class _PlayerSeekBarState extends ConsumerState<PlayerSeekBar> {
         : duration * _dragValue!;
 
     final ColorScheme scheme = Theme.of(context).colorScheme;
+    final bool playing = player.isPlaying;
     final TextStyle? label = Theme.of(context).textTheme.labelMedium?.copyWith(
           color: scheme.onSurfaceVariant,
           fontFeatures: const <FontFeature>[FontFeature.tabularFigures()],
@@ -59,23 +60,38 @@ class _PlayerSeekBarState extends ConsumerState<PlayerSeekBar> {
       child: Column(
         children: <Widget>[
           SliderTheme(
+            // Оформление как в ArchiveTune: активная часть — цветом акцента,
+            // неактивная — приглушённая дорожка; пока играет, ползунок
+            // крупнее и с обводкой фона, поэтому заметен с первого взгляда.
+            // Пока тянем, над ползунком показывается время.
             data: SliderTheme.of(context).copyWith(
-              // «Толстая» дорожка из ArchiveTune: 12 против прежних 4 —
-              // по ней заметно, где идёт воспроизведение, и легче попасть
-              // курсором.
               trackHeight: 12,
-              // Ползунок крупнее дорожки и с обводкой фона: так он читается
-              // как отдельная «ручка», а не как утолщение полосы.
-              thumbShape: const RoundSliderThumbShape(
-                enabledThumbRadius: 10,
-                elevation: 0,
+              trackShape: const RoundedRectSliderTrackShape(),
+              activeTrackColor: scheme.primary,
+              inactiveTrackColor:
+                  scheme.onSurfaceVariant.withValues(alpha: 0.18),
+              disabledActiveTrackColor: scheme.primary.withValues(alpha: 0.38),
+              disabledInactiveTrackColor:
+                  scheme.onSurfaceVariant.withValues(alpha: 0.12),
+              thumbColor: scheme.primary,
+              thumbShape: _SeekThumbShape(
+                playing: playing,
+                hueColor: scheme.surface,
               ),
               overlayShape: const RoundSliderOverlayShape(overlayRadius: 22),
-              trackShape: const RoundedRectSliderTrackShape(),
-              activeTickMarkColor: scheme.onPrimary,
-              inactiveTickMarkColor: scheme.onSurfaceVariant,
+              activeTickMarkColor: Colors.transparent,
+              inactiveTickMarkColor: Colors.transparent,
+              // Подсказка со временем при перетаскивании.
+              showValueIndicator: ShowValueIndicator.onlyForContinuous,
+              valueIndicatorShape: const RectangularSliderValueIndicatorShape(),
+              valueIndicatorColor: scheme.inverseSurface,
+              valueIndicatorTextStyle: Theme.of(context)
+                  .textTheme
+                  .labelLarge
+                  ?.copyWith(color: scheme.onInverseSurface),
             ),
             child: Slider(
+              label: formatDurationClock(shown),
               value: value.clamp(0.0, 1.0),
               onChanged: seekable
                   ? (double v) => setState(() => _dragValue = v)
@@ -116,6 +132,50 @@ class _PlayerSeekBarState extends ConsumerState<PlayerSeekBar> {
         ],
       ),
     );
+  }
+}
+
+/// Ползунок полосы перемотки.
+///
+/// Отличается от стандартного тем, что при воспроизведении он крупнее и
+/// обведён цветом фона: «ручка» не сливается с дорожкой и сразу видно, что
+/// трек играет. В паузе — компактнее и без обводки.
+class _SeekThumbShape extends SliderComponentShape {
+  const _SeekThumbShape({required this.playing, required this.hueColor});
+
+  /// Играет ли трек прямо сейчас.
+  final bool playing;
+
+  /// Цвет обводки — фон поверхности под ползунком.
+  final Color hueColor;
+
+  double get _radius => playing ? 9 : 7;
+
+  @override
+  Size getPreferredSize(bool isEnabled, bool isDiscrete) =>
+      Size.fromRadius(_radius + 3);
+
+  @override
+  void paint(
+    PaintingContext context,
+    Offset center, {
+    required Animation<double> activationAnimation,
+    required Animation<double> enableAnimation,
+    required bool isDiscrete,
+    required TextPainter labelPainter,
+    required RenderBox parentBox,
+    required SliderThemeData sliderTheme,
+    required TextDirection textDirection,
+    required double value,
+    required double textScaleFactor,
+    required Size sizeWithOverflow,
+  }) {
+    final Canvas canvas = context.canvas;
+    final Color fill = sliderTheme.thumbColor ?? hueColor;
+    if (playing) {
+      canvas.drawCircle(center, _radius + 2, Paint()..color = hueColor);
+    }
+    canvas.drawCircle(center, _radius, Paint()..color = fill);
   }
 }
 

@@ -308,12 +308,17 @@ class AppTheme {
 
   /// Типографика. Expressive-шкала — крупные заголовки и плотный основной текст.
   static TextTheme _textTheme(ColorScheme scheme) {
-    // Poppins — шрифт ArchiveTune: вся типографика оригинала построена на нём.
+    // Основной шрифт — Poppins, как в ArchiveTune. Кириллицы в нём нет
+    // (0 из 64 букв), поэтому русские буквы берутся из фоллбека — Montserrat,
+    // ближайшего по стилю геометрического шрифта с полной кириллицей. Так
+    // латиница выглядит как в оригинале, а русский текст — не «чужим»
+    // системным шрифтом.
     final TextTheme base = Typography.material2021().black
         .apply(
           bodyColor: scheme.onSurface,
           displayColor: scheme.onSurface,
           fontFamily: 'Poppins',
+          fontFamilyFallback: const <String>['Montserrat'],
         );
 
     // Веса по спецификации ArchiveTune: заголовки экранов и секций — semibold,

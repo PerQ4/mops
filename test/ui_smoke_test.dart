@@ -168,13 +168,20 @@ Future<void> _loadFonts() async {
     '${_flutterRoot()}/bin/cache/artifacts/material_fonts/MaterialIcons-Regular.otf',
   ]);
 
-  // Poppins — шрифт темы. Без него в эталонах вместо текста «квадратики»:
-  // тестовая среда подставляет свой шрифт только для известных семейств.
+  // Шрифты темы: основной и фоллбек для кириллицы. Без них в эталонах
+  // вместо текста «квадратики»: тестовая среда подставляет свой шрифт
+  // только для известных семейств.
   await _loadFamily('Poppins', <String>[
     'assets/fonts/Poppins-400.ttf',
     'assets/fonts/Poppins-500.ttf',
     'assets/fonts/Poppins-600.ttf',
     'assets/fonts/Poppins-700.ttf',
+  ]);
+  await _loadFamily('Montserrat', <String>[
+    'assets/fonts/Montserrat-400.ttf',
+    'assets/fonts/Montserrat-500.ttf',
+    'assets/fonts/Montserrat-600.ttf',
+    'assets/fonts/Montserrat-700.ttf',
   ]);
 }
 

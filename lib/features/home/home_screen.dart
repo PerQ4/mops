@@ -80,6 +80,9 @@ class HomeScreen extends ConsumerWidget {
                       _loadMoreNearEnd(notification, ref, !more.finished),
                   child: SectionListView(
                     sections: sections,
+                    // Отступ сверху — внутри экрана, а не у шапки: так шапка
+                    // остаётся своей высоты, а лента не прилипает к ней.
+                    padding: const EdgeInsets.only(top: 16),
                     header: const _MoodRow(),
                     emptyPlaceholder: const EmptyState(
                       icon: Icons.explore_off_outlined,

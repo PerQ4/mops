@@ -28,22 +28,20 @@ class LyricsView extends ConsumerWidget {
     // Метаданные берём у играющего трека: внешняя база (LRCLIB) ищет текст
     // по названию и исполнителю, а не по id YouTube.
     final Track? current = ref.watch(currentTrackProvider);
-    final bool matches = current != null && current.id == videoId;
-    final LyricsRequest request = LyricsRequest(
-      videoId: videoId,
-      title: matches ? current.title : null,
-      artist: matches && current.artists.isNotEmpty
-          ? current.artists.first.name
-          : null,
-      album: matches ? current.album?.name : null,
-      duration: matches ? current.duration : null,
-    );
+    final LyricsRequest request = (current != null && current.id == videoId)
+        ? LyricsRequest.fromTrack(current)
+        : LyricsRequest(videoId: videoId);
 
     final AsyncValue<Lyrics> lyrics = ref.watch(lyricsProvider(request));
 
     return Column(
       children: <Widget>[
-        _LyricsToolbar(request: request),
+        _LyricsToolbar(
+          request: request,
+          // Показываем настоящий источник строк, а не только выбранный:
+          // основной источник умеет подтягивать синхронизацию из LRCLIB.
+          actualSource: lyrics.value?.source,
+        ),
         Expanded(
           child: lyrics.when(
             data: (Lyrics data) {
@@ -60,7 +58,7 @@ class LyricsView extends ConsumerWidget {
                       : TextButton.icon(
                           icon: const Icon(Icons.travel_explore, size: 18),
                           label: const Text('Найти в другом источнике'),
-                          onPressed: () => showLyricsMenu(context, ref, request),
+                          onPressed: () => showLyricsMenu(context, request),
                         ),
                 );
               }
@@ -72,7 +70,7 @@ class LyricsView extends ConsumerWidget {
               return _PlainLyrics(
                 text: data.plain ?? '',
                 source: data.source,
-                onFindSource: () => showLyricsMenu(context, ref, request),
+                onFindSource: () => showLyricsMenu(context, request),
               );
             },
             loading: () => const Center(child: CircularProgressIndicator()),
@@ -90,20 +88,25 @@ class LyricsView extends ConsumerWidget {
 /// Нужна во всех поверхностях: и на полном экране, и в правой панели, и в
 /// островке — поэтому живёт внутри самого [LyricsView], а не в шапке плеера.
 class _LyricsToolbar extends ConsumerWidget {
-  const _LyricsToolbar({required this.request});
+  const _LyricsToolbar({required this.request, this.actualSource});
 
   final LyricsRequest request;
+
+  /// Источник, из которого пришёл текст (может отличаться от выбранного:
+  /// основной источник подтягивает синхронизацию из LRCLIB).
+  final String? actualSource;
 
   @override
   Widget build(BuildContext context, WidgetRef ref) {
     final ColorScheme scheme = Theme.of(context).colorScheme;
-    final LyricsSource source =
+    final LyricsSource selected =
         ref.watch(lyricsSourceOverrideProvider)[request.videoId] ??
             ref.watch(
               settingsControllerProvider.select(
                 (AppSettings s) => s.lyricsSource,
               ),
             );
+    final String label = actualSource ?? selected.label;
 
     return Padding(
       padding: const EdgeInsets.fromLTRB(12, 6, 4, 0),
@@ -113,7 +116,7 @@ class _LyricsToolbar extends ConsumerWidget {
           const SizedBox(width: 8),
           Expanded(
             child: Text(
-              source.label,
+              label,
               maxLines: 1,
               overflow: TextOverflow.ellipsis,
               style: Theme.of(context).textTheme.labelMedium?.copyWith(
@@ -252,13 +255,16 @@ class _SyncedLyricsState extends ConsumerState<_SyncedLyrics> {
 
   @override
   Widget build(BuildContext context) {
-    // Позиция приходит часто, но перестраивать весь список не нужно:
-    // отслеживаем только момент смены строки.
-    final Duration position = ref.watch(
-      playerControllerProvider.select((PlayerUiState s) => s.playback.position),
+    // Позиция приходит несколько раз в секунду. Подписываемся не на неё, а на
+    // номер активной строки: список перестраивается только когда строка
+    // действительно сменилась, а не на каждом тике — иначе все анимации
+    // подсветки перезапускались бы несколько раз в секунду.
+    final int index = ref.watch(
+      playerControllerProvider.select(
+        (PlayerUiState s) => _indexForPosition(s.playback.position),
+      ),
     );
 
-    final int index = _indexForPosition(position);
     if (index != _activeIndex) {
       _activeIndex = index;
       if (!_userScrolling) {

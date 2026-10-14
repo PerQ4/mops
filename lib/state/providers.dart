@@ -98,6 +98,26 @@ class SettingsController extends Notifier<AppSettings> {
   Future<void> setShowLyrics(bool value) =>
       update((AppSettings s) => s.copyWith(showLyricsInPlayer: value));
 
+  /// Множитель размера текста песни.
+  Future<void> setLyricsTextScale(double scale) =>
+      update((AppSettings s) => s.copyWith(lyricsTextScale: scale));
+
+  /// Кроссфейд между треками в секундах (`0` — выключен).
+  Future<void> setCrossfadeSeconds(int seconds) =>
+      update((AppSettings s) => s.copyWith(crossfadeSeconds: seconds));
+
+  /// Где искать: онлайн или только в библиотеке.
+  Future<void> setSearchSource(SearchSource source) =>
+      update((AppSettings s) => s.copyWith(searchSource: source));
+
+  /// Чувствительность свайпа по островку плеера.
+  Future<void> setMiniSwipeSensitivity(SwipeSensitivity value) =>
+      update((AppSettings s) => s.copyWith(miniSwipeSensitivity: value));
+
+  /// Что делает свайп по строке трека.
+  Future<void> setTrackSwipeAction(TrackSwipeAction action) =>
+      update((AppSettings s) => s.copyWith(trackSwipeAction: action));
+
   /// Включает или выключает разворот плеера в правую панель.
   Future<void> setPlayerPanelEnabled(bool value) =>
       update((AppSettings s) => s.copyWith(playerPanelEnabled: value));

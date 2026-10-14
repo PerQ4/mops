@@ -104,6 +104,14 @@ class SettingsScreen extends ConsumerWidget {
             onChanged: controller.setShowLyrics,
           ),
 
+          ListTile(
+            leading: const Icon(Icons.text_fields),
+            title: const Text('Размер текста песни'),
+            subtitle: Text('${(settings.lyricsTextScale * 100).round()}%'),
+            trailing: const Icon(Icons.chevron_right),
+            onTap: () => _pickLyricsTextScale(context, controller, settings),
+          ),
+
           // Плеер стоит справа от навигации, поэтому и разворачивается в
           // правую панель — зеркально библиотеке слева. На телефоне панели
           // нет: там по нажатию, как и раньше, открывается полный экран.
@@ -145,6 +153,28 @@ class SettingsScreen extends ConsumerWidget {
             ),
             value: settings.autoPlayNext,
             onChanged: controller.setAutoPlayNext,
+          ),
+
+          ListTile(
+            leading: const Icon(Icons.swipe),
+            title: const Text('Чувствительность свайпа'),
+            subtitle: Text(
+              'Свайп по мини-плееру: ${settings.miniSwipeSensitivity.label.toLowerCase()}',
+            ),
+            trailing: const Icon(Icons.chevron_right),
+            onTap: () => _pickSwipeSensitivity(context, controller, settings),
+          ),
+
+          const Divider(height: 24),
+
+          // ------------------------------------------------------------- поиск
+          const _SectionHeader('Поиск'),
+          ListTile(
+            leading: const Icon(Icons.search),
+            title: const Text('Где искать'),
+            subtitle: Text(settings.searchSource.description),
+            trailing: const Icon(Icons.chevron_right),
+            onTap: () => _pickSearchSource(context, controller, settings),
           ),
 
           const Divider(height: 24),
@@ -284,8 +314,55 @@ class SettingsScreen extends ConsumerWidget {
     if (result != null) await controller.setLyricsSource(result);
   }
 
-  Future<void> _pickPaletteStyle(
+  Future<void> _pickLyricsTextScale(
     BuildContext context,
+    SettingsController controller,
+    AppSettings settings,
+  ) async {
+    // Множитель, а не абсолютный размер: так настройка не зависит от
+    // системного масштаба и базовой типографики темы.
+    const List<double> values = <double>[0.8, 0.9, 1.0, 1.1, 1.2, 1.3, 1.4];
+    final double? result = await _showChoice<double>(
+      context,
+      title: 'Размер текста песни',
+      current: settings.lyricsTextScale,
+      values: values,
+      label: (double v) => '${(v * 100).round()}%',
+    );
+    if (result != null) await controller.setLyricsTextScale(result);
+  }
+
+  Future<void> _pickSwipeSensitivity(
+    BuildContext context,
+    SettingsController controller,
+    AppSettings settings,
+  ) async {
+    final SwipeSensitivity? result = await _showChoice<SwipeSensitivity>(
+      context,
+      title: 'Чувствительность свайпа',
+      current: settings.miniSwipeSensitivity,
+      values: SwipeSensitivity.values,
+      label: (SwipeSensitivity v) => v.label,
+    );
+    if (result != null) await controller.setMiniSwipeSensitivity(result);
+  }
+
+  Future<void> _pickSearchSource(
+    BuildContext context,
+    SettingsController controller,
+    AppSettings settings,
+  ) async {
+    final SearchSource? result = await _showChoice<SearchSource>(
+      context,
+      title: 'Где искать',
+      current: settings.searchSource,
+      values: SearchSource.values,
+      label: (SearchSource v) => v.label,
+    );
+    if (result != null) await controller.setSearchSource(result);
+  }
+
+  Future<void> _pickPaletteStyle(    BuildContext context,
     SettingsController controller,
     AppSettings settings,
   ) async {

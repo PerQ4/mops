@@ -65,8 +65,13 @@ enum StreamSource {
 /// В ArchiveTune источников два: вкладка «Текст» в YouTube Music и субтитры
 /// видео. У клипов и редких записей вкладки нет, а субтитры есть.
 enum LyricsSource {
-  music('Текст YouTube Music', 'Вкладка «Текст» — с подсветкой строк'),
-  subtitles('Субтитры видео', 'Разметка видео — когда текста нет');
+  music(
+    'Текст YouTube Music',
+    'Вкладка «Текст»; для подсветки — база KuGou',
+  ),
+  subtitles('Субтитры видео', 'Дорожка видео — со временем строк'),
+  kugou('KuGou', 'Внешняя база — текст с временами'),
+  lrclib('LRCLIB', 'Внешняя база — текст с временами');
 
   const LyricsSource(this.label, this.description);
 
@@ -77,6 +82,63 @@ enum LyricsSource {
       LyricsSource.values.firstWhere(
         (LyricsSource v) => v.name == name,
         orElse: () => LyricsSource.music,
+      );
+}
+
+/// Где искать треки.
+///
+/// В ArchiveTune поиск можно ограничить своей библиотекой — так быстрее
+/// находить уже знакомое и не уходить в бесконечную выдачу YouTube.
+enum SearchSource {
+  online('Онлайн', 'Искать по всему YouTube Music'),
+  libraryOnly('Только библиотека', 'Искать среди лайкнутых и сохранённых');
+
+  const SearchSource(this.label, this.description);
+
+  final String label;
+  final String description;
+
+  static SearchSource fromName(String? name) => SearchSource.values.firstWhere(
+        (SearchSource v) => v.name == name,
+        orElse: () => SearchSource.online,
+      );
+}
+
+/// Чувствительность свайпа по островку плеера.
+enum SwipeSensitivity {
+  low('Низкая', 0.40),
+  normal('Обычная', 0.25),
+  high('Высокая', 0.12);
+
+  const SwipeSensitivity(this.label, this.thresholdFraction);
+
+  final String label;
+
+  /// Доля ширины островка, которую нужно протащить, чтобы переключить трек.
+  /// Чем меньше доля, тем выше чувствительность: жест срабатывает раньше.
+  final double thresholdFraction;
+
+  static SwipeSensitivity fromName(String? name) =>
+      SwipeSensitivity.values.firstWhere(
+        (SwipeSensitivity v) => v.name == name,
+        orElse: () => SwipeSensitivity.normal,
+      );
+}
+
+/// Что делает горизонтальный свайп по строке трека в списке.
+enum TrackSwipeAction {
+  off('Выключено'),
+  playNext('Играть следующим'),
+  enqueue('В очередь');
+
+  const TrackSwipeAction(this.label);
+
+  final String label;
+
+  static TrackSwipeAction fromName(String? name) =>
+      TrackSwipeAction.values.firstWhere(
+        (TrackSwipeAction v) => v.name == name,
+        orElse: () => TrackSwipeAction.off,
       );
 }
 
@@ -117,7 +179,12 @@ class AppSettings {
     this.audioQuality = AudioQuality.high,
     this.streamClient = StreamSource.auto,
     this.showLyricsInPlayer = true,
+    this.lyricsTextScale = 1.0,
+    this.crossfadeSeconds = 0,
     this.autoPlayNext = true,
+    this.searchSource = SearchSource.online,
+    this.miniSwipeSensitivity = SwipeSensitivity.normal,
+    this.trackSwipeAction = TrackSwipeAction.off,
     this.streamingRegion = 'RU',
     this.streamingLanguage = 'ru',
     this.oauthClientId = '',
@@ -157,7 +224,28 @@ class AppSettings {
   final StreamSource streamClient;
 
   final bool showLyricsInPlayer;
+
+  /// Множитель размера текста песни (0.8–1.4). Позволяет крупнее показывать
+  /// слова, не меняя системный масштаб всего интерфейса.
+  final double lyricsTextScale;
+
+  /// Кроссфейд между треками в секундах. `0` — выключен.
+  ///
+  /// Значение хранится, но движок воспроизведения (вне этого модуля) пока
+  /// не умеет накладывать треки — см. отчёт.
+  final int crossfadeSeconds;
+
   final bool autoPlayNext;
+
+  /// Где искать: по всему YouTube Music или только по своей библиотеке.
+  final SearchSource searchSource;
+
+  /// Насколько охотно свайп по островку плеера переключает трек.
+  final SwipeSensitivity miniSwipeSensitivity;
+
+  /// Что делает свайп по строке трека. Значение хранится, но применяется
+  /// в строке списка — а она вне этого модуля — см. отчёт.
+  final TrackSwipeAction trackSwipeAction;
   final String streamingRegion;
   final String streamingLanguage;
   final String oauthClientId;
@@ -212,7 +300,12 @@ class AppSettings {
     AudioQuality? audioQuality,
     StreamSource? streamClient,
     bool? showLyricsInPlayer,
+    double? lyricsTextScale,
+    int? crossfadeSeconds,
     bool? autoPlayNext,
+    SearchSource? searchSource,
+    SwipeSensitivity? miniSwipeSensitivity,
+    TrackSwipeAction? trackSwipeAction,
     String? streamingRegion,
     String? streamingLanguage,
     String? oauthClientId,
@@ -238,7 +331,12 @@ class AppSettings {
       audioQuality: audioQuality ?? this.audioQuality,
       streamClient: streamClient ?? this.streamClient,
       showLyricsInPlayer: showLyricsInPlayer ?? this.showLyricsInPlayer,
+      lyricsTextScale: lyricsTextScale ?? this.lyricsTextScale,
+      crossfadeSeconds: crossfadeSeconds ?? this.crossfadeSeconds,
       autoPlayNext: autoPlayNext ?? this.autoPlayNext,
+      searchSource: searchSource ?? this.searchSource,
+      miniSwipeSensitivity: miniSwipeSensitivity ?? this.miniSwipeSensitivity,
+      trackSwipeAction: trackSwipeAction ?? this.trackSwipeAction,
       streamingRegion: streamingRegion ?? this.streamingRegion,
       streamingLanguage: streamingLanguage ?? this.streamingLanguage,
       oauthClientId: oauthClientId ?? this.oauthClientId,
@@ -266,7 +364,12 @@ class AppSettings {
         'audioQuality': audioQuality.name,
         'streamClient': streamClient.name,
         'showLyricsInPlayer': showLyricsInPlayer,
+        'lyricsTextScale': lyricsTextScale,
+        'crossfadeSeconds': crossfadeSeconds,
         'autoPlayNext': autoPlayNext,
+        'searchSource': searchSource.name,
+        'miniSwipeSensitivity': miniSwipeSensitivity.name,
+        'trackSwipeAction': trackSwipeAction.name,
         'streamingRegion': streamingRegion,
         'streamingLanguage': streamingLanguage,
         'oauthClientId': oauthClientId,
@@ -297,7 +400,14 @@ class AppSettings {
       audioQuality: AudioQuality.fromName(json['audioQuality'] as String?),
       streamClient: StreamSource.fromName(json['streamClient'] as String?),
       showLyricsInPlayer: json['showLyricsInPlayer'] as bool? ?? true,
+      lyricsTextScale: (json['lyricsTextScale'] as num?)?.toDouble() ?? 1.0,
+      crossfadeSeconds: (json['crossfadeSeconds'] as num?)?.toInt() ?? 0,
       autoPlayNext: json['autoPlayNext'] as bool? ?? true,
+      searchSource: SearchSource.fromName(json['searchSource'] as String?),
+      miniSwipeSensitivity:
+          SwipeSensitivity.fromName(json['miniSwipeSensitivity'] as String?),
+      trackSwipeAction:
+          TrackSwipeAction.fromName(json['trackSwipeAction'] as String?),
       streamingRegion: json['streamingRegion'] as String? ?? 'RU',
       streamingLanguage: json['streamingLanguage'] as String? ?? 'ru',
       oauthClientId: json['oauthClientId'] as String? ?? '',
