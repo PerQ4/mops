@@ -63,6 +63,21 @@ class AppTheme {
       canvasColor: scheme.surface,
       splashFactory: InkRipple.splashFactory,
       visualDensity: VisualDensity.standard,
+      // Полосы прокрутки на десктопе: тонкие и неяркие, чтобы не спорить
+      // с содержимым.
+      scrollbarTheme: ScrollbarThemeData(
+        thickness: const WidgetStatePropertyAll<double>(8),
+        radius: const Radius.circular(4),
+        thumbColor: WidgetStatePropertyAll<Color>(scheme.outlineVariant),
+        crossAxisMargin: 2,
+      ),
+      popupMenuTheme: PopupMenuThemeData(
+        color: scheme.surfaceContainerHigh,
+        surfaceTintColor: Colors.transparent,
+        shape: const RoundedRectangleBorder(
+          borderRadius: BorderRadius.all(Radius.circular(12)),
+        ),
+      ),
       appBarTheme: AppBarTheme(
         backgroundColor: scheme.surface,
         surfaceTintColor: scheme.surfaceTint,
