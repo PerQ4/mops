@@ -27,7 +27,13 @@ class _PlayerSeekBarState extends ConsumerState<PlayerSeekBar> {
   @override
   Widget build(BuildContext context) {
     final PlayerUiState player = widget.player;
-    final Duration duration = player.playback.duration;
+    // Длительность берём из трека, если движок её не сообщил: для потока
+    // через посредника он может её не отдать, а без длительности полоса
+    // перемотки отключалась целиком.
+    final Duration engineDuration = player.playback.duration;
+    final Duration duration = engineDuration > Duration.zero
+        ? engineDuration
+        : (player.current?.duration ?? Duration.zero);
     final bool seekable = duration > Duration.zero;
 
     final double value = _dragValue ?? player.playback.progress;
@@ -58,9 +64,11 @@ class _PlayerSeekBarState extends ConsumerState<PlayerSeekBar> {
                   : null,
               onChangeEnd: seekable
                   ? (double v) {
+                      // Позицию считаем сами: у движка длительность может
+                      // быть нулевой, тогда seekFraction дал бы ноль.
                       ref
                           .read(playerControllerProvider.notifier)
-                          .seekFraction(v);
+                          .seek(duration * v);
                       setState(() => _dragValue = null);
                     }
                   : null,
