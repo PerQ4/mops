@@ -1,13 +1,14 @@
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 
+import '../../core/theme/layout.dart';
 import '../../data/models/models.dart';
 import '../../state/catalog_providers.dart';
 import '../../state/player_controller.dart';
 import '../../widgets/async_views.dart';
 import '../../widgets/media_card.dart';
-import '../../widgets/section_list.dart';
 import '../../widgets/track_tile.dart';
+import '../album/media_hero.dart';
 import '../common/navigation.dart';
 import '../../widgets/empty_state.dart';
 
@@ -49,65 +50,110 @@ class _ArtistBody extends ConsumerWidget {
       playerControllerProvider.select((PlayerUiState s) => s.isPlaying),
     );
 
-    return ListView(
-      padding: EdgeInsets.zero,
-      children: <Widget>[
-        SafeArea(
-          bottom: false,
-          child: Align(
-            alignment: Alignment.centerLeft,
-            child: Padding(
-              padding: const EdgeInsets.only(left: 4, top: 4),
-              child: BackButton(onPressed: () => Navigator.maybePop(context)),
-            ),
+    final List<Track> top = artist.topTracks;
+    final bool isCurrentArtist =
+        current != null && top.any((Track t) => t.id == current.id);
+    final bool hasTracks = top.isNotEmpty;
+
+    return CustomScrollView(
+      slivers: <Widget>[
+        SliverAppBar(
+          pinned: true,
+          expandedHeight: AppLayout.appBarHeight,
+          title: Text(artist.name, maxLines: 1, overflow: TextOverflow.ellipsis),
+        ),
+        SliverToBoxAdapter(
+          child: MediaHero(
+            title: artist.name,
+            subtitle: artist.subscribers,
+            description: artist.description,
+            imageUrl: artist.thumbnails.sized(600),
+            fallbackIcon: Icons.person_outline,
+            actions: <Widget>[
+              HeroPlayButton(
+                label: isCurrentArtist && playing ? 'Пауза' : 'Слушать',
+                icon: isCurrentArtist && playing
+                    ? Icons.pause
+                    : Icons.play_arrow,
+                onPressed: !hasTracks
+                    ? null
+                    : () {
+                        final PlayerController controller =
+                            ref.read(playerControllerProvider.notifier);
+                        if (isCurrentArtist && playing) {
+                          controller.togglePlayPause();
+                        } else {
+                          controller.playQueue(top);
+                        }
+                      },
+              ),
+              HeroCircleButton(
+                icon: Icons.shuffle,
+                tooltip: 'Перемешать',
+                size: 52,
+                onPressed: hasTracks
+                    ? () => ref
+                        .read(playerControllerProvider.notifier)
+                        .playQueue(top, shuffle: true)
+                    : null,
+              ),
+              HeroCircleButton(
+                icon: Icons.playlist_add,
+                tooltip: 'В очередь',
+                size: 52,
+                onPressed: hasTracks ? () => _enqueueAll(ref, top) : null,
+              ),
+            ],
           ),
         ),
-        PageHeader(
-          title: artist.name,
-          subtitle: artist.subscribers,
-          description: artist.description,
-          imageUrl: artist.thumbnails.sized(600),
-          circular: true,
-          fallbackIcon: Icons.person_outline,
-          actions: <Widget>[
-            FilledButton.icon(
-              onPressed: artist.topTracks.isEmpty
-                  ? null
-                  : () => ref
-                      .read(playerControllerProvider.notifier)
-                      .playQueue(artist.topTracks, shuffle: true),
-              icon: const Icon(Icons.shuffle),
-              label: const Text('Слушать'),
-            ),
-          ],
-        ),
-        if (artist.topTracks.isNotEmpty) ...<Widget>[
-          const _SectionTitle('Популярные треки'),
-          for (int i = 0; i < artist.topTracks.length && i < 10; i++)
-            TrackTile(
-              track: artist.topTracks[i],
-              leadingNumber: i + 1,
-              isCurrent: current?.id == artist.topTracks[i].id,
-              isPlaying: current?.id == artist.topTracks[i].id && playing,
-              subtitleOverride: artist.topTracks[i].artistLine,
-              onTap: () => ref
-                  .read(playerControllerProvider.notifier)
-                  .playTrack(
-                    artist.topTracks[i],
-                    context: artist.topTracks,
-                  ),
-            ),
-          const SizedBox(height: 12),
+        if (top.isNotEmpty) ...<Widget>[
+          const SliverToBoxAdapter(child: _SectionTitle('Популярные треки')),
+          SliverList.builder(
+            itemCount: top.length > 10 ? 10 : top.length,
+            itemBuilder: (BuildContext context, int index) {
+              final Track track = top[index];
+              final bool isCurrent = current?.id == track.id;
+              return TrackTile(
+                track: track,
+                leadingNumber: index + 1,
+                isCurrent: isCurrent,
+                isPlaying: isCurrent && playing,
+                subtitleOverride: track.artistLine,
+                onTap: () => ref
+                    .read(playerControllerProvider.notifier)
+                    .playTrack(track, context: top),
+              );
+            },
+          ),
+          const SliverToBoxAdapter(child: SizedBox(height: 12)),
         ],
         if (artist.albums.isNotEmpty)
-          _CardRow(title: 'Альбомы', albums: artist.albums),
+          SliverToBoxAdapter(
+            child: _CardRow(title: 'Альбомы', albums: artist.albums),
+          ),
         if (artist.singles.isNotEmpty)
-          _CardRow(title: 'Синглы и мини-альбомы', albums: artist.singles),
+          SliverToBoxAdapter(
+            child: _CardRow(title: 'Синглы и мини-альбомы', albums: artist.singles),
+          ),
         if (artist.related.isNotEmpty)
-          _ArtistRow(title: 'Похожие исполнители', artists: artist.related),
-        const SizedBox(height: 32),
+          SliverToBoxAdapter(
+            child: _ArtistRow(title: 'Похожие исполнители', artists: artist.related),
+          ),
+        const SliverToBoxAdapter(
+          // Отступ снизу под плавающий островок плеера.
+          child: SizedBox(height: AppLayout.floatingDockClearance),
+        ),
       ],
     );
+  }
+
+  /// Кладёт популярные треки в конец очереди.
+  void _enqueueAll(WidgetRef ref, List<Track> tracks) {
+    final PlayerController controller =
+        ref.read(playerControllerProvider.notifier);
+    for (final Track track in tracks) {
+      controller.enqueue(track);
+    }
   }
 }
 
@@ -119,7 +165,12 @@ class _SectionTitle extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     return Padding(
-      padding: const EdgeInsets.fromLTRB(16, 8, 16, 8),
+      padding: const EdgeInsets.fromLTRB(
+        AppLayout.gutter,
+        16,
+        AppLayout.gutter,
+        8,
+      ),
       child: Text(
         title,
         style: Theme.of(context)
@@ -145,13 +196,13 @@ class _CardRow extends StatelessWidget {
       children: <Widget>[
         _SectionTitle(title),
         SizedBox(
-          height: 232,
+          height: AppLayout.cardHeight + 8,
           child: ListView.separated(
             scrollDirection: Axis.horizontal,
-            padding: const EdgeInsets.symmetric(horizontal: 16),
+            padding: const EdgeInsets.symmetric(horizontal: AppLayout.gutter),
             itemCount: albums.length,
             separatorBuilder: (BuildContext context, int _) =>
-                const SizedBox(width: 8),
+                const SizedBox(width: 12),
             itemBuilder: (BuildContext context, int index) {
               final Album album = albums[index];
               return BrowseItemCard(
@@ -182,13 +233,14 @@ class _ArtistRow extends StatelessWidget {
       children: <Widget>[
         _SectionTitle(title),
         SizedBox(
-          height: 226,
+          // У круглых аватаров обложка меньше карточки, поэтому высота иная.
+          height: AppLayout.artistAvatar + 90,
           child: ListView.separated(
             scrollDirection: Axis.horizontal,
-            padding: const EdgeInsets.symmetric(horizontal: 16),
+            padding: const EdgeInsets.symmetric(horizontal: AppLayout.gutter),
             itemCount: artists.length,
             separatorBuilder: (BuildContext context, int _) =>
-                const SizedBox(width: 8),
+                const SizedBox(width: 12),
             itemBuilder: (BuildContext context, int index) {
               final Artist artist = artists[index];
               return BrowseItemCard(

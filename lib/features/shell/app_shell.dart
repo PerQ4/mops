@@ -4,24 +4,21 @@ import 'package:flutter_riverpod/flutter_riverpod.dart';
 import '../../core/theme/layout.dart';
 import '../../state/player_controller.dart';
 import '../../state/shell.dart';
-import '../explore/explore_screen.dart';
-import '../home/home_screen.dart';
-import '../library/library_screen.dart';
 import '../player/floating_dock.dart';
-import '../search/search_screen.dart';
+import 'content_navigator.dart';
 import 'destinations.dart';
+import 'sidebar.dart';
 
 /// Каркас приложения.
 ///
-/// Навигация и плеер живут внизу в виде плавающих островков, поэтому
-/// содержимое занимает всю ширину окна: боковой колонки нет.
+/// Содержимое живёт во вложенном навигаторе (см. [ContentNavigator]), поверх
+/// которого нарисован плавающий док. Поэтому подэкран — альбом, плейлист,
+/// исполнитель, настройки — не перекрывает док: он виден и там.
 ///
-///  * **широкая раскладка** — оба островка внизу стоят рядом;
-///  * **узкая** — навигация остаётся обычной нижней панелью, а внизу парит
+///  * **широкая раскладка** — слева постоянная панель навигации и библиотеки,
+///    справа содержимое, внизу док из двух островков;
+///  * **узкая** — навигация остаётся обычной нижней панелью, внизу парит
 ///    только островок плеера.
-///
-/// Островки накрывают содержимое, а не занимают место в раскладке, поэтому
-/// появление плеера ничего не сдвигает.
 class AppShell extends ConsumerWidget {
   const AppShell({super.key});
 
@@ -33,26 +30,24 @@ class AppShell extends ConsumerWidget {
     final int index = ref.watch(shellIndexProvider);
     final bool wide = context.isExpandedLayout;
 
-    const List<Widget> pages = <Widget>[
-      HomeScreen(),
-      ExploreScreen(),
-      SearchScreen(),
-      LibraryScreen(),
-    ];
-
     final Widget content = Stack(
       children: <Widget>[
-        IndexedStack(index: index, children: pages),
-        const Align(
-          alignment: Alignment.bottomCenter,
-          child: FloatingDock(),
-        ),
+        const Positioned.fill(child: ContentNavigator()),
+        const Align(alignment: Alignment.bottomCenter, child: FloatingDock()),
       ],
     );
 
     if (wide) {
-      // На широком экране навигация — часть нижнего островка.
-      return Scaffold(body: content);
+      // Панель занимает свою ширину, содержимое — всё остальное. Док
+      // центрируется по области содержимого, поэтому не наезжает на панель.
+      return Scaffold(
+        body: Row(
+          children: <Widget>[
+            const LibrarySidebar(),
+            Expanded(child: content),
+          ],
+        ),
+      );
     }
 
     return Scaffold(
@@ -60,7 +55,8 @@ class AppShell extends ConsumerWidget {
       bottomNavigationBar: NavigationBar(
         height: AppLayout.bottomNavHeight,
         selectedIndex: index,
-        onDestinationSelected: ref.read(shellIndexProvider.notifier).select,
+        onDestinationSelected: (int value) =>
+            selectShellDestination(ref, value),
         destinations: <NavigationDestination>[
           for (final ShellDestination d in ShellDestination.values)
             NavigationDestination(

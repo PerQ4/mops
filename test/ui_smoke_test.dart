@@ -316,7 +316,13 @@ void main() {
     );
 
     // Панель очереди растёт вверх из островка и не сдвигает содержимое.
-    await tester.tap(find.byIcon(Icons.queue_music));
+    // Ищем иконку именно в островке: такие же есть в карточках.
+    await tester.tap(
+      find.descendant(
+        of: find.byType(FloatingDock),
+        matching: find.byIcon(Icons.queue_music),
+      ),
+    );
     await tester.pumpAndSettle();
     expect(tester.takeException(), isNull);
 

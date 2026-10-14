@@ -9,6 +9,7 @@ import '../../state/player_controller.dart';
 import '../../state/player_panel.dart';
 import '../../widgets/artwork.dart';
 import '../common/navigation.dart';
+import '../shell/content_navigator.dart';
 import '../shell/destinations.dart';
 import '../../state/shell.dart';
 import 'lyrics_view.dart';
@@ -27,23 +28,30 @@ import 'queue_list.dart';
 class FloatingDock extends ConsumerWidget {
   const FloatingDock({super.key});
 
-  /// Высота островка.
-  static const double islandHeight = 64;
+  /// Высота островка навигации. ArchiveTune: 78.
+  ///
+  /// Он выше плеера, поэтому именно по нему считается запас снизу
+  /// (`AppLayout.floatingDockClearance`).
+  static const double islandHeight = 78;
 
-  /// Полное скругление — снаружи пары.
+  /// Высота мини-плеера. ArchiveTune: 70.
+  static const double playerIslandHeight = 70;
+
+  /// Полное скругление — половина высоты островка.
   static const double outerRadius = islandHeight / 2;
+  static const double playerRadius = playerIslandHeight / 2;
 
   /// Минимальное скругление на стыке двух островков.
   static const double joinRadius = AppLayout.junctionRadius;
 
-  /// Зазор между островками.
+  /// Зазор между островками (стык).
   static const double gap = 8;
 
   /// Отступ от краёв окна.
   static const double margin = 14;
 
-  /// Ширина панели-ящика.
-  static const double panelWidth = 420;
+  /// Ширина панели-ящика и навигации. ArchiveTune: до 420.
+  static const double panelWidth = AppLayout.navBarMaxWidth;
   static const double panelMaxHeight = 420;
 
   @override
@@ -128,10 +136,10 @@ class _NavIsland extends ConsumerWidget {
               _NavButton(
                 destination: d,
                 selected: ShellDestination.values.indexOf(d) == index,
-                onTap: () =>
-                    ref.read(shellIndexProvider.notifier).select(
-                          ShellDestination.values.indexOf(d),
-                        ),
+                onTap: () => selectShellDestination(
+                  ref,
+                  ShellDestination.values.indexOf(d),
+                ),
               ),
             const SizedBox(width: 4),
             Container(
@@ -254,15 +262,15 @@ class _PlayerIslandState extends ConsumerState<_PlayerIsland> {
     final PlayerUiState player = ref.watch(playerControllerProvider);
     final Track track = player.current!;
     final bool wide = context.isExpandedLayout;
-    final double radius = FloatingDock.outerRadius;
+    final double radius = FloatingDock.playerRadius;
 
     return MouseRegion(
       onEnter: (_) => setState(() => _hovered = true),
       onExit: (_) => setState(() => _hovered = false),
       child: _DockSurface(
         radius: BorderRadius.only(
-            topLeft: const Radius.circular(FloatingDock.outerRadius),
-            bottomLeft: const Radius.circular(FloatingDock.outerRadius),
+            topLeft: Radius.circular(FloatingDock.playerRadius),
+            bottomLeft: Radius.circular(FloatingDock.playerRadius),
             topRight: Radius.circular(
               widget.joinedOnRight ? FloatingDock.joinRadius : radius,
             ),
@@ -272,7 +280,7 @@ class _PlayerIslandState extends ConsumerState<_PlayerIsland> {
           ),
           elevation: _hovered ? 16 : 8,
           child: SizedBox(
-            height: FloatingDock.islandHeight,
+            height: FloatingDock.playerIslandHeight,
             child: Row(
               mainAxisSize: MainAxisSize.min,
               children: <Widget>[

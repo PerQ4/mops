@@ -27,7 +27,26 @@ void openBrowseItem(
     case ArtistItem(:final Artist artist):
       AppRoutes.artist(context, artist.id);
     case PlaylistItem(:final Playlist playlist):
-      AppRoutes.playlist(context, playlist.id);
+      // Видеоклипы YouTube Music приходят как `musicTwoRowItemRenderer`
+      // со ссылкой `watchEndpoint`. Разбор пока относит их к плейлистам и
+      // теряет videoId — получается плейлист с пустым id, и нажатие открывало
+      // бы пустую страницу вместо воспроизведения. Пока это так, достаём id
+      // из адреса обложки (единственное место, где он сохранился) и играем.
+      final String? videoId = playlist.id.isEmpty
+          ? videoIdFromThumbnails(playlist.thumbnails)
+          : null;
+      if (videoId != null) {
+        ref.read(playerControllerProvider.notifier).playTrack(
+              Track(
+                id: videoId,
+                title: playlist.title,
+                thumbnails: playlist.thumbnails,
+              ),
+            );
+      } else if (playlist.id.isNotEmpty) {
+        // Настоящий плейлист — открываем его страницу.
+        AppRoutes.playlist(context, playlist.id);
+      }
   }
 }
 
@@ -106,16 +125,23 @@ class _Section extends ConsumerWidget {
     final List<Track> tracks = tracksOf(section);
     final bool isTrackSection = tracks.isNotEmpty && tracks.length == section.items.length;
 
-    if (isTrackSection) {
-      return _TrackRows(section: section, limit: trackPreviewLimit);
-    }
+    final Widget body = isTrackSection
+        ? _TrackRows(section: section, limit: trackPreviewLimit)
+        : _CardCarousel(section: section);
 
-    return _CardCarousel(section: section);
+    // Промежуток между секциями — 18 по спецификации. Отступ снизу, а не
+    // сверху: так у последней секции не остаётся «висящей» пустоты сверху.
+    return Padding(
+      padding: const EdgeInsets.only(bottom: 18),
+      child: body,
+    );
   }
 }
 
-/// Заголовок секции в стиле ArchiveTune: крупный, без кнопки «Все»
-/// (кнопка появляется только там, где есть куда перейти).
+/// Заголовок секции в стиле ArchiveTune.
+///
+/// Высота ≥64, отступ по горизонтали 16, название `titleLarge` semibold.
+/// Кнопка «Слушать все» (40×≥88) показывается только там, где есть продолжение.
 class _SectionTitle extends StatelessWidget {
   const _SectionTitle({required this.title, this.onShowAll});
 
@@ -124,29 +150,35 @@ class _SectionTitle extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
-    return Padding(
-      padding: const EdgeInsets.fromLTRB(
-        AppLayout.gutter,
-        20,
-        AppLayout.gutter,
-        8,
-      ),
-      child: Row(
-        children: <Widget>[
-          Expanded(
-            child: Text(
-              title,
-              maxLines: 1,
-              overflow: TextOverflow.ellipsis,
-              style: Theme.of(context)
-                  .textTheme
-                  .headlineSmall
-                  ?.copyWith(fontWeight: FontWeight.w700, letterSpacing: -0.5),
+    return ConstrainedBox(
+      constraints: const BoxConstraints(minHeight: 64),
+      child: Padding(
+        padding: const EdgeInsets.symmetric(horizontal: 16),
+        child: Row(
+          children: <Widget>[
+            Expanded(
+              child: Text(
+                title,
+                maxLines: 1,
+                overflow: TextOverflow.ellipsis,
+                style: Theme.of(context).textTheme.titleLarge?.copyWith(
+                      fontWeight: FontWeight.w600,
+                    ),
+              ),
             ),
-          ),
-          if (onShowAll != null)
-            TextButton(onPressed: onShowAll, child: const Text('Все')),
-        ],
+            if (onShowAll != null) ...<Widget>[
+              const SizedBox(width: 12),
+              TextButton(
+                onPressed: onShowAll,
+                style: TextButton.styleFrom(
+                  minimumSize: const Size(88, 40),
+                  padding: const EdgeInsets.symmetric(horizontal: 16),
+                ),
+                child: const Text('Слушать все'),
+              ),
+            ],
+          ],
+        ),
       ),
     );
   }
@@ -203,23 +235,21 @@ class _CardCarousel extends ConsumerWidget {
 
   @override
   Widget build(BuildContext context, WidgetRef ref) {
-    // У круглых аватаров обложка меньше карточки, поэтому и высота другая —
-    // иначе подписи обрезаются.
-    final bool circular = section.items.isNotEmpty &&
-        section.items.first is ArtistItem;
+    // Обложка карточки — 128 по сетке спецификации. Круглым аватарам тоже
+    // хватает 128: карточка шире не нужна, подписи у них в одну строку.
+    const double cardWidth = AppLayout.gridThumbnailHeight;
 
     return Column(
       crossAxisAlignment: CrossAxisAlignment.start,
       children: <Widget>[
         if (section.title.isNotEmpty) _SectionTitle(title: section.title),
         SizedBox(
-          // Высота зафиксирована константой — карусель не «прыгает».
-          height: circular
-              ? AppLayout.artistAvatar + 62
-              : AppLayout.cardHeight,
+          // Высота зафиксирована константой — карусель не «прыгает»:
+          // обложка + заголовок в одну строку + подпись до двух строк.
+          height: cardWidth + 84,
           child: ListView.separated(
             scrollDirection: Axis.horizontal,
-            padding: const EdgeInsets.symmetric(horizontal: AppLayout.gutter),
+            padding: const EdgeInsets.symmetric(horizontal: 16),
             itemCount: section.items.length,
             separatorBuilder: (BuildContext context, int _) =>
                 const SizedBox(width: 12),
@@ -227,6 +257,7 @@ class _CardCarousel extends ConsumerWidget {
               final BrowseItem item = section.items[index];
               return BrowseItemCard(
                 item: item,
+                width: cardWidth,
                 onTap: (BrowseItem value) => openBrowseItem(
                   context,
                   ref,

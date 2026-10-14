@@ -1,6 +1,7 @@
 import 'package:flutter/material.dart';
 
 import '../core/innertube/innertube_client.dart';
+import '../core/theme/layout.dart';
 
 /// Приводит техническую ошибку к тексту, который не стыдно показать.
 String describeError(Object error) {
@@ -23,7 +24,11 @@ String describeError(Object error) {
 
 /// Скелетон-заглушка списка с каруселями — не «прыгающий» при загрузке.
 class SectionSkeleton extends StatelessWidget {
-  const SectionSkeleton({super.key, this.rows = 4, this.cardWidth = 160});
+  const SectionSkeleton({
+    super.key,
+    this.rows = 4,
+    this.cardWidth = AppLayout.gridThumbnailHeight,
+  });
 
   final int rows;
   final double cardWidth;
@@ -52,7 +57,7 @@ class SectionSkeleton extends StatelessWidget {
             ),
             const SizedBox(height: 12),
             SizedBox(
-              height: cardWidth + 60,
+              height: cardWidth + 84,
               child: ListView.separated(
                 scrollDirection: Axis.horizontal,
                 padding: const EdgeInsets.symmetric(horizontal: 16),
@@ -68,7 +73,9 @@ class SectionSkeleton extends StatelessWidget {
                         height: cardWidth,
                         decoration: BoxDecoration(
                           color: scheme.surfaceContainerHighest,
-                          borderRadius: BorderRadius.circular(16),
+                          borderRadius: BorderRadius.circular(
+                            AppLayout.gridThumbnailRadius,
+                          ),
                         ),
                       ),
                       const SizedBox(height: 10),

@@ -78,10 +78,10 @@ abstract final class AppLayout {
 
   /// Отступ снизу, чтобы содержимое экранов не уходило под плавающий островок.
   ///
-  /// Высота островка (64) + его отступ от края окна (14) + запас (8).
+  /// Высота островка (78) + его отступ от края окна (14) + запас (8).
   /// Значения должны совпадать с `FloatingDock.islandHeight` и
   /// `FloatingDock.margin`.
-  static const double floatingDockClearance = 86;
+  static const double floatingDockClearance = 100;
 
   /// Максимальная ширина содержимого.
   ///

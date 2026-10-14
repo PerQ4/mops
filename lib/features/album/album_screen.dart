@@ -1,14 +1,15 @@
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 
+import '../../core/theme/layout.dart';
 import '../../core/utils/format.dart';
 import '../../data/models/models.dart';
 import '../../state/catalog_providers.dart';
 import '../../state/player_controller.dart';
 import '../../widgets/async_views.dart';
-import '../../widgets/section_list.dart';
 import '../../widgets/track_tile.dart';
 import '../../widgets/empty_state.dart';
+import 'media_hero.dart';
 
 /// Страница альбома: обложка, метаданные и список треков.
 class AlbumScreen extends ConsumerWidget {
@@ -48,44 +49,60 @@ class _AlbumBody extends ConsumerWidget {
       playerControllerProvider.select((PlayerUiState s) => s.isPlaying),
     );
 
-    final String? meta = _metaLine();
     final bool isCurrentAlbum =
         current != null && album.tracks.any((Track t) => t.id == current.id);
+    final bool hasTracks = album.tracks.isNotEmpty;
 
     return CustomScrollView(
       slivers: <Widget>[
         SliverAppBar(
           pinned: true,
-          expandedHeight: 64,
+          expandedHeight: AppLayout.appBarHeight,
           title: Text(album.title, maxLines: 1, overflow: TextOverflow.ellipsis),
         ),
         SliverToBoxAdapter(
-          child: PageHeader(
+          child: MediaHero(
             title: album.title,
-            subtitle: meta,
+            subtitle: album.artists.isEmpty ? null : album.artistLine,
+            meta: _metaLine(),
             description: album.description,
             imageUrl: album.thumbnails.sized(600),
             fallbackIcon: Icons.album_outlined,
             actions: <Widget>[
-              FilledButton.icon(
-                onPressed: album.tracks.isEmpty
+              HeroPlayButton(
+                label: isCurrentAlbum && playing ? 'Пауза' : 'Слушать',
+                icon: isCurrentAlbum && playing
+                    ? Icons.pause
+                    : Icons.play_arrow,
+                onPressed: !hasTracks
                     ? null
-                    : () => ref
-                        .read(playerControllerProvider.notifier)
-                        .playQueue(album.tracks),
-                icon: Icon(
-                  isCurrentAlbum && playing ? Icons.pause : Icons.play_arrow,
-                ),
-                label: Text(isCurrentAlbum && playing ? 'Пауза' : 'Слушать'),
+                    : () {
+                        final PlayerController controller =
+                            ref.read(playerControllerProvider.notifier);
+                        // На паузе нажимаем «продолжить», иначе запускаем
+                        // альбом заново — так иконка не расходится с делом.
+                        if (isCurrentAlbum && playing) {
+                          controller.togglePlayPause();
+                        } else {
+                          controller.playQueue(album.tracks);
+                        }
+                      },
               ),
-              OutlinedButton.icon(
-                onPressed: album.tracks.isEmpty
-                    ? null
-                    : () => ref
+              HeroCircleButton(
+                icon: Icons.shuffle,
+                tooltip: 'Перемешать',
+                size: 52,
+                onPressed: hasTracks
+                    ? () => ref
                         .read(playerControllerProvider.notifier)
-                        .playQueue(album.tracks, shuffle: true),
-                icon: const Icon(Icons.shuffle),
-                label: const Text('Вперемешку'),
+                        .playQueue(album.tracks, shuffle: true)
+                    : null,
+              ),
+              HeroCircleButton(
+                icon: Icons.playlist_add,
+                tooltip: 'В очередь',
+                size: 52,
+                onPressed: hasTracks ? () => _enqueueAll(ref) : null,
               ),
             ],
           ),
@@ -118,19 +135,36 @@ class _AlbumBody extends ConsumerWidget {
               );
             },
           ),
-        const SliverToBoxAdapter(child: SizedBox(height: 32)),
+        const SliverToBoxAdapter(
+          // Отступ снизу: последние строки не уходят под плавающий островок.
+          child: SizedBox(height: AppLayout.floatingDockClearance),
+        ),
       ],
     );
   }
 
+  /// «год • N треков • длительность» — формат метаданных из спецификации.
+  /// Исполнитель вынесен в подпись героя, поэтому здесь его нет.
   String? _metaLine() {
     final List<String> parts = <String>[];
-    if (album.artists.isNotEmpty) parts.add(album.artistLine);
     if (album.year != null) parts.add(album.year!);
     if (album.trackCount != null) parts.add(trackCountLabel(album.trackCount));
     if (album.duration != null) {
-      parts.add('${album.duration!.inMinutes} мин');
+      final String total = formatTotalDuration(album.duration!);
+      if (total.isNotEmpty) parts.add(total);
     }
     return parts.isEmpty ? null : parts.join(' • ');
+  }
+
+  /// Кладёт весь альбом в конец очереди.
+  ///
+  /// Собираем по одному треку: у контроллера нет пакетного добавления, а
+  /// заводить его — значит трогать чужой слой состояния.
+  void _enqueueAll(WidgetRef ref) {
+    final PlayerController controller =
+        ref.read(playerControllerProvider.notifier);
+    for (final Track track in album.tracks) {
+      controller.enqueue(track);
+    }
   }
 }

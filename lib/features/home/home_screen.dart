@@ -1,3 +1,4 @@
+import 'package:cached_network_image/cached_network_image.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 
@@ -9,12 +10,14 @@ import '../../widgets/async_views.dart';
 import '../../widgets/empty_state.dart';
 import '../../widgets/section_list.dart';
 import '../common/navigation.dart';
+import 'home_sections.dart';
 
 /// Главная страница.
 ///
-/// Форма взята у ArchiveTune: строка настроений, затем секции. Треки идут
-/// списком, альбомы и исполнители — каруселью. Заголовок страницы не
-/// дублирует приветствие: имя пользователя показывается только когда он вошёл.
+/// Форма взята у ArchiveTune: тональный градиент под шапкой, строка настроений,
+/// затем секции в порядке из спецификации. Треки идут списком, альбомы,
+/// исполнители и плейлисты — каруселью карточек. Заголовок страницы не
+/// дублирует приветствие: имя пользователя показывается только в аватаре.
 class HomeScreen extends ConsumerWidget {
   const HomeScreen({super.key});
 
@@ -27,6 +30,8 @@ class HomeScreen extends ConsumerWidget {
       appBar: AppBar(
         // Логотип вместо слова «Главная»: раздел и так виден в навигации.
         automaticallyImplyLeading: false,
+        // Высота шапки — по спецификации (64), а не стандартные 56.
+        toolbarHeight: AppLayout.appBarHeight,
         title: Row(
           children: <Widget>[
             Icon(
@@ -39,34 +44,79 @@ class HomeScreen extends ConsumerWidget {
         ),
         actions: const <Widget>[_HomeActions()],
       ),
-      body: sections.when(
-        data: (List<BrowseSection> data) => RefreshIndicator(
-          onRefresh: () async {
-            ref.invalidate(homeSectionsProvider);
-            await ref.read(homeSectionsProvider.future);
-          },
-          child: SectionListView(
-            sections: data,
-            header: const _MoodRow(),
-            emptyPlaceholder: const EmptyState(
-              icon: Icons.explore_off_outlined,
-              title: 'Подборки недоступны',
-              subtitle: 'YouTube Music не вернул ни одной секции. '
-                  'Попробуйте обновить или сменить регион в настройках.',
+      body: Stack(
+        children: <Widget>[
+          // Градиент лежит под содержимым и не ловит нажатия.
+          const Positioned(
+            top: 0,
+            left: 0,
+            right: 0,
+            child: _ToneGradient(),
+          ),
+          sections.when(
+            data: (List<BrowseSection> data) => RefreshIndicator(
+              onRefresh: () async {
+                ref.invalidate(homeSectionsProvider);
+                await ref.read(homeSectionsProvider.future);
+              },
+              child: SectionListView(
+                // Порядок и подписи приводим к ArchiveTune, не меняя данные.
+                sections: curateHomeSections(data),
+                header: const _MoodRow(),
+                emptyPlaceholder: const EmptyState(
+                  icon: Icons.explore_off_outlined,
+                  title: 'Подборки недоступны',
+                  subtitle: 'YouTube Music не вернул ни одной секции. '
+                      'Попробуйте обновить или сменить регион в настройках.',
+                ),
+              ),
+            ),
+            loading: () => const SectionSkeleton(),
+            error: (Object error, StackTrace _) => ErrorState(
+              message: describeError(error),
+              onRetry: () => ref.invalidate(homeSectionsProvider),
             ),
           ),
-        ),
-        loading: () => const SectionSkeleton(),
-        error: (Object error, StackTrace _) => ErrorState(
-          message: describeError(error),
-          onRetry: () => ref.invalidate(homeSectionsProvider),
+        ],
+      ),
+    );
+  }
+}
+
+/// Тональный градиент фона экрана из спецификации ArchiveTune.
+///
+/// Высота 430, переход `primaryContainer` α0.30 → `secondaryContainer` α0.14 →
+/// прозрачный. Он задаёт «объём» шапки, не мешая читать содержимое.
+class _ToneGradient extends StatelessWidget {
+  const _ToneGradient();
+
+  @override
+  Widget build(BuildContext context) {
+    final ColorScheme scheme = Theme.of(context).colorScheme;
+    return IgnorePointer(
+      child: SizedBox(
+        height: 430,
+        width: double.infinity,
+        child: DecoratedBox(
+          decoration: BoxDecoration(
+            gradient: LinearGradient(
+              begin: Alignment.topCenter,
+              end: Alignment.bottomCenter,
+              colors: <Color>[
+                scheme.primaryContainer.withValues(alpha: 0.30),
+                scheme.secondaryContainer.withValues(alpha: 0.14),
+                Colors.transparent,
+              ],
+              stops: const <double>[0.0, 0.55, 1.0],
+            ),
+          ),
         ),
       ),
     );
   }
 }
 
-/// Кнопки в шапке: «нравится», новые релизы, настройки.
+/// Кнопки в шапке: аватар аккаунта, новые релизы, настройки.
 ///
 /// Настройки показываются только в узкой раскладке — на широкой они живут
 /// в боковой навигации, и дублировать их не нужно.
@@ -76,20 +126,16 @@ class _HomeActions extends ConsumerWidget {
   @override
   Widget build(BuildContext context, WidgetRef ref) {
     final bool compact = context.isCompactLayout;
-    final bool signedIn = ref.watch(
-      authControllerProvider.select((AuthState s) => s.isSignedIn),
+    // Следим только за тем, что влияет на вид кнопки: вход и ссылку аватара.
+    final (bool signedIn, String? avatarUrl) = ref.watch(
+      authControllerProvider.select(
+        (AuthState s) => (s.isSignedIn, s.session?.avatarUrl),
+      ),
     );
 
     return Row(
       children: <Widget>[
-        IconButton.filledTonal(
-          tooltip: signedIn ? 'Аккаунт' : 'Войти',
-          icon: Icon(
-            signedIn ? Icons.account_circle : Icons.login_outlined,
-            size: 20,
-          ),
-          onPressed: () => AppRoutes.account(context),
-        ),
+        _AccountButton(signedIn: signedIn, avatarUrl: avatarUrl),
         if (compact) ...<Widget>[
           const SizedBox(width: 8),
           IconButton.filledTonal(
@@ -100,6 +146,53 @@ class _HomeActions extends ConsumerWidget {
         ],
         const SizedBox(width: 8),
       ],
+    );
+  }
+}
+
+/// Кнопка аккаунта: аватар из сессии, а если его нет — прежняя иконка.
+///
+/// Аватар тянем через кэш (`CachedNetworkImageProvider`), как и обложки:
+/// без него при каждом открытии главной картинка грузилась бы заново.
+class _AccountButton extends StatelessWidget {
+  const _AccountButton({required this.signedIn, required this.avatarUrl});
+
+  final bool signedIn;
+  final String? avatarUrl;
+
+  @override
+  Widget build(BuildContext context) {
+    final String? url = avatarUrl;
+    if (url == null || url.isEmpty) {
+      return IconButton.filledTonal(
+        tooltip: signedIn ? 'Аккаунт' : 'Войти',
+        icon: Icon(
+          signedIn ? Icons.account_circle : Icons.login_outlined,
+          size: 20,
+        ),
+        onPressed: () => AppRoutes.account(context),
+      );
+    }
+
+    return IconButton(
+      tooltip: 'Аккаунт',
+      onPressed: () => AppRoutes.account(context),
+      // Круглая обрезка: у аватара Google своя форма, а в шапке нужен круг.
+      icon: ClipOval(
+        child: Image(
+          image: CachedNetworkImageProvider(url),
+          width: 32,
+          height: 32,
+          fit: BoxFit.cover,
+          // Битый аватар не должен оставлять пустое место — показываем иконку.
+          errorBuilder: (
+            BuildContext context,
+            Object error,
+            StackTrace? stackTrace,
+          ) =>
+              const Icon(Icons.account_circle, size: 24),
+        ),
+      ),
     );
   }
 }
@@ -121,22 +214,20 @@ class _MoodRow extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     return SizedBox(
-      height: 52,
+      // Высота ряда чипов — ≥68 по спецификации; chip заполняет ряд.
+      height: 68,
       child: ListView.separated(
         scrollDirection: Axis.horizontal,
-        padding: const EdgeInsets.symmetric(
-          horizontal: AppLayout.gutter,
-          vertical: 4,
-        ),
+        padding: const EdgeInsets.symmetric(horizontal: 16),
         itemCount: _moods.length,
         separatorBuilder: (BuildContext context, int _) =>
             const SizedBox(width: 8),
         itemBuilder: (BuildContext context, int index) {
           final (String label, IconData icon) = _moods[index];
-          return ActionChip(
-            avatar: Icon(icon, size: 18),
-            label: Text(label),
-            onPressed: () => _openMood(context, label),
+          return _MoodChip(
+            label: label,
+            icon: icon,
+            onTap: () => _openMood(context, label),
           );
         },
       ),
@@ -147,5 +238,52 @@ class _MoodRow extends StatelessWidget {
     // Поиск уже умеет показывать подборки по запросу — отдельный экран
     // для настроений не нужен, достаточно открыть поиск с запросом.
     AppRoutes.searchWithQuery(context, label);
+  }
+}
+
+/// Крупный чип настроения в стиле ArchiveTune.
+///
+/// Не `ActionChip`: нужна фиксированная высота 68 и фон `surfaceContainerHigh`
+/// α0.78; стандартный чип так не растянуть без «прыжков» при смене темы.
+class _MoodChip extends StatelessWidget {
+  const _MoodChip({
+    required this.label,
+    required this.icon,
+    required this.onTap,
+  });
+
+  final String label;
+  final IconData icon;
+  final VoidCallback onTap;
+
+  @override
+  Widget build(BuildContext context) {
+    final ColorScheme scheme = Theme.of(context).colorScheme;
+    return Material(
+      color: scheme.surfaceContainerHigh.withValues(alpha: 0.78),
+      // Скругление-«капсула»: 68 / 2 ≈ 32.
+      borderRadius: BorderRadius.circular(AppLayout.radiusXL),
+      clipBehavior: Clip.antiAlias,
+      child: InkWell(
+        onTap: onTap,
+        child: Padding(
+          padding: const EdgeInsets.symmetric(horizontal: 18),
+          child: Row(
+            mainAxisSize: MainAxisSize.min,
+            children: <Widget>[
+              Icon(icon, size: 22, color: scheme.onSurfaceVariant),
+              const SizedBox(width: 10),
+              Text(
+                label,
+                style: Theme.of(context)
+                    .textTheme
+                    .labelLarge
+                    ?.copyWith(fontWeight: FontWeight.w600),
+              ),
+            ],
+          ),
+        ),
+      ),
+    );
   }
 }

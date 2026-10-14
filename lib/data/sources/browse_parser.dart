@@ -195,6 +195,24 @@ class BrowseParser {
       ));
     }
 
+    // Клип YouTube Music: у него нет browseId, зато есть watchEndpoint с
+    // videoId. Без этой ветки такие элементы попадали в плейлисты с пустым
+    // идентификатором, и нажатие открывало пустую страницу плейлиста вместо
+    // воспроизведения.
+    final String videoId = _firstString(renderer, <List<String>>[
+          <String>['navigationEndpoint', 'watchEndpoint', 'videoId'],
+        ]) ??
+        '';
+    if (videoId.isNotEmpty) {
+      return TrackItem(Track(
+        id: videoId,
+        title: title,
+        artists: _artistsFromSubtitle(subtitle),
+        thumbnails: thumbnails,
+        duration: _durationFromSubtitle(subtitle) ?? Duration.zero,
+      ));
+    }
+
     return PlaylistItem(Playlist(
       id: browseId,
       title: title,
@@ -475,6 +493,21 @@ class BrowseParser {
       artists.add(ArtistRef(name: name.trim(), id: id));
     }
     return artists;
+  }
+
+  /// Достаёт длительность из подписи вида «Исполнитель • 3:20».
+  ///
+  /// У клипов YouTube Music длительность приходит только в подписи, отдельного
+  /// поля с ней нет.
+  static Duration? _durationFromSubtitle(String? subtitle) {
+    if (subtitle == null) return null;
+    final RegExpMatch? match =
+        RegExp(r'(?:^|\D)(\d{1,2}):(\d{2})(?:\D|$)').firstMatch(subtitle);
+    if (match == null) return null;
+    return Duration(
+      minutes: int.parse(match.group(1)!),
+      seconds: int.parse(match.group(2)!),
+    );
   }
 
   static Duration? _durationFromRuns(List<dynamic> runs) {
