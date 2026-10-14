@@ -7,6 +7,7 @@ import '../../core/utils/format.dart';
 import '../../data/models/models.dart';
 import '../../state/auth_controller.dart';
 import '../../state/catalog_providers.dart';
+import '../../state/library_providers.dart';
 import '../../state/player_controller.dart';
 import '../../widgets/artwork.dart';
 import 'lyrics_view.dart';
@@ -198,16 +199,29 @@ class _TopBar extends StatelessWidget {
 }
 
 /// Название, исполнитель и кнопка «нравится».
-class _InfoRow extends ConsumerWidget {
+class _InfoRow extends ConsumerStatefulWidget {
   const _InfoRow({required this.track, required this.player});
 
   final Track track;
   final PlayerUiState player;
 
   @override
-  Widget build(BuildContext context, WidgetRef ref) {
+  ConsumerState<_InfoRow> createState() => _InfoRowState();
+}
+
+class _InfoRowState extends ConsumerState<_InfoRow> {
+  /// Локальное состояние лайка: список «Мне нравится» грузится отдельно,
+  /// а результат нажатия хочется видеть сразу.
+  bool? _liked;
+
+  Track get track => widget.track;
+  PlayerUiState get player => widget.player;
+
+  @override
+  Widget build(BuildContext context) {
     final TextTheme text = Theme.of(context).textTheme;
     final ColorScheme scheme = Theme.of(context).colorScheme;
+    final bool liked = _isLiked(ref);
     final bool signedIn = ref.watch(
       authControllerProvider.select((AuthState s) => s.isSignedIn),
     );
@@ -246,21 +260,45 @@ class _InfoRow extends ConsumerWidget {
           ),
           const SizedBox(width: 8),
           IconButton.filledTonal(
-            tooltip: signedIn ? 'Нравится' : 'Войдите, чтобы ставить лайки',
-            icon: const Icon(Icons.favorite_border, size: 20),
-            onPressed: signedIn ? () => _like(context, ref) : null,
+            tooltip: liked ? 'Убрать из «Мне нравится»' : 'Нравится',
+            icon: Icon(
+              liked ? Icons.favorite : Icons.favorite_border,
+              size: 20,
+              color: liked ? scheme.primary : null,
+            ),
+            onPressed: signedIn ? () => _like(context) : null,
           ),
         ],
       ),
     );
   }
 
-  Future<void> _like(BuildContext context, WidgetRef ref) async {
+  /// Поставлен ли лайк этому треку.
+  ///
+  /// Источник правды — список «Мне нравится»; пока он не загружен, показываем
+  /// то, что только что выбрал пользователь.
+  bool _isLiked(WidgetRef ref) {
+    final bool? local = _liked;
+    if (local != null) return local;
+    final List<Track>? liked = ref.watch(likedSongsProvider).asData?.value;
+    return liked?.any((Track t) => t.id == track.id) ?? false;
+  }
+
+  Future<void> _like(BuildContext context) async {
     final ScaffoldMessengerState messenger = ScaffoldMessenger.of(context);
+    final bool liked = _isLiked(ref);
     try {
-      await ref.read(librarySourceProvider).setLiked(track.id, liked: true);
+      await ref.read(librarySourceProvider).setLiked(track.id, liked: !liked);
+      // Без сброса список «Мне нравится» останется прежним, и лайк будет
+      // выглядеть непоставленным.
+      ref.invalidate(likedSongsProvider);
+      if (mounted) setState(() => _liked = !liked);
       messenger.showSnackBar(
-        const SnackBar(content: Text('Добавлено в «Мне нравится»')),
+        SnackBar(
+          content: Text(liked
+              ? 'Убрано из «Мне нравится»'
+              : 'Добавлено в «Мне нравится»'),
+        ),
       );
     } on Object {
       messenger.showSnackBar(

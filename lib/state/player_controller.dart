@@ -350,6 +350,9 @@ class PlayerController extends Notifier<PlayerUiState> {
 
     state = state.copyWith(resolving: true, clearError: true);
 
+    // Новый трек: прошлый останавливаем сразу, не дожидаясь загрузки.
+    await _engine.stop();
+
     try {
       final quality = ref.read(settingsControllerProvider).audioQuality;
       final ResolvedStream resolved = await ref
