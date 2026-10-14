@@ -13,8 +13,14 @@ on:
     branches: [master, main]
     # Пуш тега вида v1.0 публикует сборки в Releases.
     tags: ['v*']
-  pull_request:
   workflow_dispatch:
+
+# Один запуск на весь конвейер: новый пуш отменяет предыдущий. Без этого
+# запуски копились — пуш ветки и пуш тега давали два одинаковых прогона,
+# и они работали одновременно.
+concurrency:
+  group: ${{ github.workflow }}
+  cancel-in-progress: true
 
 permissions:
   contents: write
