@@ -65,7 +65,8 @@ void _scanTwoRow(String where, dynamic renderer) {
   ]);
   if (item is TrackItem) {
     stdout.writeln('  [twoRow/$where] TrackItem "${item.title}" '
-        'watch=$watchId watch=${watchId} artistLine="${item.track.artistLine}"');
+        'watch=$watchId artistLine="${item.track.artistLine}" '
+        'artists=${item.track.artists.map((ArtistRef a) => "${a.name}#${a.id}").join(" / ")}');
     _dumpSubtitle('twoRow/$where', renderer);
   }
   _flag('twoRow/$where', item);

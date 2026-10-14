@@ -115,7 +115,7 @@ class BrowseParser {
       return AlbumItem(Album(
         id: browseId,
         title: title,
-        artists: _artistsFromSubtitle(subtitle),
+        artists: _artistsFromByline(_bylineRuns(renderer), subtitle),
         year: _extractYear(subtitle),
         thumbnails: thumbnails,
       ));
@@ -128,12 +128,16 @@ class BrowseParser {
     ));
   }
 
-  /// Собирает текст второго столбца строки (исполнители, год, число треков).
-  static String _byline(dynamic renderer) {
+  /// Runs второго столбца строки — байлайн с исполнителями и годом.
+  static List<dynamic> _bylineRuns(dynamic renderer) {
     final List<dynamic> columns =
         traverseList(renderer, <String>['flexColumns']).whereType<Map>().toList();
-    if (columns.length < 2) return '';
-    final List<dynamic> runs = _runsOfColumn(columns, 1);
+    return _runsOfColumn(columns, 1);
+  }
+
+  /// Собирает текст второго столбца строки (исполнители, год, число треков).
+  static String _byline(dynamic renderer) {
+    final List<dynamic> runs = _bylineRuns(renderer);
     if (runs.isEmpty) return '';
     return runs
         .whereType<Map>()
@@ -166,9 +170,12 @@ class BrowseParser {
         '';
 
     final List<Thumbnail> thumbnails = _thumbnails(renderer);
-    final String? subtitle = _firstString(renderer, <List<String>>[
-      <String>['subtitle', 'runs', 'text'],
-    ]);
+    // Подпись разбираем целиком, а не первым run. У одиночного трека первый
+    // run — служебная подпись («Композиция»), а исполнитель со ссылкой идёт
+    // следующим; из-за чтения только первого run имя подменялось типом записи,
+    // а идентификатор исполнителя терялся.
+    final List<dynamic> subtitleRuns = _subtitleRuns(renderer);
+    final String subtitle = _subtitleText(renderer);
 
     // Тип определяем по pageType, а если его нет — по префиксу browseId.
     final bool isArtist = pageType.contains('ARTIST') ||
@@ -189,7 +196,7 @@ class BrowseParser {
       return AlbumItem(Album(
         id: browseId,
         title: title,
-        artists: _artistsFromSubtitle(subtitle),
+        artists: _artistsFromByline(subtitleRuns, subtitle),
         year: _extractYear(subtitle),
         thumbnails: thumbnails,
       ));
@@ -207,7 +214,7 @@ class BrowseParser {
       return TrackItem(Track(
         id: videoId,
         title: title,
-        artists: _artistsFromSubtitle(subtitle),
+        artists: _artistsFromByline(subtitleRuns, subtitle),
         thumbnails: thumbnails,
         duration: _durationFromSubtitle(subtitle) ?? Duration.zero,
       ));
@@ -216,7 +223,7 @@ class BrowseParser {
     return PlaylistItem(Playlist(
       id: browseId,
       title: title,
-      author: subtitle,
+      author: subtitle.isEmpty ? null : subtitle,
       thumbnails: thumbnails,
     ));
   }
@@ -413,19 +420,22 @@ class BrowseParser {
         '';
     if (title.isEmpty) return null;
 
+    // Подпись целиком: первый run — тип записи («Видео»/«Композиция»), а
+    // исполнитель со ссылкой идёт дальше. Раньше брался только первый run.
+    final List<dynamic> subtitleRuns = _subtitleRuns(renderer);
+    final String subtitle = _subtitleText(renderer);
+
     // Трек: у элемента есть watchEndpoint с videoId.
     final String? videoId = _firstString(renderer, <List<String>>[
       <String>['onTap', 'watchEndpoint', 'videoId'],
     ]);
     if (videoId != null && videoId.isNotEmpty) {
-      final List<dynamic> runs =
-          traverseList(renderer, <String>['subtitle', 'runs']);
       return TrackItem(Track(
         id: videoId,
         title: title,
-        artists: _artistsFromRuns(runs),
+        artists: _artistsFromByline(subtitleRuns, subtitle),
         thumbnails: _thumbnails(renderer),
-        duration: _durationFromRuns(runs) ?? Duration.zero,
+        duration: _durationFromRuns(subtitleRuns) ?? Duration.zero,
       ));
     }
 
@@ -433,10 +443,6 @@ class BrowseParser {
     final String browseId = _firstString(renderer, <List<String>>[
           <String>['onTap', 'browseEndpoint', 'browseId'],
           <String>['navigationEndpoint', 'browseEndpoint', 'browseId'],
-        ]) ??
-        '';
-    final String subtitle = _firstString(renderer, <List<String>>[
-          <String>['subtitle', 'runs', 'text'],
         ]) ??
         '';
 
@@ -451,7 +457,7 @@ class BrowseParser {
       return AlbumItem(Album(
         id: browseId,
         title: title,
-        artists: _artistsFromSubtitle(subtitle),
+        artists: _artistsFromByline(subtitleRuns, subtitle),
         year: _extractYear(subtitle),
         thumbnails: _thumbnails(renderer),
       ));
@@ -459,7 +465,7 @@ class BrowseParser {
     return PlaylistItem(Playlist(
       id: browseId,
       title: title,
-      author: subtitle,
+      author: subtitle.isEmpty ? null : subtitle,
       thumbnails: _thumbnails(renderer),
     ));
   }
@@ -487,21 +493,74 @@ class BrowseParser {
     return items;
   }
 
-  static List<ArtistRef> _artistsFromRuns(List<dynamic> runs) {
+  /// Runs подписи элемента (`subtitle.runs`) — у плиток исполнитель лежит там.
+  static List<dynamic> _subtitleRuns(dynamic renderer) =>
+      traverseList(renderer, <String>['subtitle', 'runs']);
+
+  /// Текст подписи целиком, а не только первый run.
+  ///
+  /// `traverse(...,'text')` отдаёт первый найденный run, поэтому подпись
+  /// «Композиция • Валентин Стрыкало» превращалась в «Композиция»: тип записи
+  /// подставлялся на место автора. Собираем все runs подряд — разделитель
+  /// «•» остаётся в тексте, и старый разбор по нему работает как раньше.
+  static String _subtitleText(dynamic renderer) {
+    final StringBuffer buffer = StringBuffer();
+    for (final dynamic run in _subtitleRuns(renderer)) {
+      if (run is Map && run['text'] is String) buffer.write(run['text']);
+    }
+    return buffer.toString().trim();
+  }
+
+  /// Исполнители, у которых есть ссылка на страницу.
+  ///
+  /// Именно такие runs дают и настоящее имя, и `browseId`: без идентификатора
+  /// из меню трека нельзя открыть исполнителя. Служебные подписи
+  /// («Композиция», «Song», «Видео») в имя не попадают, а страницы альбомов и
+  /// плейлистов отбрасываются — это не исполнители.
+  static List<ArtistRef> _linkedArtists(List<dynamic> runs) {
     final List<ArtistRef> artists = <ArtistRef>[];
     for (final dynamic run in runs) {
       if (run is! Map) continue;
-      final String? name = textOf(run);
-      if (name == null || name.trim() == '•' || name.trim().isEmpty) continue;
-      final String? id = traverseString(run, <String>[
+      final String? text = textOf(run);
+      if (text == null) continue;
+      final String name = text.trim();
+      if (name.isEmpty || name == '•') continue;
+      if (_artistStopWords.contains(name.toLowerCase())) continue;
+
+      final String? browseId = traverseString(run, <String>[
         'navigationEndpoint',
         'browseEndpoint',
         'browseId',
       ]);
-      if (id == null) continue;
-      artists.add(ArtistRef(name: name.trim(), id: id));
+      if (browseId == null || browseId.isEmpty) continue;
+
+      final String pageType = traverseString(run, <String>[
+            'navigationEndpoint',
+            'browseEndpoint',
+            'browseEndpointContextSupportedConfigs',
+            'browseEndpointContextMusicConfig',
+            'pageType',
+          ]) ??
+          '';
+      if (_isNonArtistPage(browseId, pageType)) continue;
+
+      artists.add(ArtistRef(name: name, id: browseId));
     }
     return artists;
+  }
+
+  /// Исполнители байлайна/подписи: сначала со ссылкой, иначе — из текста.
+  ///
+  /// Если у элемента нет ни одной ссылки на страницу (бывает у гостевых и
+  /// урезанных ответов), сохраняем прежнее поведение — имя из текста подписи,
+  /// чтобы автор не терялся вовсе.
+  static List<ArtistRef> _artistsFromByline(
+    List<dynamic> runs,
+    String fallbackText,
+  ) {
+    final List<ArtistRef> linked = _linkedArtists(runs);
+    if (linked.isNotEmpty) return linked;
+    return _artistsFromSubtitle(fallbackText);
   }
 
   /// Достаёт длительность из подписи вида «Исполнитель • 3:20».
@@ -611,16 +670,20 @@ class BrowseParser {
         ]) ??
         'Альбом';
 
-    final List<String> subtitleRuns = traverseStrings(
+    final List<dynamic> subtitleRuns = traverseList(
       response,
-      <String>['header', 'musicDetailHeaderRenderer', 'subtitle', 'runs', 'text'],
+      <String>['header', 'musicDetailHeaderRenderer', 'subtitle', 'runs'],
     );
+    final String subtitleText = subtitleRuns
+        .whereType<Map>()
+        .map((Map run) => run['text']?.toString() ?? '')
+        .join();
 
     return Album(
       id: albumId,
       title: title,
-      artists: _artistsFromSubtitle(subtitleRuns.join(' ')),
-      year: _extractYear(subtitleRuns.join(' ')),
+      artists: _artistsFromByline(subtitleRuns, subtitleText),
+      year: _extractYear(subtitleText),
       thumbnails: _thumbnails(response),
       tracks: tracks,
       trackCount: tracks.isEmpty ? null : tracks.length,
@@ -634,6 +697,18 @@ class BrowseParser {
     final List<dynamic> runs = _runsOfColumn(columns, 1);
     if (runs.isEmpty) return const <ArtistRef>[];
 
+    // Сначала — только исполнители со ссылкой: у них настоящее имя и browseId,
+    // а связки («и») и служебные подписи без ссылки в список не попадают.
+    final List<ArtistRef> linked = _linkedArtists(runs);
+    if (linked.isNotEmpty) return linked;
+
+    // Ссылок нет вовсе (урезанный/гостевой ответ) — прежнее поведение:
+    // исполнителем считается любой осмысленный текст байлайна.
+    return _artistsFromTextRuns(runs);
+  }
+
+  /// Разбор байлайна по тексту — фолбэк, когда ссылок на страницы нет.
+  static List<ArtistRef> _artistsFromTextRuns(List<dynamic> runs) {
     final List<ArtistRef> artists = <ArtistRef>[];
     for (final dynamic run in runs) {
       if (run is! Map) continue;
@@ -754,14 +829,32 @@ class BrowseParser {
     return null;
   }
 
+  /// Фолбэк: исполнители из текста подписи, когда ссылок на страницы нет.
+  ///
+  /// Служебные подписи («Композиция», «Song»), год, длительность и счётчики
+  /// просмотров отбрасываются — иначе они попадали бы в имя автора.
   static List<ArtistRef> _artistsFromSubtitle(String? subtitle) {
     if (subtitle == null || subtitle.isEmpty) return const <ArtistRef>[];
     return subtitle
         .split('•')
         .map((String s) => s.trim())
-        .where((String s) => s.isNotEmpty && !_looksLikeYear(s))
+        .where((String s) => s.isNotEmpty)
+        .where((String s) => !_looksLikeYear(s))
+        .where((String s) => parseDurationText(s) == null)
+        .where((String s) => !_artistStopWords.contains(s.toLowerCase()))
+        .where((String s) => !_looksLikeCount(s))
         .map((String s) => ArtistRef(name: s))
         .toList();
+  }
+
+  /// Счётчик («40 тыс. просмотров», «1.2M views») — не исполнитель.
+  static bool _looksLikeCount(String value) {
+    final String lower = value.toLowerCase();
+    return lower.contains('просмотр') ||
+        lower.contains('view') ||
+        lower.contains('подписчик') ||
+        lower.contains('subscriber') ||
+        RegExp(r'^\d[\d\s.,]*\s*(тыс|млн|млрд|k|m|b)\.?$').hasMatch(lower);
   }
 
   static bool _looksLikeYear(String value) =>

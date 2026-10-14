@@ -51,31 +51,98 @@ class _NowPlayingScreenState extends ConsumerState<NowPlayingScreen> {
                         onToggleLyrics: () =>
                             setState(() => _showLyrics = !_showLyrics),
                       ),
+                      // На широком экране раскладка двухколоночная: обложка
+                      // слева, управление справа. Вертикальная «телефонная»
+                      // колонка на десктопе растягивала обложку на пол-экрана
+                      // и оставляла пустоту по бокам.
                       Expanded(
-                        child: AnimatedSwitcher(
-                          duration: const Duration(milliseconds: 220),
-                          child: _showLyrics
-                              ? LyricsView(
-                                  key: ValueKey<String>('lyr-${track.id}'),
-                                  videoId: track.id,
-                                )
-                              : _ArtworkStage(track: track),
-                        ),
+                        child: context.isExpandedLayout
+                            ? Row(
+                                children: <Widget>[
+                                  Expanded(
+                                    flex: 5,
+                                    child: _Stage(
+                                      showLyrics: _showLyrics,
+                                      track: track,
+                                    ),
+                                  ),
+                                  Expanded(
+                                    flex: 4,
+                                    child: Center(
+                                      child: SingleChildScrollView(
+                                        child: _Controls(
+                                          track: track,
+                                          player: player,
+                                        ),
+                                      ),
+                                    ),
+                                  ),
+                                ],
+                              )
+                            : Column(
+                                children: <Widget>[
+                                  Expanded(
+                                    child: _Stage(
+                                      showLyrics: _showLyrics,
+                                      track: track,
+                                    ),
+                                  ),
+                                  _Controls(track: track, player: player),
+                                ],
+                              ),
                       ),
-                      _InfoRow(track: track, player: player),
-                      const SizedBox(height: 4),
-                      PlayerSeekBar(player: player),
-                      Padding(
-                        padding: const EdgeInsets.symmetric(horizontal: 8),
-                        child: PlayerTransportBar(player: player),
-                      ),
-                      PlayerVolumeBar(player: player),
-                      const SizedBox(height: 8),
                     ],
                   ),
                 ),
               ],
             ),
+    );
+  }
+}
+
+/// Обложка или текст песни — то, что занимает основную площадь.
+class _Stage extends StatelessWidget {
+  const _Stage({required this.showLyrics, required this.track});
+
+  final bool showLyrics;
+  final Track track;
+
+  @override
+  Widget build(BuildContext context) {
+    return AnimatedSwitcher(
+      duration: const Duration(milliseconds: 220),
+      child: showLyrics
+          ? LyricsView(
+              key: ValueKey<String>('lyr-${track.id}'),
+              videoId: track.id,
+            )
+          : _ArtworkStage(track: track),
+    );
+  }
+}
+
+/// Блок управления: название, шкала, транспорт и громкость.
+class _Controls extends StatelessWidget {
+  const _Controls({required this.track, required this.player});
+
+  final Track track;
+  final PlayerUiState player;
+
+  @override
+  Widget build(BuildContext context) {
+    return Column(
+      mainAxisSize: MainAxisSize.min,
+      children: <Widget>[
+        _InfoRow(track: track, player: player),
+        const SizedBox(height: 4),
+        PlayerSeekBar(player: player),
+        Padding(
+          padding: const EdgeInsets.symmetric(horizontal: 8),
+          child: PlayerTransportBar(player: player),
+        ),
+        PlayerVolumeBar(player: player),
+        const SizedBox(height: 8),
+      ],
     );
   }
 }
