@@ -117,10 +117,13 @@ std::string cookies_from_list(GList* cookies) {
     // в Spotify в браузере остаётся sp_dc, и если отдавать всё подряд, панель
     // входа в Google закрывается сразу, а приложение получает чужой набор
     // cookie — аккаунт YouTube при этом перестаёт работать.
+    // Вход в Google: только домен YouTube. Cookie домена google.com туда
+    // браузер не отправляет, а их имена (SID, SAPISID) совпадают — вместе они
+    // дают дубли, YouTube берёт значение не от того домена и считает нас
+    // гостем, хотя вход выполнен.
     const bool wanted = g_spotify_mode
         ? g_str_has_suffix(domain, "spotify.com")
-        : (g_str_has_suffix(domain, "youtube.com") ||
-           g_str_has_suffix(domain, "google.com"));
+        : g_str_has_suffix(domain, "youtube.com");
     if (!wanted) {
       continue;
     }
