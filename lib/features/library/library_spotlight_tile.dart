@@ -47,15 +47,7 @@ class LibrarySpotlightTile extends StatelessWidget {
       decoration: BoxDecoration(
         color: scheme.surfaceContainerLow,
         borderRadius: BorderRadius.circular(radius),
-        // Мягкое «свечение» подложки. Цвет обложки не извлекаем: квантование
-        // картинки на каждую плитку — слишком дорого для сетки.
-        boxShadow: <BoxShadow>[
-          BoxShadow(
-            color: scheme.shadow.withValues(alpha: 0.20),
-            blurRadius: 22,
-            offset: const Offset(0, 10),
-          ),
-        ],
+        // Тени нет: плитка отделяется от фона только тональным цветом.
       ),
       clipBehavior: Clip.antiAlias,
       child: Material(

@@ -96,6 +96,19 @@ class SettingsScreen extends ConsumerWidget {
             onChanged: controller.setShowLyrics,
           ),
 
+          // Плеер стоит справа от навигации, поэтому и разворачивается в
+          // правую панель — зеркально библиотеке слева. На телефоне панели
+          // нет: там по нажатию, как и раньше, открывается полный экран.
+          SwitchListTile(
+            title: const Text('Плеер справа'),
+            subtitle: const Text(
+              'Разворачивать плеер в отдельную панель справа '
+              '(на широком экране)',
+            ),
+            value: settings.playerPanelEnabled,
+            onChanged: controller.setPlayerPanelEnabled,
+          ),
+
           const Divider(height: 24),
 
           // ------------------------------------------------------ воспроизведение

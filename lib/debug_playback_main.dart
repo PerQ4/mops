@@ -1,107 +1,93 @@
 // ВРЕМЕННАЯ точка входа для отладки воспроизведения (удаляется после разбора).
 //
-// Запуск без участия пользователя:
-//   flutter build linux --release -t lib/debug_playback_main.dart --no-tree-shake-icons
-//   GST_DEBUG=2 ./build/linux/x64/release/bundle/mops > /tmp/opencode/playback.log 2>&1
-//
-// Сценарий: получить поток, играть 20 с, перемотать на середину, ждать 20 с,
-// нажать «играть», ждать ещё 20 с — печатая каждое событие движка.
+// Сценарий без участия пользователя: играем очередь из двух треков, смотрим
+// каждое изменение состояния контроллера, на 40-й секунде перематываем, на
+// 70-й — ставим на паузу и снова запускаем. Так видно и обрыв, и перемотку.
 import 'dart:async';
 import 'dart:io';
 
 import 'package:flutter/widgets.dart';
+import 'package:flutter_riverpod/flutter_riverpod.dart';
+import 'package:shared_preferences/shared_preferences.dart';
 
-import 'core/audio/audio_engine.dart';
-import 'core/audio/audioplayers_engine.dart';
-import 'core/innertube/innertube_client.dart';
 import 'core/net/anti_dpi.dart';
 import 'core/net/bypass.dart';
-import 'data/local/app_settings.dart';
+import 'data/models/models.dart';
 import 'data/sources/stream_proxy.dart';
-import 'data/sources/stream_resolver.dart';
-
-/// Трек для проверки — тот же, что в `tool/audio_range_check.dart`.
-const String kVideoId = '9RfVp-GhKfs';
+import 'state/player_controller.dart';
+import 'state/providers.dart';
 
 Future<void> main() async {
   WidgetsFlutterBinding.ensureInitialized();
   await BypassManager.instance.apply(const AntiDpiConfig());
 
   final DateTime started = DateTime.now();
-  String stamp() => '[${DateTime.now().difference(started).inMilliseconds} мс]';
   void log(String message) {
+    final int ms = DateTime.now().difference(started).inMilliseconds;
     // ignore: avoid_print
-    print(message);
+    print('[$ms мс] $message');
   }
 
-  final InnerTubeClient tube = InnerTubeClient(locale: 'ru', region: 'RU');
-  final YoutubeStreamResolver resolver = YoutubeStreamResolver(
-    innerTube: tube,
-    locale: 'ru',
-    region: 'RU',
-    clientChoice: StreamSource.auto,
-  );
-  final StreamProxy proxy = StreamProxy(verbose: true);
-  final AudioEngine engine = AudioplayersEngine();
+  final SharedPreferences prefs = await SharedPreferences.getInstance();
 
-  engine.stateStream.listen((PlaybackState s) {
-    log('${stamp()} СОСТОЯНИЕ ${s.status.name} '
-        'поз=${s.position.inMilliseconds} мс '
-        'длит=${s.duration.inMilliseconds} мс '
-        'ошибка=${s.error ?? "-"}');
+  final StreamProxy proxy = StreamProxy(verbose: true);
+  final ProviderContainer container = ProviderContainer(
+    overrides: [
+      sharedPreferencesProvider.overrideWithValue(prefs),
+      streamProxyProvider.overrideWithValue(proxy),
+    ],
+  );
+
+  final PlayerController controller =
+      container.read(playerControllerProvider.notifier);
+
+  container.listen<PlayerUiState>(
+    playerControllerProvider,
+    (PlayerUiState? previous, PlayerUiState next) {
+      log('СОСТОЯНИЕ индекс=${next.index} '
+          'статус=${next.playback.status.name} '
+          'поз=${next.playback.position.inMilliseconds} '
+          'длит=${next.playback.duration.inMilliseconds} '
+          'resolving=${next.resolving} '
+          'ошибка=${next.error ?? "-"}');
+    },
+    fireImmediately: true,
+  );
+
+  final List<Track> queue = <Track>[
+    const Track(id: '9RfVp-GhKfs', title: 'Трек 1'),
+    const Track(id: 'dQw4w9WgXcQ', title: 'Трек 2'),
+  ];
+
+  log('СТАРТ очереди');
+  await controller.playQueue(queue);
+
+  // Периодический снимок состояния — чтобы видеть, что происходит, даже если
+  // событий нет.
+  Timer.periodic(const Duration(seconds: 5), (Timer _) {
+    final PlayerUiState s = container.read(playerControllerProvider);
+    log('СНИМОК индекс=${s.index} статус=${s.playback.status.name} '
+        'поз=${s.playback.position.inMilliseconds} '
+        'длит=${s.playback.duration.inMilliseconds} ошибка=${s.error ?? "-"}');
   });
 
-  try {
-    final ResolvedStream resolved =
-        await resolver.resolve(kVideoId, quality: AudioQuality.high);
-    final int clen =
-        int.tryParse(resolved.url.queryParameters['clen'] ?? '') ?? 0;
-    log('${stamp()} ССЫЛКА c=${resolved.url.queryParameters['c']} '
-        'контейнер=${resolved.container} mime=${resolved.mimeType} '
-        'clen=$clen');
+  await Future<void>.delayed(const Duration(seconds: 40));
+  log('ПЕРЕМОТКА на 30 с');
+  await controller.seek(const Duration(seconds: 30));
 
-    final Uri local = await proxy.serve(
-      resolved.url,
-      userAgent: resolved.userAgent,
-      mimeType: resolved.mimeType,
-    );
-    log('${stamp()} ЛОКАЛЬНО $local');
+  await Future<void>.delayed(const Duration(seconds: 25));
+  log('ПАУЗА');
+  await controller.togglePlayPause();
+  await Future<void>.delayed(const Duration(seconds: 3));
+  log('ИГРАТЬ (после паузы)');
+  await controller.togglePlayPause();
 
-    await engine.load(local.toString(), autoplay: true);
-    await Future<void>.delayed(const Duration(seconds: 20));
-    log('${stamp()} ПОСЛЕ 20 С: ${engine.state.status.name} '
-        'поз=${engine.state.position.inMilliseconds} '
-        'длит=${engine.state.duration.inMilliseconds}');
+  await Future<void>.delayed(const Duration(seconds: 60));
+  log('КОНЕЦ СЦЕНАРИЯ');
 
-    final Duration target = engine.state.duration > Duration.zero
-        ? engine.state.duration ~/ 2
-        : const Duration(seconds: 60);
-    log('${stamp()} ПЕРЕМОТКА на ${target.inMilliseconds} мс');
-    await engine.seek(target);
-    log('${stamp()} ПОСЛЕ SEEK: ${engine.state.status.name} '
-        'поз=${engine.state.position.inMilliseconds} '
-        'длит=${engine.state.duration.inMilliseconds}');
-
-    await Future<void>.delayed(const Duration(seconds: 20));
-    log('${stamp()} SEEK +20 С: ${engine.state.status.name} '
-        'поз=${engine.state.position.inMilliseconds} '
-        'длит=${engine.state.duration.inMilliseconds}');
-
-    log('${stamp()} НАЖАТИЕ «ИГРАТЬ»');
-    await engine.play();
-    await Future<void>.delayed(const Duration(seconds: 20));
-    log('${stamp()} PLAY +20 С: ${engine.state.status.name} '
-        'поз=${engine.state.position.inMilliseconds} '
-        'длит=${engine.state.duration.inMilliseconds}');
-  } on Object catch (error) {
-    log('${stamp()} ИСКЛЮЧЕНИЕ: $error');
-  }
-
-  await engine.dispose();
+  container.dispose();
   await proxy.dispose();
-  resolver.dispose();
-  tube.dispose();
   await BypassManager.instance.dispose();
-  log('${stamp()} ГОТОВО');
+  log('ГОТОВО');
   exit(0);
 }

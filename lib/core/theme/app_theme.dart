@@ -83,8 +83,6 @@ class AppTheme {
     bool expressive = true,
   }) {
     final TextTheme textTheme = _textTheme(scheme);
-    final bool isDark = scheme.brightness == Brightness.dark;
-
     return ThemeData(
       colorScheme: scheme,
       textTheme: textTheme,
@@ -280,10 +278,12 @@ class AppTheme {
         PlayerTheme(
           heroRadius: BorderRadius.circular(expressive ? 36 : 20),
           tileRadius: BorderRadius.circular(expressive ? 20 : 12),
-          artworkShadow: BoxShadow(
-            color: scheme.shadow.withValues(alpha: isDark ? 0.6 : 0.18),
-            blurRadius: 40,
-            offset: const Offset(0, 16),
+          // Тень обложки убрана: интерфейс плоский, обложка отделяется
+          // размером и скруглением.
+          artworkShadow: const BoxShadow(
+            color: Colors.transparent,
+            blurRadius: 0,
+            offset: Offset.zero,
           ),
         ),
       ],

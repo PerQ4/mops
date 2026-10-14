@@ -89,6 +89,10 @@ class SettingsController extends Notifier<AppSettings> {
   Future<void> setShowLyrics(bool value) =>
       update((AppSettings s) => s.copyWith(showLyricsInPlayer: value));
 
+  /// Включает или выключает разворот плеера в правую панель.
+  Future<void> setPlayerPanelEnabled(bool value) =>
+      update((AppSettings s) => s.copyWith(playerPanelEnabled: value));
+
   Future<void> setAutoPlayNext(bool value) =>
       update((AppSettings s) => s.copyWith(autoPlayNext: value));
 

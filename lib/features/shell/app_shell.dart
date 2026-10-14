@@ -2,9 +2,12 @@ import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 
 import '../../core/theme/layout.dart';
+import '../../data/local/app_settings.dart';
 import '../../state/player_controller.dart';
+import '../../state/providers.dart';
 import '../player/floating_dock.dart';
 import 'content_navigator.dart';
+import 'player_panel.dart';
 import 'sidebar.dart';
 
 /// Каркас приложения.
@@ -27,6 +30,30 @@ class AppShell extends ConsumerWidget {
 
     final bool wide = context.isExpandedLayout;
 
+    // Правая панель плеера — только в широкой раскладке, только при треке и
+    // только если настройка «Плеер справа» включена. На телефоне панели
+    // размещать негде: там по нажатию открывается полноэкранный плеер.
+    final bool hasTrack = ref.watch(
+      playerControllerProvider.select((PlayerUiState s) => s.current != null),
+    );
+    final bool panelEnabled = ref.watch(
+      settingsControllerProvider.select(
+        (AppSettings s) => s.playerPanelEnabled,
+      ),
+    );
+    // Выключили настройку — сворачиваем панель: иначе при повторном включении
+    // она «выпрыгнула» бы сама, хотя пользователь её не открывал.
+    ref.listen<bool>(
+      settingsControllerProvider.select(
+        (AppSettings s) => s.playerPanelEnabled,
+      ),
+      (bool? _, bool next) {
+        if (!next) ref.read(playerRightPanelProvider.notifier).close();
+      },
+    );
+    final bool panelOpen = ref.watch(playerRightPanelProvider);
+    final bool rightPanel = panelEnabled && hasTrack;
+
     final Widget content = Stack(
       children: <Widget>[
         const Positioned.fill(child: ContentNavigator()),
@@ -47,9 +74,13 @@ class AppShell extends ConsumerWidget {
             const LibrarySidebar(),
             Expanded(
               child: ClipRRect(
-                // Скруглены только углы, примыкающие к боковой панели.
-                borderRadius: const BorderRadius.horizontal(
-                  left: Radius.circular(AppLayout.contentPanelRadius),
+                // Скруглены углы, примыкающие к панелям: слева — к библиотеке,
+                // справа — к плееру, когда он развёрнут.
+                borderRadius: BorderRadius.horizontal(
+                  left: const Radius.circular(AppLayout.contentPanelRadius),
+                  right: Radius.circular(
+                    rightPanel ? AppLayout.contentPanelRadius : 0,
+                  ),
                 ),
                 child: ColoredBox(
                   color: scheme.surface,
@@ -57,6 +88,9 @@ class AppShell extends ConsumerWidget {
                 ),
               ),
             ),
+            // Панель плеера отнимает ширину у содержимого (оно сужается
+            // плавно), а док остаётся видимым — он лежит внутри содержимого.
+            if (rightPanel) PlayerRightPanelSlot(open: panelOpen),
           ],
         ),
       );

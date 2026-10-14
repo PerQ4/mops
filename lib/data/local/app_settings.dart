@@ -105,6 +105,7 @@ class AppSettings {
     this.bypass = const AntiDpiConfig(),
     this.autoDetectProxy = true,
     this.sidebarCollapsed = false,
+    this.playerPanelEnabled = true,
   });
 
   final ThemeModePreference themeMode;
@@ -152,6 +153,15 @@ class AppSettings {
   /// переходе в широкий режим было бы навязчиво.
   final bool sidebarCollapsed;
 
+  /// Разворачивать ли островок плеера в отдельную панель справа.
+  ///
+  /// По умолчанию **включено**: навигация стоит слева, плеер — справа, и
+  /// развернуть его в полноценную панель (как библиотеку слева) — очевидный
+  /// жест. Выключение оставляет только островок: нажатие на него открывает
+  /// полноэкранный плеер, как раньше. Настройка действует лишь в широкой
+  /// раскладке — на телефоне правую панель размещать негде.
+  final bool playerPanelEnabled;
+
   bool get isUiScaleAuto => uiScale <= 0;
 
   int get safeSeedIndex =>
@@ -178,6 +188,7 @@ class AppSettings {
     AntiDpiConfig? bypass,
     bool? autoDetectProxy,
     bool? sidebarCollapsed,
+    bool? playerPanelEnabled,
   }) {
     return AppSettings(
       themeMode: themeMode ?? this.themeMode,
@@ -200,6 +211,7 @@ class AppSettings {
       bypass: bypass ?? this.bypass,
       autoDetectProxy: autoDetectProxy ?? this.autoDetectProxy,
       sidebarCollapsed: sidebarCollapsed ?? this.sidebarCollapsed,
+      playerPanelEnabled: playerPanelEnabled ?? this.playerPanelEnabled,
     );
   }
 
@@ -224,6 +236,7 @@ class AppSettings {
         'bypass': bypass.toJson(),
         'autoDetectProxy': autoDetectProxy,
         'sidebarCollapsed': sidebarCollapsed,
+        'playerPanelEnabled': playerPanelEnabled,
       };
 
   String encode() => jsonEncode(toJson());
@@ -253,6 +266,7 @@ class AppSettings {
           : const AntiDpiConfig(),
       autoDetectProxy: json['autoDetectProxy'] as bool? ?? true,
       sidebarCollapsed: json['sidebarCollapsed'] as bool? ?? false,
+      playerPanelEnabled: json['playerPanelEnabled'] as bool? ?? true,
     );
   }
 

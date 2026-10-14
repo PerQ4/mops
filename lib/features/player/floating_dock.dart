@@ -2,16 +2,19 @@ import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 
 import '../../core/theme/layout.dart';
+import '../../data/local/app_settings.dart';
 import '../../data/models/models.dart';
 import '../../state/auth_controller.dart';
 import '../../state/library_providers.dart';
 import '../../state/player_controller.dart';
 import '../../state/player_panel.dart';
+import '../../state/providers.dart';
 import '../../widgets/artwork.dart';
 import '../../widgets/track_menu.dart';
 import '../common/navigation.dart';
 import '../shell/content_navigator.dart';
 import '../shell/destinations.dart';
+import '../shell/player_panel.dart';
 import '../../state/shell.dart';
 import 'lyrics_view.dart';
 import 'queue_list.dart';
@@ -23,6 +26,10 @@ import 'queue_list.dart';
 /// один и скруглён полностью. Когда появляется плеер, островки встают в ряд
 /// через небольшой зазор, а на стыке скругление уменьшается до пары пунктов —
 /// из-за этого пара читается как одна фигура, но остаётся двумя островами.
+///
+/// Порядок: **навигация слева, плеер справа** (плеер и разворачивается в
+/// правую панель — см. `PlayerRightPanelSlot`). Поэтому у навигации прямо
+/// скруглён правый край, а у плеера — левый.
 ///
 /// Над группой раскрывается панель с очередью или текстом: она растёт вверх
 /// и ничего не сдвигает.
@@ -72,23 +79,37 @@ class FloatingDock extends ConsumerWidget {
     // библиотеку — тогда вкладка «Библиотека» в островке была бы дублем.
     final bool sidebarVisible = context.isExpandedLayout;
 
+    // Настройка «Плеер справа» включает разворот островка в правую панель.
+    // Панель есть только в широкой раскладке: на телефоне её размещать негде,
+    // там по нажатию открывается полноэкранный плеер.
+    final bool panelEnabled = ref.watch(
+      settingsControllerProvider.select(
+        (AppSettings s) => s.playerPanelEnabled,
+      ),
+    );
+    final bool panelOpen = ref.watch(playerRightPanelProvider);
+    final bool expandedPanel =
+        hasTrack && sidebarVisible && panelEnabled && panelOpen;
+
+    // Когда плеер развёрнут в правую панель, островок убираем: панель
+    // занимает его место, и держать оба было бы дублем.
+    final bool showPlayerIsland = hasTrack && !expandedPanel;
+
     // Появление и исчезновение плеера анимируем размером: группа
-    // центрируется целиком, поэтому навигация плавно отъезжает.
+    // центрируется целиком, поэтому навигация плавно отъезжает, а островок
+    // плеера раскрывается вправо — он теперь справа от навигации. Якорь по
+    // левому краю (стыку): островок словно выезжает из-под навигации вправо.
     final Widget playerIsland = AnimatedSize(
       duration: const Duration(milliseconds: 260),
       curve: Curves.easeOutCubic,
       alignment: Alignment.centerLeft,
-      child: hasTrack
-          ? const _PlayerIsland()
-          : const SizedBox.shrink(),
+      child: showPlayerIsland ? const _PlayerIsland() : const SizedBox.shrink(),
     );
 
-    // Плеер и навигация всегда стоят рядом — и на узком экране тоже, как на
-    // широком. Раньше на узком внизу была обычная панель Material, а это
-    // ровно то, от чего уходим. Если места не хватает, док не переносится в
-    // столбик, а уменьшается целиком (`scaleDown`): форма и стык сохраняются,
-    // переполнения нет. Так же поступает ArchiveTune: мини-плеер и навигация
-    // остаются единой фигурой.
+    // Навигация — слева, плеер — справа. Если места не хватает, док не
+    // переносится в столбик, а уменьшается целиком (`scaleDown`): форма и
+    // стык сохраняются, переполнения нет. Так же поступает ArchiveTune:
+    // мини-плеер и навигация остаются единой фигурой.
     final Widget islands = FittedBox(
       fit: BoxFit.scaleDown,
       alignment: Alignment.bottomCenter,
@@ -96,12 +117,12 @@ class FloatingDock extends ConsumerWidget {
         mainAxisSize: MainAxisSize.min,
         crossAxisAlignment: CrossAxisAlignment.end,
         children: <Widget>[
-          playerIsland,
-          if (hasTrack) const SizedBox(width: gap),
           _NavIsland(
-            joinedOnLeft: hasTrack,
+            joinedOnRight: showPlayerIsland,
             sidebarVisible: sidebarVisible,
           ),
+          if (showPlayerIsland) const SizedBox(width: gap),
+          playerIsland,
         ],
       ),
     );
@@ -123,12 +144,12 @@ class FloatingDock extends ConsumerWidget {
 
 class _NavIsland extends ConsumerWidget {
   const _NavIsland({
-    required this.joinedOnLeft,
+    required this.joinedOnRight,
     required this.sidebarVisible,
   });
 
-  /// Стоит ли слева островок плеера — тогда левые углы почти прямые.
-  final bool joinedOnLeft;
+  /// Стоит ли справа островок плеера — тогда правые углы почти прямые.
+  final bool joinedOnRight;
 
   /// Видна ли боковая панель библиотеки. Тогда вкладку «Библиотека» прячем:
   /// её заменяет сама панель, и в островке она была бы дублем.
@@ -146,16 +167,17 @@ class _NavIsland extends ConsumerWidget {
         : ShellDestination.values;
 
     return _DockSurface(
-      // У стыка скругление минимальное, снаружи — полное.
+      // У стыка скругление минимальное, снаружи — полное. Навигация слева,
+      // поэтому «прямой» её край — правый.
       radius: BorderRadius.only(
-        topLeft: Radius.circular(
-          joinedOnLeft ? FloatingDock.joinRadius : FloatingDock.outerRadius,
+        topLeft: const Radius.circular(FloatingDock.outerRadius),
+        bottomLeft: const Radius.circular(FloatingDock.outerRadius),
+        topRight: Radius.circular(
+          joinedOnRight ? FloatingDock.joinRadius : FloatingDock.outerRadius,
         ),
-        bottomLeft: Radius.circular(
-          joinedOnLeft ? FloatingDock.joinRadius : FloatingDock.outerRadius,
+        bottomRight: Radius.circular(
+          joinedOnRight ? FloatingDock.joinRadius : FloatingDock.outerRadius,
         ),
-        topRight: const Radius.circular(FloatingDock.outerRadius),
-        bottomRight: const Radius.circular(FloatingDock.outerRadius),
       ),
       child: SizedBox(
         height: FloatingDock.islandHeight,
@@ -283,48 +305,42 @@ class _PlayerIsland extends ConsumerStatefulWidget {
 }
 
 class _PlayerIslandState extends ConsumerState<_PlayerIsland> {
-  bool _hovered = false;
-
   @override
   Widget build(BuildContext context) {
     final PlayerUiState player = ref.watch(playerControllerProvider);
     final Track track = player.current!;
     final bool wide = context.isExpandedLayout;
 
-    return MouseRegion(
-      onEnter: (_) => setState(() => _hovered = true),
-      onExit: (_) => setState(() => _hovered = false),
-      child: _DockSurface(
-        // Справа всегда стоит остров навигации, поэтому правые углы почти
+    return _DockSurface(
+        // Слева всегда стоит остров навигации, поэтому левые углы почти
         // прямые: вместе островки читаются одной фигурой.
         radius: BorderRadius.only(
-            topLeft: Radius.circular(FloatingDock.playerRadius),
-            bottomLeft: Radius.circular(FloatingDock.playerRadius),
-            topRight: const Radius.circular(FloatingDock.joinRadius),
-            bottomRight: const Radius.circular(FloatingDock.joinRadius),
-          ),
-          elevation: _hovered ? 16 : 8,
-          child: SizedBox(
-            height: FloatingDock.playerIslandHeight,
-            child: Row(
-              mainAxisSize: MainAxisSize.min,
-              children: <Widget>[
-                const SizedBox(width: 10),
-                _ArtworkWithProgress(track: track, player: player),
-                const SizedBox(width: 12),
-                // Ширина подписи ограничена: островок не должен растягиваться
-                // на всю ширину монитора.
-                SizedBox(
-                  width: wide ? 220 : 150,
-                  child: _IslandTitles(track: track, player: player),
-                ),
-                _IslandControls(player: player, wide: wide),
-                const SizedBox(width: 8),
-              ],
-            ),
+          topLeft: const Radius.circular(FloatingDock.joinRadius),
+          bottomLeft: const Radius.circular(FloatingDock.joinRadius),
+          topRight: Radius.circular(FloatingDock.playerRadius),
+          bottomRight: Radius.circular(FloatingDock.playerRadius),
+        ),
+        elevation: 0,
+        child: SizedBox(
+          height: FloatingDock.playerIslandHeight,
+          child: Row(
+            mainAxisSize: MainAxisSize.min,
+            children: <Widget>[
+              const SizedBox(width: 10),
+              _ArtworkWithProgress(track: track, player: player),
+              const SizedBox(width: 12),
+              // Ширина подписи ограничена: островок не должен растягиваться
+              // на всю ширину монитора.
+              SizedBox(
+                width: wide ? 220 : 150,
+                child: _IslandTitles(track: track, player: player),
+              ),
+              _IslandControls(player: player, wide: wide),
+              const SizedBox(width: 8),
+            ],
           ),
         ),
-    );
+      );
   }
 }
 
@@ -441,6 +457,14 @@ class _IslandControls extends ConsumerWidget {
     final bool signedIn = ref.watch(
       authControllerProvider.select((AuthState s) => s.isSignedIn),
     );
+    // Разворот в правую панель доступен только в широкой раскладке и только
+    // при включённой настройке «Плеер справа»: на узком экране панели негде
+    // жить — там работает полноэкранный плеер.
+    final bool panelEnabled = ref.watch(
+      settingsControllerProvider.select(
+        (AppSettings s) => s.playerPanelEnabled,
+      ),
+    );
     // Лайк текущего трека — из общего источника правды: кнопка в островке и
     // в полноэкранном плеере всегда показывают одно и то же.
     final bool liked = ref.watch(
@@ -534,6 +558,20 @@ class _IslandControls extends ConsumerWidget {
               Icon(Icons.queue_music, size: 20, color: scheme.primary),
           onPressed: () => panel.toggle(PlayerPanelMode.queue),
         ),
+        // Разворачивает островок в панель справа (свернуть её можно уже из
+        // самой панели). Кнопка — только на широком экране.
+        if (wide && panelEnabled)
+          IconButton(
+            tooltip: 'Развернуть справа',
+            iconSize: 20,
+            icon: const Icon(Icons.open_in_full),
+            onPressed: () {
+              // Разворачиваем плеер в панель — всплывающий ящик закрываем,
+              // иначе очередь висела бы и над островком, и в панели.
+              panel.close();
+              ref.read(playerRightPanelProvider.notifier).toggle();
+            },
+          ),
         // «…» ведёт к исполнителю, альбому и действиям над текущим треком —
         // раньше из островка не было ни одного перехода к исполнителю.
         IconButton(
@@ -689,19 +727,12 @@ class _DockSurface extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     final ColorScheme scheme = Theme.of(context).colorScheme;
-    final bool isDark = scheme.brightness == Brightness.dark;
-
     return DecoratedBox(
       decoration: BoxDecoration(
         color: scheme.surfaceContainerHigh,
         borderRadius: radius,
-        boxShadow: <BoxShadow>[
-          BoxShadow(
-            color: scheme.shadow.withValues(alpha: isDark ? 0.5 : 0.18),
-            blurRadius: elevation * 1.4,
-            offset: Offset(0, elevation * 0.4),
-          ),
-        ],
+        // Тени нет: островок отделяется от фона только тональным цветом
+        // поверхности, как в ArchiveTune.
       ),
       child: ClipRRect(borderRadius: radius, child: child),
     );
