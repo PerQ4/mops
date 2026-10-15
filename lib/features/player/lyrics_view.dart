@@ -1001,6 +1001,13 @@ class _SyncedLyricsState extends ConsumerState<_SyncedLyrics>
     );
     final double baseSize = (theme.titleLarge?.fontSize ?? 22) * scale;
 
+    // Видимый диапазон пересчитываем и после построения: при первом показе и
+    // при смене активной строки прокрутка не срабатывает, а без пересчёта
+    // размытие оставалось бы только на первой строке — то есть работало бы
+    // «криво». Сам пересчёт ничего не делает, если диапазон не изменился,
+    // поэтому лишних перестроек не будет.
+    WidgetsBinding.instance.addPostFrameCallback((_) => _updateVisible());
+
     final Widget list = ValueListenableBuilder<int>(
       valueListenable: _activeIndex,
       builder: (BuildContext context, int active, Widget? _) {
