@@ -2,6 +2,7 @@ import 'package:flutter/material.dart';
 
 import '../core/theme/layout.dart';
 import '../data/models/models.dart';
+import 'artist_line.dart';
 import 'artwork.dart';
 
 /// videoId, спрятанный в адресе обложки (`i.ytimg.com/vi/<id>/…`).
@@ -48,6 +49,7 @@ class MediaCard extends StatelessWidget {
     this.heroTag,
     this.showPlay = false,
     this.onPlay,
+    this.subtitleArtists,
   });
 
   final String title;
@@ -64,6 +66,10 @@ class MediaCard extends StatelessWidget {
 
   /// Показывать на обложке кнопку play — для карточек, которые играют.
   final bool showPlay;
+
+  /// Исполнители подписи: если заданы, подпись собирается из них и каждое
+  /// имя ведёт на свою страницу, как в строке трека и в очереди.
+  final List<ArtistRef>? subtitleArtists;
 
   /// Открыть страницу — нажатие на подпись под обложкой.
   final VoidCallback onTap;
@@ -131,14 +137,22 @@ class MediaCard extends StatelessWidget {
                   overflow: TextOverflow.ellipsis,
                   style: text.bodyLarge?.copyWith(fontWeight: FontWeight.w700),
                 ),
-                if (subtitle != null && subtitle!.isNotEmpty) ...<Widget>[
+                if (subtitleArtists != null || 
+                    (subtitle != null && subtitle!.isNotEmpty)) ...<Widget>[
                   const SizedBox(height: 2),
-                  Text(
-                    subtitle!,
-                    maxLines: 2,
-                    overflow: TextOverflow.ellipsis,
-                    style: text.bodyMedium?.copyWith(color: scheme.secondary),
-                  ),
+                  if (subtitleArtists != null)
+                    ArtistLine(
+                      artists: subtitleArtists!,
+                      maxLines: 2,
+                      style: text.bodyMedium?.copyWith(color: scheme.secondary),
+                    )
+                  else
+                    Text(
+                      subtitle!,
+                      maxLines: 2,
+                      overflow: TextOverflow.ellipsis,
+                      style: text.bodyMedium?.copyWith(color: scheme.secondary),
+                    ),
                 ],
               ],
             ),
@@ -200,24 +214,32 @@ class BrowseItemCard extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
-    final (String? subtitle, bool circular, IconData icon) = switch (item) {
+    // Вместе с подписью достаём и исполнителей: у трека подпись собирается
+    // из них, чтобы каждое имя вело на свою страницу.
+    final (String? subtitle, bool circular, IconData icon, List<ArtistRef>?)
+        info = switch (item) {
       TrackItem(:final Track track) => (
           track.artistLine,
           false,
           Icons.music_note,
+          track.artists,
         ),
       AlbumItem(:final Album album) => (
           album.year ?? album.artistLine,
           false,
           Icons.album_outlined,
+          null,
         ),
-      ArtistItem() => (null, true, Icons.person_outline),
+      ArtistItem() => (null, true, Icons.person_outline, null),
       PlaylistItem(:final Playlist playlist) => (
           playlist.author,
           false,
           Icons.queue_music,
+          null,
         ),
     };
+    final (String? subtitle, bool circular, IconData icon,
+        List<ArtistRef>? subtitleArtists) = info;
 
     // Круглый аватар не должен быть шире карточки — иначе обрезка по краям.
     final double? avatarSize = circular
@@ -235,6 +257,8 @@ class BrowseItemCard extends StatelessWidget {
       // Кнопка play — у всего, что реально играется: треки и восстановленные
       // видеоклипы.
       showPlay: isPlayableItem(item),
+      // У трека в подписи — исполнители-ссылки, а не готовая строка.
+      subtitleArtists: subtitleArtists,
       onTap: () => onTap(item),
       onPlay: onPlay == null ? null : () => onPlay!(item),
     );

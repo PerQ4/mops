@@ -8,6 +8,7 @@ import '../../data/models/models.dart';
 import '../../state/auth_controller.dart';
 import '../../state/library_providers.dart';
 import '../../state/player_controller.dart';
+import '../../widgets/artist_line.dart';
 import '../../widgets/artwork.dart';
 import '../../widgets/empty_state.dart';
 import '../../widgets/track_menu.dart';
@@ -240,10 +241,8 @@ class _QueueHeader extends ConsumerWidget {
                         color: scheme.onSurface,
                       ),
                     ),
-                    Text(
-                      current.artistLine,
-                      maxLines: 1,
-                      overflow: TextOverflow.ellipsis,
+                    ArtistLine(
+                      artists: current.artists,
                       style: text.bodyMedium?.copyWith(
                         color: scheme.onSurface.withValues(alpha: 0.6),
                       ),

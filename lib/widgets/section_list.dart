@@ -71,17 +71,16 @@ void openBrowseItem(
 ) {
   switch (item) {
     case TrackItem(:final Track track):
-      // У трека своей страницы нет: ведём к исполнителю, а если его нет —
-      // к альбому. Идентификатор исполнителя может быть пустым — тогда он
-      // не ссылка, а просто подпись.
-      final String? artistId = track.artists.isEmpty
-          ? null
-          : track.artists.first.id;
+      // У трека своей страницы нет, поэтому ведём к альбому — это его
+      // ближайшая страница. К исполнителю отправляем только тогда, когда
+      // альбома нет: имя исполнителя и так ссылка, дублировать её незачем.
       final String? albumId = track.album?.id;
-      if (artistId != null && artistId.isNotEmpty) {
-        AppRoutes.artist(context, artistId);
-      } else if (albumId != null && albumId.isNotEmpty) {
+      final String? artistId =
+          track.artists.isEmpty ? null : track.artists.first.id;
+      if (albumId != null && albumId.isNotEmpty) {
         AppRoutes.album(context, albumId);
+      } else if (artistId != null && artistId.isNotEmpty) {
+        AppRoutes.artist(context, artistId);
       }
     case AlbumItem(:final Album album):
       AppRoutes.album(context, album.id);

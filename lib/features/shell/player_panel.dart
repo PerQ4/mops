@@ -8,6 +8,7 @@ import '../../data/models/models.dart';
 import '../../state/auth_controller.dart';
 import '../../state/library_providers.dart';
 import '../../state/player_controller.dart';
+import '../../widgets/artist_line.dart';
 import '../../widgets/artwork.dart';
 import '../../widgets/track_menu.dart';
 import '../player/lyrics_view.dart';
@@ -292,16 +293,23 @@ class _PanelTrackRow extends ConsumerWidget {
                     ),
                   ),
                   const SizedBox(height: 2),
-                  Text(
-                    player.error ?? track.artistLine,
-                    maxLines: 1,
-                    overflow: TextOverflow.ellipsis,
-                    style: text.bodySmall?.copyWith(
-                      color: player.error != null
-                          ? scheme.error
-                          : scheme.onSurfaceVariant,
+                  // Исполнитель — ссылка на его страницу, как и везде, где
+                  // он написан. Ошибку плеера показываем текстом: она не
+                  // ссылка.
+                  if (player.error != null)
+                    Text(
+                      player.error!,
+                      maxLines: 1,
+                      overflow: TextOverflow.ellipsis,
+                      style: text.bodySmall?.copyWith(color: scheme.error),
+                    )
+                  else
+                    ArtistLine(
+                      artists: track.artists,
+                      style: text.bodySmall?.copyWith(
+                        color: scheme.onSurfaceVariant,
+                      ),
                     ),
-                  ),
                 ],
               ),
             ),

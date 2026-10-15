@@ -11,6 +11,7 @@ import '../../state/auth_controller.dart';
 import '../../state/catalog_providers.dart';
 import '../../state/library_providers.dart';
 import '../../state/player_controller.dart';
+import '../../widgets/artist_line.dart';
 import '../../widgets/artwork.dart';
 import '../../widgets/track_menu.dart';
 import 'lyrics_actions.dart';
@@ -358,17 +359,23 @@ class _InfoRow extends ConsumerWidget {
                 Row(
                   children: <Widget>[
                     Flexible(
-                      child: Text(
-                        player.error ?? track.artistLine,
-                        maxLines: 1,
-                        overflow: TextOverflow.ellipsis,
-                        // `PlayerTitleSection`: titleMedium (16 sp).
-                        style: text.titleMedium?.copyWith(
-                          color: player.error != null
-                              ? scheme.error
-                              : scheme.onSurfaceVariant,
-                        ),
-                      ),
+                      // Исполнитель — ссылка на его страницу. Ошибку плеера
+                      // показываем текстом: она не ссылка.
+                      child: player.error != null
+                          ? Text(
+                              player.error!,
+                              maxLines: 1,
+                              overflow: TextOverflow.ellipsis,
+                              style: text.titleMedium
+                                  ?.copyWith(color: scheme.error),
+                            )
+                          : ArtistLine(
+                              artists: track.artists,
+                              // `PlayerTitleSection`: titleMedium (16 sp).
+                              style: text.titleMedium?.copyWith(
+                                color: scheme.onSurfaceVariant,
+                              ),
+                            ),
                     ),
                     const SizedBox(width: 8),
                     QualityBadge(player: player),
