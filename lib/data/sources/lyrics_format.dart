@@ -304,3 +304,88 @@ String unescapeEntities(String value) {
     },
   );
 }
+
+/// Похоже ли на QRC — караоке-формат QQ Music.
+///
+/// QQ отдаёт XML, внутри которого в атрибуте `LyricContent` лежат строки
+/// вида `[начало,длительность]Слово(смещение,длительность)…`. Формат ценен
+/// тем, что времена есть у КАЖДОГО слова, а не только у строки.
+bool looksLikeQrc(String value) {
+  final String head = value.length > 4096 ? value.substring(0, 4096) : value;
+  return head.contains('<QrcInfos') ||
+      head.contains('LyricContent=') ||
+      RegExp(r'\[\d+,\d+\]').hasMatch(head);
+}
+
+/// Разбирает QRC в строки с пословными временами.
+///
+/// Время слова в QRC — АБСОЛЮТНОЕ, а не смещение от начала строки: у первой
+/// строки (начало 0) они совпадают, а дальше слово начинается ровно на
+/// времени строки, то есть смещение равно началу. Поэтому складывать их
+/// нельзя — иначе времена уезжали бы вдвое.
+///
+/// Пустые куски (это пробелы) в слова не попадают, но в текст строки входят:
+/// иначе слова слиплись бы.
+List<TimedLyric> parseQrc(String source) {
+  final String content = _qrcContent(source);
+  final List<TimedLyric> lines = <TimedLyric>[];
+
+  for (final String raw in content.split('\n')) {
+    final RegExpMatch? head = _qrcLine.firstMatch(raw.trim());
+    if (head == null) continue;
+
+    final int lineStart = int.parse(head.group(1)!);
+    final List<TimedWord> words = <TimedWord>[];
+    final StringBuffer text = StringBuffer();
+
+    for (final RegExpMatch match in _qrcWord.allMatches(head.group(3)!)) {
+      final String piece = match.group(1)!;
+      final int offset = int.parse(match.group(2)!);
+      final int length = int.parse(match.group(3)!);
+      text.write(piece);
+      // Пробелы приходят отдельными кусками с пустым текстом — словом их
+      // считать нечего, иначе подсветка «спотыкалась» бы на пробелах.
+      if (piece.trim().isEmpty) continue;
+      words.add(TimedWord(
+        time: Duration(milliseconds: offset),
+        text: piece,
+        end: Duration(milliseconds: offset + length),
+      ));
+    }
+
+    final String lineText = text.toString().trim();
+    // QQ кладёт в начало текста титры — «Lyrics by», «Composed by» и их
+    // китайские аналоги. В караоке они лишние: это не то, что поют.
+    if (lineText.isEmpty || _qrcCredit.hasMatch(lineText)) continue;
+    lines.add(TimedLyric(
+      time: Duration(milliseconds: lineStart),
+      text: lineText,
+      words: words.isEmpty ? null : words,
+    ));
+  }
+  return lines;
+}
+
+/// Служебные титры в начале текста QQ — их в караоке показывать нечего.
+final RegExp _qrcCredit = RegExp(
+  r'^(lyrics|composed|produced|arranged|written|mixed|mastered)\s*by[:：]?'
+  r'|^(作词|作曲|编曲|制作人|混音|母带)[:：]',
+  caseSensitive: false,
+);
+
+/// Строка QRC: `[начало,длительность]остальное`.
+final RegExp _qrcLine = RegExp(r'^\[(\d+),(\d+)\](.*)$');
+
+/// Кусок слова: `текст(смещение,длительность)`.
+final RegExp _qrcWord = RegExp(r'([^()]*)\((\d+),(\d+)\)');
+
+/// Достаёт содержимое `LyricContent` из ответа QQ.
+///
+/// Ответ приходит XML-документом, но иногда сервис отдаёт уже голый текст —
+/// тогда возвращаем его как есть.
+String _qrcContent(String source) {
+  final RegExpMatch? match =
+      RegExp(r'LyricContent="([\s\S]*?)"').firstMatch(source);
+  if (match != null) return unescapeEntities(match.group(1)!);
+  return unescapeEntities(source);
+}

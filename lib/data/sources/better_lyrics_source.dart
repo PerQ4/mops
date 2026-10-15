@@ -10,6 +10,10 @@ import 'lyrics_format.dart';
 /// из которого мы берём строчную разметку. Тот же сервис проксирует KuGou,
 /// поэтому запасной запрос идёт на `kugou/getLyrics`, если TTML не нашёлся.
 ///
+/// Третий путь — `/qq/getLyrics`: караоке-формат QRC от QQ Music, и он
+/// отдаёт времена на каждое СЛОВО. Это единственный источник пословной
+/// разметки, который работает без ключа, поэтому он особенно важен.
+///
 /// ВАЖНО про ключ. Сервис работает по модели «сначала кэш»: уже
 /// закэшированную песню отдаёт без ключа, а свежий запрос требует заголовок
 /// `X-API-Key` — и отвечает 401. Ключи сейчас не выдают, поэтому для песен,
@@ -28,6 +32,7 @@ class BetterLyricsSource {
   static const String _host = 'https://api.betterlyrics.org';
   static const String _ttmlPath = '/getLyrics';
   static const String _kugouPath = '/kugou/getLyrics';
+  static const String _qqPath = '/qq/getLyrics';
 
   /// Ключи, за которыми в ответе может прятаться текст (в том числе вложенно).
   static const List<String> _contentKeys = <String>[
@@ -56,7 +61,7 @@ class BetterLyricsSource {
   }) async {
     if (title.trim().isEmpty || artist.trim().isEmpty) return Lyrics.none;
 
-    for (final String path in <String>[_ttmlPath, _kugouPath]) {
+    for (final String path in <String>[_ttmlPath, _kugouPath, _qqPath]) {
       final Lyrics lyrics = await _fetchOne(
         path,
         title.trim(),
@@ -102,6 +107,19 @@ class BetterLyricsSource {
 
     final dynamic decoded = _tryDecode(body);
     if (decoded == null) return Lyrics.none;
+
+    // QRC от QQ: строки со временами на каждое слово. Проверяем раньше
+    // обычного текста — иначе XML попал бы в «простой текст» и превратился
+    // бы в мусор.
+    final String? first = _extractString(decoded, ttml: false, depth: 0);
+    if (first != null && looksLikeQrc(first)) {
+      final Lyrics fromQrc = lyricsFromTimed(
+        parseQrc(first),
+        'QQ',
+        match: LyricsMatch(hasTranslation: false),
+      );
+      if (!fromQrc.isEmpty) return fromQrc;
+    }
 
     final String? ttml = _extractString(decoded, ttml: true, depth: 0);
     if (ttml != null) {
