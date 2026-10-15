@@ -57,12 +57,11 @@ const double _manualFarAlpha = 0.28;
 
 /// Радиус размытия неактивных строк (`LyricsV2.kt:584-590`).
 ///
-/// Значения уменьшены, а дальняя граница убрана: `ImageFilter` — самый дорогой
-/// слой в строке, а на расстоянии 3 и дальше строки почти прозрачны (альфа 0.18
-/// и ниже) — размытие там не читается, но стоит кадров при прокрутке. Ближние
-/// строки сохраняют вид оригинала.
-const double _blur1 = 1.6;
-const double _blur2 = 4;
+/// Размытие — это и есть смысл эффекта: текст уходит в глубину по мере
+/// удаления от активной строки, а не просто гаснет. Значения как в оригинале.
+const double _blur1 = 2;
+const double _blur2 = 5;
+const double _blur3 = 12;
 
 /// Анимации строк (`LyricsV2.kt:600-617`).
 const int _scaleDurationMs = 166;
@@ -686,6 +685,15 @@ class _SyncedLyricsState extends ConsumerState<_SyncedLyrics>
 
   final ScrollController _controller = ScrollController();
 
+  /// Ключ самой прокручиваемой области: по нему берём её границы в тех же
+  /// координатах, что и у строк, — так и считаем, что сейчас видно.
+  final GlobalKey _viewportKey = GlobalKey();
+
+  /// Диапазон строк, попадающих на экран. Нужен, чтобы размывать только
+  /// видимое: `ImageFilter` дорогой, а строки за краем всё равно не видны.
+  int _firstVisible = 0;
+  int _lastVisible = 0;
+
   /// Сглаженная позиция в миллисекундах — по ней рисуется «караоке».
   final ValueNotifier<int> _positionMs = ValueNotifier<int>(0);
 
@@ -733,11 +741,13 @@ class _SyncedLyricsState extends ConsumerState<_SyncedLyrics>
         _controller.jumpTo(_clampOffset(_scrollAnimation!.value));
       });
     _ticker = createTicker(_onTick)..start();
+    _controller.addListener(_scheduleVisibleUpdate);
   }
 
   @override
   void dispose() {
     _ticker?.dispose();
+    _controller.removeListener(_scheduleVisibleUpdate);
     _manualTimer?.cancel();
     _scrollAnimation?.dispose();
     _controller.dispose();
@@ -748,6 +758,47 @@ class _SyncedLyricsState extends ConsumerState<_SyncedLyrics>
 
   List<GlobalKey> _buildKeys() =>
       List<GlobalKey>.generate(widget.lines.length, (_) => GlobalKey());
+
+  /// Пересчитывает видимый диапазон после кадра.
+  ///
+  /// Во время самой прокрутки трогать разметку нельзя — только после кадра,
+  /// иначе получим «setState во время построения».
+  void _scheduleVisibleUpdate() {
+    WidgetsBinding.instance.addPostFrameCallback((_) => _updateVisible());
+  }
+
+  void _updateVisible() {
+    if (!mounted) return;
+    final RenderBox? viewport =
+        _viewportKey.currentContext?.findRenderObject() as RenderBox?;
+    if (viewport == null || !viewport.attached) return;
+
+    final double top = viewport.localToGlobal(Offset.zero).dy;
+    final double bottom = top + viewport.size.height;
+
+    int first = -1;
+    int last = -1;
+    for (int i = 0; i < _keys.length; i++) {
+      final RenderObject? object = _keys[i].currentContext?.findRenderObject();
+      if (object is! RenderBox || !object.attached) continue;
+      final double lineTop = object.localToGlobal(Offset.zero).dy;
+      final double lineBottom = lineTop + object.size.height;
+      // Строка попадает на экран, если её полоса пересекается с областью.
+      if (lineBottom < top || lineTop > bottom) continue;
+      if (first == -1) first = i;
+      last = i;
+    }
+    if (first == -1) return;
+    // Запас в одну строку сверху и снизу: при быстрой прокрутке строка
+    // появляется раньше, чем успевает размыться, и «вспыхивала» бы резкой.
+    first -= 1;
+    last += 1;
+    if (first == _firstVisible && last == _lastVisible) return;
+    setState(() {
+      _firstVisible = first;
+      _lastVisible = last;
+    });
+  }
 
   @override
   void didUpdateWidget(covariant _SyncedLyrics oldWidget) {
@@ -956,6 +1007,7 @@ class _SyncedLyricsState extends ConsumerState<_SyncedLyrics>
         return ScrollConfiguration(
           behavior: const _LyricsScrollBehavior(),
           child: SingleChildScrollView(
+            key: _viewportKey,
             controller: _controller,
             padding: const EdgeInsets.fromLTRB(24, 72, 24, 160),
             child: Column(
@@ -972,6 +1024,7 @@ class _SyncedLyricsState extends ConsumerState<_SyncedLyrics>
                     // гасли все разом, а читались как близкие/дальние.
                     distance: (i - active).abs(),
                     manualScrolling: _manualScrolling,
+                    blurVisible: i >= _firstVisible && i <= _lastVisible,
                     positionMs: _positionMs,
                     words: _wordTimings(i),
                     baseSize: baseSize,
@@ -1023,6 +1076,7 @@ class _LyricLine extends StatelessWidget {
     required this.active,
     required this.distance,
     required this.manualScrolling,
+    required this.blurVisible,
     required this.positionMs,
     required this.words,
     required this.baseSize,
@@ -1034,6 +1088,9 @@ class _LyricLine extends StatelessWidget {
   final bool active;
   final int distance;
   final bool manualScrolling;
+
+  /// Видна ли строка на экране прямо сейчас.
+  final bool blurVisible;
   final ValueNotifier<int> positionMs;
   final List<_WordTiming> words;
   final double baseSize;
@@ -1056,14 +1113,16 @@ class _LyricLine extends StatelessWidget {
 
   /// Размытие строки по расстоянию (`LyricsV2.kt:584-590`).
   ///
-  /// Размытие дорогое, поэтому ограничено двумя ближними строками: на
-  /// расстоянии 3+ альфа уже 0.18/0.10, и разница не видна, а лишний
-  /// `ImageFilter` на каждой строке заметно тормозит прокрутку на слабой
-  /// машине. У ближних строк вид как в оригинале.
+  /// Размываются ВСЕ строки, которые сейчас видны на экране: размытие — это и
+  /// есть смысл эффекта, текст уходит в глубину по мере удаления от активной
+  /// строки, а не просто гаснет. Строки за краем экрана не размываем только
+  /// потому, что их не видно: `ImageFilter` — самый дорогой слой в строке, и
+  /// платить за невидимое незачем.
   double get _blur {
-    if (active || manualScrolling || distance > 2) return 0;
+    if (active || !blurVisible) return 0;
     if (distance == 1) return _blur1;
-    return _blur2;
+    if (distance == 2) return _blur2;
+    return _blur3;
   }
 
   @override
