@@ -1,5 +1,9 @@
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
+// Готовые компоненты Material 3 Expressive. Берём их ради слайдера: в нём
+// ползунок — вертикальная полоса 4x44 (а не круг), между ползунком и дорожкой
+// зазор 6, а дорожка толщиной 16 — точные токены Compose Material 3.
+import 'package:material_3_expressive/material_3_expressive.dart' as m3e;
 
 import '../../core/utils/format.dart';
 import '../../data/local/app_settings.dart';
@@ -89,66 +93,28 @@ class _PlayerSeekBarState extends ConsumerState<PlayerSeekBar> {
       ),
       child: Column(
         children: <Widget>[
-          // «Обычный» и «с кружком» в ArchiveTune — это штатный Slider
-          // Material 3 (`StyledPlaybackSlider`, ветки Standard и Circular):
-          // у них отличается только название, набор цветов совпадает.
+          // «Обычный», «волнистый» и «с кружком» — компонент Material 3
+          // Expressive из пакета `material_3_expressive`.
           if (style == ProgressBarStyle.standard ||
+              style == ProgressBarStyle.wavy ||
               style == ProgressBarStyle.circular)
-            SliderTheme(
-              // Оформление как в ArchiveTune: активная часть — цветом акцента,
-              // неактивная — приглушённая дорожка; пока играет, ползунок
-              // крупнее и с обводкой фона, поэтому заметен с первого взгляда.
-              // Пока тянем, над ползунком показывается время.
-              data: SliderTheme.of(context).copyWith(
-                // ArchiveTune для стиля Standard не задаёт толщину — это
-                // штатный Material 3 Slider (`TrackHeight = 16`), поэтому и
-                // здесь берём 16, а не произвольные 12.
-                trackHeight: 16,
-                trackShape: const RoundedRectSliderTrackShape(),
-                activeTrackColor: scheme.primary,
-                // Неактивная часть — той же ролью акцента с альфой 0.22
-                // (`PlayerSliderColors.Config.INACTIVE_TRACK_ALPHA`), а не
-                // приглушённым `onSurfaceVariant`.
-                inactiveTrackColor:
-                    scheme.primary.withValues(alpha: _kInactiveTrackAlpha),
-                disabledActiveTrackColor:
-                    scheme.primary.withValues(alpha: 0.38),
-                disabledInactiveTrackColor:
-                    scheme.primary.withValues(alpha: 0.12),
-                thumbColor: scheme.primary,
-                // Ползунок — как `SliderDefaults.Thumb`: в покое круг, при
-                // перетаскивании вытягивается в вертикальную «ручку».
-                thumbShape: _SeekThumbShape(pressed: _dragValue != null),
-                overlayShape: const RoundSliderOverlayShape(overlayRadius: 22),
-                activeTickMarkColor: Colors.transparent,
-                inactiveTickMarkColor: Colors.transparent,
-                // Подсказка со временем при перетаскивании.
-                showValueIndicator: ShowValueIndicator.onlyForContinuous,
-                valueIndicatorShape:
-                    const RectangularSliderValueIndicatorShape(),
-                valueIndicatorColor: scheme.inverseSurface,
-                valueIndicatorTextStyle: Theme.of(context)
-                    .textTheme
-                    .labelLarge
-                    ?.copyWith(color: scheme.onInverseSurface),
-              ),
-              child: Slider(
-                label: formatDurationClock(shown),
-                value: value.clamp(0.0, 1.0),
-                onChanged: seekable
-                    ? (double v) => setState(() => _dragValue = v)
-                    : null,
-                onChangeEnd: seekable
-                    ? (double v) {
-                        // Позицию считаем сами: у движка длительность может
-                        // быть нулевой, тогда seekFraction дал бы ноль.
-                        ref
-                            .read(playerControllerProvider.notifier)
-                            .seek(duration * v);
-                        setState(() => _dragValue = null);
-                      }
-                    : null,
-              ),
+            _M3ESeekBar(
+              style: style,
+              value: value.clamp(0.0, 1.0),
+              playing: playing,
+              onChanged: seekable
+                  ? (double v) => setState(() => _dragValue = v)
+                  : null,
+              onChangeEnd: seekable
+                  ? (double v) {
+                      // Позицию считаем сами: у движка длительность может
+                      // быть нулевой, тогда seekFraction дал бы ноль.
+                      ref
+                          .read(playerControllerProvider.notifier)
+                          .seek(duration * v);
+                      setState(() => _dragValue = null);
+                    }
+                  : null,
             )
           else
             _StyledSeekBar(
@@ -210,26 +176,14 @@ class _SeekBarPreviewState extends State<SeekBarPreview> {
   @override
   Widget build(BuildContext context) {
     final ColorScheme scheme = Theme.of(context).colorScheme;
-    final bool m3 = widget.style == ProgressBarStyle.standard ||
-        widget.style == ProgressBarStyle.circular;
-    if (m3) {
-      return SliderTheme(
-        data: SliderTheme.of(context).copyWith(
-          trackHeight: 16,
-          activeTrackColor: scheme.primary,
-          inactiveTrackColor:
-              scheme.primary.withValues(alpha: _kInactiveTrackAlpha),
-          thumbColor: scheme.primary,
-          thumbShape: const _SeekThumbShape(pressed: false),
-          overlayColor: scheme.primary.withValues(alpha: 0.12),
-          overlayShape: const RoundSliderOverlayShape(overlayRadius: 22),
-          activeTickMarkColor: Colors.transparent,
-          inactiveTickMarkColor: Colors.transparent,
-        ),
-        child: Slider(
-          value: _value,
-          onChanged: (double v) => setState(() => _value = v),
-        ),
+    if (widget.style == ProgressBarStyle.standard ||
+        widget.style == ProgressBarStyle.wavy ||
+        widget.style == ProgressBarStyle.circular) {
+      return _M3ESeekBar(
+        style: widget.style,
+        value: _value,
+        playing: true,
+        onChanged: (double v) => setState(() => _value = v),
       );
     }
     return _StyledSeekBar(
@@ -246,62 +200,72 @@ class _SeekBarPreviewState extends State<SeekBarPreview> {
   }
 }
 
-/// Ползунок полосы перемотки — как у Material 3 Expressive.
+/// Полоса перемотки на компоненте Material 3 Expressive.
 ///
-/// В покое это круг, при перетаскивании он вытягивается в вертикальную
-/// «ручку» 4×44 с закруглением: так ведёт себя `SliderDefaults.Thumb` в
-/// Compose и `WavySliderExpressive.kt:269-283`. Раньше здесь был круг с
-/// обводкой при воспроизведении — из-за него «обычный» стиль не походил на
-/// оригинал.
-class _SeekThumbShape extends SliderComponentShape {
-  const _SeekThumbShape({required this.pressed});
+/// В ArchiveTune (`StyledPlaybackSlider`, ветка `main`) «обычный» стиль — это
+/// штатный `Slider` Material 3, а «волнистый» и «с кружком» — волнистая
+/// дорожка из библиотеки `me.saket.squiggles`. Ползунок там не круг, а
+/// вертикальная полоса: токены `handleWidth = 4`, `handleHeight = 44`
+/// (`material_3_expressive`, `res/m3e_slider_tokens.dart`).
+///
+/// У «волнистого» ползунка нет вовсе: в ArchiveTune его цвет прозрачный
+/// (`PlayerSliderColors.wavySliderColors`), поэтому здесь он не рисуется.
+class _M3ESeekBar extends StatelessWidget {
+  const _M3ESeekBar({
+    required this.style,
+    required this.value,
+    required this.playing,
+    this.onChanged,
+    this.onChangeEnd,
+  });
 
-  /// Тянет ли пользователь ползунок прямо сейчас.
-  final bool pressed;
+  final ProgressBarStyle style;
+  final double value;
 
-  /// Размеры «ручки» при перетаскивании — `WavySliderExpressive.kt:88-90`:
-  /// ширина `strokeWidth * 1.2` (5 dp → 6 dp), высота 24 dp.
-  static const double _barWidth = 6;
-  static const double _barHeight = 24;
+  /// Играет ли трек: у волны от этого зависит амплитуда.
+  final bool playing;
 
-  /// В покое — круг `thumbRadius = 8` (`WavySliderExpressive.kt:84`), то есть
-  /// ровно в толщину дорожки: так и выглядит ползунок в Material 3.
-  static const double _circleRadius = 8;
+  final ValueChanged<double>? onChanged;
+  final ValueChanged<double>? onChangeEnd;
 
   @override
-  Size getPreferredSize(bool isEnabled, bool isDiscrete) =>
-      const Size(_barWidth, _barHeight);
+  Widget build(BuildContext context) {
+    final bool wavy = style != ProgressBarStyle.standard;
+    // Параметры волны — из `SquigglySlider` (библиотека me.saket.squiggles):
+    // штрих 6, длина волны 36 (это `strokeWidth * 6`), амплитуда 2 в игре и
+    // 0 в паузе (`amplitude = if (isPlaying) 2.dp else 0.dp`).
+    final Widget slider = wavy
+        ? m3e.M3ESlider.wavy(
+            value: value,
+            onChanged: onChanged,
+            onChangeEnd: onChangeEnd,
+            amplitude: playing ? 2 : 0,
+            wavelength: 36,
+            // Ползунок есть только у «с кружком»; у «волнистого» его нет.
+            thumbBuilder: style == ProgressBarStyle.wavy ? _noThumb : null,
+          )
+        : m3e.M3ESlider(
+            value: value,
+            onChanged: onChanged,
+            onChangeEnd: onChangeEnd,
+          );
 
-  @override
-  void paint(
-    PaintingContext context,
-    Offset center, {
-    required Animation<double> activationAnimation,
-    required Animation<double> enableAnimation,
-    required bool isDiscrete,
-    required TextPainter labelPainter,
-    required RenderBox parentBox,
-    required SliderThemeData sliderTheme,
-    required TextDirection textDirection,
-    required double value,
-    required double textScaleFactor,
-    required Size sizeWithOverflow,
-  }) {
-    final Canvas canvas = context.canvas;
-    final Color fill = sliderTheme.thumbColor ?? const Color(0xFFFFFFFF);
-    final Paint paint = Paint()..color = fill;
-    if (!pressed) {
-      canvas.drawCircle(center, _circleRadius, paint);
-      return;
-    }
-    canvas.drawRRect(
-      RRect.fromRectAndRadius(
-        Rect.fromCenter(center: center, width: _barWidth, height: _barHeight),
-        const Radius.circular(_barWidth / 2),
-      ),
-      paint,
-    );
+    // Пакет — отдельная тема. Собираем её из цвета акцента приложения:
+    // иначе дорожка и ползунок будут стандартными лиловыми.
+    final ColorScheme scheme = Theme.of(context).colorScheme;
+    final m3e.M3EThemeData data = Theme.of(context).brightness == Brightness.dark
+        ? m3e.M3EThemeData.dark(seedColor: scheme.primary)
+        : m3e.M3EThemeData.light(seedColor: scheme.primary);
+    return m3e.M3ETheme(data: data, child: slider);
   }
+
+  /// Пустой ползунок — для «волнистого» стиля.
+  static Widget _noThumb({
+    required BuildContext context,
+    required m3e.M3ESliderColors colors,
+    required bool pressed,
+  }) =>
+      const SizedBox.shrink();
 }
 
 /// Отметка качества потока — как у ArchiveTune (OPUS и битрейт).
