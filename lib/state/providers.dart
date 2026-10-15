@@ -122,6 +122,10 @@ class SettingsController extends Notifier<AppSettings> {
   Future<void> setPlayerPanelEnabled(bool value) =>
       update((AppSettings s) => s.copyWith(playerPanelEnabled: value));
 
+  /// Режим правой панели: плеер с крупной обложкой или очередь.
+  Future<void> setRightPanelMode(RightPanelMode mode) =>
+      update((AppSettings s) => s.copyWith(playerPanelMode: mode));
+
   /// Стиль полосы перемотки в плеере.
   Future<void> setProgressBarStyle(ProgressBarStyle style) =>
       update((AppSettings s) => s.copyWith(progressBarStyle: style));

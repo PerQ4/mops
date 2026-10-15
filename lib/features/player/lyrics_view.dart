@@ -44,24 +44,45 @@ const double _viewportAnchor = 0.35;
 const double _inactiveAlpha = 0.35;
 
 /// Оформление строк по расстоянию до активной (`LyricsV2.kt:549-583`).
-const double _closeAlpha1 = 0.52;
-const double _closeAlpha2 = 0.30;
-const double _closeAlpha3 = 0.18;
-const double _farAlpha = 0.10;
+const List<double> _alphaTable = <double>[1, 0.52, 0.30, 0.18, 0.10];
+const List<double> _manualAlphaTable = <double>[1, 0.72, 0.56, 0.40, 0.28];
+
 
 /// То же, но пока пользователь листает вручную (`LyricsV2.kt:559-565`).
-const double _manualAlpha1 = 0.72;
-const double _manualAlpha2 = 0.56;
-const double _manualAlpha3 = 0.40;
-const double _manualFarAlpha = 0.28;
 
 /// Радиус размытия неактивных строк (`LyricsV2.kt:584-590`).
 ///
 /// Размытие — это и есть смысл эффекта: текст уходит в глубину по мере
 /// удаления от активной строки, а не просто гаснет. Значения как в оригинале.
-const double _blur1 = 2;
-const double _blur2 = 5;
-const double _blur3 = 12;
+const List<double> _blurTable = <double>[0, 2, 5, 12];
+
+/// Предельная ширина колонки текста.
+///
+/// Ограничение из практики чтения: строка длиннее ~560 px уже не читается
+/// как строка. В ArchiveTune такого ограничения нет только потому, что там
+/// телефон.
+const double _lyricsColumnWidth = 560;
+
+/// Сколько строк помещается на экране телефона — эталон оригинала.
+///
+/// В ArchiveTune затухание задано ступенями 1/2/3 именно потому, что на
+/// телефоне видно около семи строк: четвёртая уже за краем. На большом окне
+/// строк видно втрое больше, и те же ступени гасили бы почти весь текст —
+/// поэтому расстояние делим на отношение числа видимых строк к семи.
+const double _phoneVisibleLines = 7;
+
+/// Значение из таблицы по дробному индексу.
+///
+/// Нужно, чтобы ступени оригинала растягивались на экранах, где видно больше
+/// строк, и в точности совпадали с оригиналом на телефоне (там индекс
+/// получается целым).
+double tableValue(List<double> table, double index) {
+  if (index <= 0) return table.first;
+  final int low = index.floor();
+  if (low >= table.length - 1) return table.last;
+  final double t = index - low;
+  return table[low] + (table[low + 1] - table[low]) * t;
+}
 
 /// Анимации строк (`LyricsV2.kt:600-617`).
 const int _scaleDurationMs = 166;
@@ -694,6 +715,13 @@ class _SyncedLyricsState extends ConsumerState<_SyncedLyrics>
   int _firstVisible = 0;
   int _lastVisible = 0;
 
+  /// Высота строки: по ней считаем, сколько строк помещается на экране.
+  double _lineHeight = 40;
+
+  /// Отношение числа видимых строк к эталонным семи (`_phoneVisibleLines`).
+  /// Единица — экран как на телефоне, где снят оригинал.
+  double _lineStep = 1;
+
   /// Сглаженная позиция в миллисекундах — по ней рисуется «караоке».
   final ValueNotifier<int> _positionMs = ValueNotifier<int>(0);
 
@@ -793,10 +821,23 @@ class _SyncedLyricsState extends ConsumerState<_SyncedLyrics>
     // появляется раньше, чем успевает размыться, и «вспыхивала» бы резкой.
     first -= 1;
     last += 1;
-    if (first == _firstVisible && last == _lastVisible) return;
+
+    // Насколько этот экран «длиннее» телефонного. Ограничиваем сверху
+    // четвёркой: дальше разница всё равно не читается, а затухание стало бы
+    // совсем плоским.
+    final double step =
+        (viewport.size.height / _lineHeight / _phoneVisibleLines)
+            .clamp(1.0, 4.0);
+
+    if (first == _firstVisible &&
+        last == _lastVisible &&
+        step == _lineStep) {
+      return;
+    }
     setState(() {
       _firstVisible = first;
       _lastVisible = last;
+      _lineStep = step;
     });
   }
 
@@ -1000,6 +1041,9 @@ class _SyncedLyricsState extends ConsumerState<_SyncedLyrics>
       settingsControllerProvider.select((AppSettings s) => s.lyricsTextScale),
     );
     final double baseSize = (theme.titleLarge?.fontSize ?? 22) * scale;
+    // Высота строки: межстрочный 1.35 плюс отступы строки (10 сверху и 10
+    // снизу, см. `_LyricLine`).
+    _lineHeight = baseSize * 1.35 + 20;
 
     // Видимый диапазон пересчитываем и после построения: при первом показе и
     // при смене активной строки прокрутка не срабатывает, а без пересчёта
@@ -1017,7 +1061,14 @@ class _SyncedLyricsState extends ConsumerState<_SyncedLyrics>
             key: _viewportKey,
             controller: _controller,
             padding: const EdgeInsets.fromLTRB(24, 72, 24, 160),
-            child: Column(
+            child: Center(
+              // Ширину колонки ограничиваем: строка во весь экран — это уже
+              // не текст, а полоса, и читать её неудобно. В оригинале такой
+              // ширины просто не бывает — там телефон.
+              child: ConstrainedBox(
+                constraints:
+                    const BoxConstraints(maxWidth: _lyricsColumnWidth),
+                child: Column(
               crossAxisAlignment: CrossAxisAlignment.start,
               children: <Widget>[
                 for (int i = 0; i < widget.lines.length; i++)
@@ -1032,12 +1083,15 @@ class _SyncedLyricsState extends ConsumerState<_SyncedLyrics>
                     distance: (i - active).abs(),
                     manualScrolling: _manualScrolling,
                     blurVisible: i >= _firstVisible && i <= _lastVisible,
+                    step: _lineStep,
                     positionMs: _positionMs,
                     words: _wordTimings(i),
                     baseSize: baseSize,
                     search: widget.search,
                   ),
               ],
+                ),
+              ),
             ),
           ),
         );
@@ -1084,6 +1138,7 @@ class _LyricLine extends StatelessWidget {
     required this.distance,
     required this.manualScrolling,
     required this.blurVisible,
+    required this.step,
     required this.positionMs,
     required this.words,
     required this.baseSize,
@@ -1098,24 +1153,26 @@ class _LyricLine extends StatelessWidget {
 
   /// Видна ли строка на экране прямо сейчас.
   final bool blurVisible;
+
+  /// Во сколько раз «дальше» строка на этом экране по сравнению с телефоном.
+  /// Единица — как в оригинале.
+  final double step;
   final ValueNotifier<int> positionMs;
   final List<_WordTiming> words;
   final double baseSize;
   final _LyricsSearch search;
 
   /// Прозрачность строки по расстоянию (`LyricsV2.kt:549-583`).
+  ///
+  /// Расстояние делим на [step]: на телефоне он равен единице, и таблица
+  /// выдаёт ровно оригинальные значения; на большом экране, где видно больше
+  /// строк, ступени растягиваются — иначе погас бы почти весь текст.
   double get _alpha {
     if (active) return 1;
-    if (manualScrolling) {
-      if (distance == 1) return _manualAlpha1;
-      if (distance == 2) return _manualAlpha2;
-      if (distance == 3) return _manualAlpha3;
-      return _manualFarAlpha;
-    }
-    if (distance == 1) return _closeAlpha1;
-    if (distance == 2) return _closeAlpha2;
-    if (distance == 3) return _closeAlpha3;
-    return _farAlpha;
+    return tableValue(
+      manualScrolling ? _manualAlphaTable : _alphaTable,
+      distance / step,
+    );
   }
 
   /// Размытие строки по расстоянию (`LyricsV2.kt:584-590`).
@@ -1127,9 +1184,7 @@ class _LyricLine extends StatelessWidget {
   /// платить за невидимое незачем.
   double get _blur {
     if (active || !blurVisible) return 0;
-    if (distance == 1) return _blur1;
-    if (distance == 2) return _blur2;
-    return _blur3;
+    return tableValue(_blurTable, distance / step);
   }
 
   @override

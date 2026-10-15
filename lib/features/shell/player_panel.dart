@@ -1,6 +1,7 @@
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 
+import '../../core/theme/layout.dart';
 import '../../data/local/app_settings.dart';
 import '../../state/providers.dart';
 import '../../core/utils/artwork_urls.dart';
@@ -17,7 +18,7 @@ import '../player/queue_list.dart';
 
 /// Открыта ли правая панель плеера.
 ///
-/// Отдельный провайдер, а не общий с [PlayerPanelMode]: тот управляет
+/// Отдельный провайдер, а не общий с [RightPanelMode]: тот управляет
 /// выезжающим вверх ящиком очереди/текста, а этот — полноценной панелью,
 /// которая отнимает ширину у содержимого. Смешивать их нельзя: ящик
 /// всплывает поверх, панель же ведёт себя как боковая.
@@ -150,6 +151,20 @@ class _PlayerRightPanelState extends ConsumerState<PlayerRightPanel> {
       return Material(color: scheme.surfaceContainer);
     }
 
+    // Режим панели — настройка, а не локальное состояние: он должен
+    // сохраняться между запусками, иначе каждый раз приходится переключать.
+    final RightPanelMode mode = ref.watch(
+      settingsControllerProvider.select(
+        (AppSettings s) => s.playerPanelMode,
+      ),
+    );
+
+    // В режиме плеера очередь почти не видна: показываем только следующий
+    // трек — чтобы было понятно, что будет дальше.
+    final Track? next = player.index + 1 < player.queue.length
+        ? player.queue[player.index + 1]
+        : null;
+
     return Material(
       color: scheme.surfaceContainer,
       child: Builder(
@@ -160,12 +175,22 @@ class _PlayerRightPanelState extends ConsumerState<PlayerRightPanel> {
               _PanelTrackRow(
                 track: track,
                 player: player,
+                mode: mode,
                 showLyrics: _showLyrics,
                 onToggleLyrics: () =>
                     setState(() => _showLyrics = !_showLyrics),
+                onToggleMode: () => ref
+                    .read(settingsControllerProvider.notifier)
+                    .setRightPanelMode(mode == RightPanelMode.player
+                        ? RightPanelMode.queue
+                        : RightPanelMode.player),
                 onClose: () =>
                     ref.read(playerRightPanelProvider.notifier).close(),
               ),
+              // В режиме плеера — крупная обложка; в режиме очереди её нет,
+              // всё место отдано списку.
+              if (mode == RightPanelMode.player)
+                _PanelArtwork(track: track, side: 260),
               PlayerSeekBar(player: player, compact: true),
               Padding(
                 padding: const EdgeInsets.symmetric(horizontal: 8),
@@ -186,11 +211,121 @@ class _PlayerRightPanelState extends ConsumerState<PlayerRightPanel> {
                         key: ValueKey<String>('panel-lyrics-${track.id}'),
                         videoId: track.id,
                       )
-                    : const QueueList(),
+                    : mode == RightPanelMode.player
+                        ? _NextTrack(track: next)
+                        : const QueueList(),
               ),
             ],
           );
         },
+      ),
+    );
+  }
+}
+
+/// Крупная обложка играющего трека — для режима «Плеер».
+class _PanelArtwork extends StatelessWidget {
+  const _PanelArtwork({required this.track, required this.side});
+
+  final Track track;
+  final double side;
+
+  @override
+  Widget build(BuildContext context) {
+    final List<String> variants = track.artworkFallbacks(kArtworkLarge);
+
+    return Padding(
+      padding: const EdgeInsets.symmetric(horizontal: 20, vertical: 4),
+      child: Center(
+        child: SizedBox(
+          width: side,
+          height: side,
+          child: Artwork(
+            url: variants.isEmpty ? null : variants.first,
+            fallbacks:
+                variants.length > 1 ? variants.sublist(1) : const <String>[],
+            radius: BorderRadius.circular(AppLayout.radiusL),
+          ),
+        ),
+      ),
+    );
+  }
+}
+
+/// Следующий трек — в режиме «Плеер» очередь показывать негде, но знать, что
+/// будет дальше, нужно. Нажатие запускает его.
+class _NextTrack extends ConsumerWidget {
+  const _NextTrack({required this.track});
+
+  final Track? track;
+
+  @override
+  Widget build(BuildContext context, WidgetRef ref) {
+    final TextTheme text = Theme.of(context).textTheme;
+    final ColorScheme scheme = Theme.of(context).colorScheme;
+    final Track? next = track;
+    if (next == null) return const SizedBox.shrink();
+
+    final List<String> variants = next.artworkFallbacks(kArtworkLarge);
+
+    return Padding(
+      padding: const EdgeInsets.fromLTRB(16, 8, 16, 0),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: <Widget>[
+          Text(
+            'Далее',
+            style: text.labelLarge?.copyWith(color: scheme.onSurfaceVariant),
+          ),
+          const SizedBox(height: 8),
+          InkWell(
+            onTap: () => ref
+                .read(playerControllerProvider.notifier)
+                .playTrack(next, context: ref.read(playerControllerProvider).queue),
+            borderRadius: BorderRadius.circular(12),
+            child: Padding(
+              padding: const EdgeInsets.symmetric(vertical: 4),
+              child: Row(
+                children: <Widget>[
+                  ClipRRect(
+                    borderRadius: BorderRadius.circular(8),
+                    child: SizedBox(
+                      width: 48,
+                      height: 48,
+                      child: Artwork(
+                        url: variants.isEmpty ? null : variants.first,
+                        fallbacks: variants.length > 1
+                            ? variants.sublist(1)
+                            : const <String>[],
+                        radius: BorderRadius.circular(8),
+                      ),
+                    ),
+                  ),
+                  const SizedBox(width: 12),
+                  Expanded(
+                    child: Column(
+                      crossAxisAlignment: CrossAxisAlignment.start,
+                      children: <Widget>[
+                        Text(
+                          next.title,
+                          maxLines: 1,
+                          overflow: TextOverflow.ellipsis,
+                          style: text.bodyLarge
+                              ?.copyWith(fontWeight: FontWeight.w600),
+                        ),
+                        ArtistLine(
+                          artists: next.artists,
+                          style: text.bodySmall
+                              ?.copyWith(color: scheme.onSurfaceVariant),
+                        ),
+                      ],
+                    ),
+                  ),
+                ],
+              ),
+            ),
+          ),
+        ],
       ),
     );
   }
@@ -209,15 +344,19 @@ class _PanelTrackRow extends ConsumerWidget {
   const _PanelTrackRow({
     required this.track,
     required this.player,
+    required this.mode,
     required this.showLyrics,
     required this.onToggleLyrics,
+    required this.onToggleMode,
     required this.onClose,
   });
 
   final Track track;
   final PlayerUiState player;
+  final RightPanelMode mode;
   final bool showLyrics;
   final VoidCallback onToggleLyrics;
+  final VoidCallback onToggleMode;
   final VoidCallback onClose;
 
   @override
@@ -249,6 +388,12 @@ class _PanelTrackRow extends ConsumerWidget {
         iconSize: 20,
         padding: EdgeInsets.zero,
         visualDensity: VisualDensity.compact,
+        // Без этого `IconButton` держит минимальную зону нажатия 40x40, и
+        // пять кнопок в строке уже не помещались (переполнение на 10 px).
+        // В панели на десктопе мышь, а не палец, поэтому 34 хватает.
+        style: IconButton.styleFrom(
+          tapTargetSize: MaterialTapTargetSize.shrinkWrap,
+        ),
         constraints: const BoxConstraints.tightFor(width: 34, height: 34),
         icon: Icon(icon, color: selected ? scheme.primary : null),
         selectedIcon: selectedIcon == null
@@ -312,6 +457,16 @@ class _PanelTrackRow extends ConsumerWidget {
                     ),
                 ],
               ),
+            ),
+            action(
+              // Переключатель режима: обложка против списка.
+              tooltip: mode == RightPanelMode.player
+                  ? 'Показать очередь'
+                  : 'Показать обложку',
+              icon: mode == RightPanelMode.player
+                  ? Icons.queue_music
+                  : Icons.album_outlined,
+              onPressed: onToggleMode,
             ),
             action(
               tooltip: showLyrics ? 'Скрыть текст' : 'Показать текст',

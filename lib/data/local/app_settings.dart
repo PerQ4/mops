@@ -95,6 +95,31 @@ enum LyricsSource {
       );
 }
 
+/// Режим правой панели плеера.
+///
+/// Это два разных способа пользоваться одной панелью, поэтому выбор
+/// запоминается:
+///
+/// - «Плеер» — крупная обложка и управление, очередь почти не видна (только
+///   следующий трек);
+/// - «Очередь» — компактная строка трека, а всё оставшееся место отдано
+///   очереди.
+enum RightPanelMode {
+  player('Плеер', 'Крупная обложка и управление'),
+  queue('Очередь', 'Строка трека и полный список');
+
+  const RightPanelMode(this.label, this.description);
+
+  final String label;
+  final String description;
+
+  static RightPanelMode fromName(String? name) =>
+      RightPanelMode.values.firstWhere(
+        (RightPanelMode v) => v.name == name,
+        orElse: () => RightPanelMode.queue,
+      );
+}
+
 /// Стиль полосы перемотки в плеере.
 ///
 /// Перенесён из ArchiveTune (`SliderStyle`, `constants/PreferenceKeys.kt:170`):
@@ -212,6 +237,7 @@ class AppSettings {
     this.pureBlack = false,
     this.paletteStyle = PaletteStylePreference.tonal,
     this.playerPanelWidth = 280,
+    this.playerPanelMode = RightPanelMode.queue,
     this.sidebarWidth = 280,
     this.lyricsSource = LyricsSource.auto,
     this.audioQuality = AudioQuality.high,
@@ -251,6 +277,9 @@ class AppSettings {
 
   /// Ширина правой панели плеера. Меняется перетаскиванием за её край.
   final double playerPanelWidth;
+
+  /// Что показывает правая панель: плеер с крупной обложкой или очередь.
+  final RightPanelMode playerPanelMode;
 
   /// Стиль палитры: тональная, нейтральная или монохромная.
   final PaletteStylePreference paletteStyle;
@@ -341,6 +370,7 @@ class AppSettings {
     bool? pureBlack,
     PaletteStylePreference? paletteStyle,
     double? playerPanelWidth,
+    RightPanelMode? playerPanelMode,
     double? sidebarWidth,
     LyricsSource? lyricsSource,
     AudioQuality? audioQuality,
@@ -374,6 +404,7 @@ class AppSettings {
       pureBlack: pureBlack ?? this.pureBlack,
       paletteStyle: paletteStyle ?? this.paletteStyle,
       playerPanelWidth: playerPanelWidth ?? this.playerPanelWidth,
+      playerPanelMode: playerPanelMode ?? this.playerPanelMode,
       sidebarWidth: sidebarWidth ?? this.sidebarWidth,
       lyricsSource: lyricsSource ?? this.lyricsSource,
       audioQuality: audioQuality ?? this.audioQuality,
@@ -409,6 +440,7 @@ class AppSettings {
         'pureBlack': pureBlack,
         'paletteStyle': paletteStyle.name,
         'playerPanelWidth': playerPanelWidth,
+        'playerPanelMode': playerPanelMode.name,
         'sidebarWidth': sidebarWidth,
         'lyricsSource': lyricsSource.name,
         'audioQuality': audioQuality.name,
@@ -447,6 +479,8 @@ class AppSettings {
       paletteStyle:
           PaletteStylePreference.fromName(json['paletteStyle'] as String?),
       playerPanelWidth: (json['playerPanelWidth'] as num?)?.toDouble() ?? 280,
+      playerPanelMode:
+          RightPanelMode.fromName(json['playerPanelMode'] as String?),
       sidebarWidth: (json['sidebarWidth'] as num?)?.toDouble() ?? 280,
       lyricsSource: LyricsSource.fromName(json['lyricsSource'] as String?),
       audioQuality: AudioQuality.fromName(json['audioQuality'] as String?),
