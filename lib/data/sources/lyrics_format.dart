@@ -277,11 +277,30 @@ Duration? parseTtmlTime(String? raw) {
   return Duration(milliseconds: (seconds * 1000).round());
 }
 
-/// Раскодирует базовые HTML-сущности, которые встречаются в текстах.
-String unescapeEntities(String value) => value
-    .replaceAll('&amp;', '&')
-    .replaceAll('&lt;', '<')
-    .replaceAll('&gt;', '>')
-    .replaceAll('&quot;', '"')
-    .replaceAll('&apos;', "'")
-    .replaceAll('&#39;', "'");
+/// Раскодирует HTML-сущности, которые встречаются в текстах.
+///
+/// Кроме именованных нужны и числовые: YouLy+ отдаёт апостроф как `&#x27;`
+/// (шестнадцатеричный код), и без разбора в тексте так и оставалось
+/// «We&#x27;re no strangers to love». Именованные заменяем первыми — иначе
+/// `&amp;#x27;` превратился бы в лишний апостроф.
+String unescapeEntities(String value) {
+  final String named = value
+      .replaceAll('&amp;', '&')
+      .replaceAll('&lt;', '<')
+      .replaceAll('&gt;', '>')
+      .replaceAll('&quot;', '"')
+      .replaceAll('&apos;', "'")
+      .replaceAll('&nbsp;', ' ');
+
+  return named.replaceAllMapped(
+    RegExp(r'&#(x?)([0-9A-Fa-f]+);'),
+    (Match match) {
+      final bool hex = match.group(1) == 'x';
+      final int? code = int.tryParse(match.group(2)!, radix: hex ? 16 : 10);
+      // Некорректный код оставляем как есть: лучше видимый мусор, чем
+      // потерянный символ.
+      if (code == null || code <= 0 || code > 0x10FFFF) return match.group(0)!;
+      return String.fromCharCode(code);
+    },
+  );
+}
