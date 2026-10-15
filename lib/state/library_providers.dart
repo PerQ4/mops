@@ -13,17 +13,27 @@ import 'catalog_providers.dart';
 /// Ручной сброс не нужен: каждый провайдер `watch`-ит [authControllerProvider],
 /// поэтому при входе и выходе Riverpod пересчитывает их автоматически.
 
+/// Подписан ли пользователь.
+///
+/// Берём только флаг входа, а не всё состояние: `select` не даёт личным
+/// спискам перезапрашиваться на каждое изменение [AuthState] (`busy`, имя
+/// профиля, аватар). Иначе при запуске «Мне нравится» запрашивался по
+/// несколько раз подряд, и сердце оставалось пустым, пока шёл очередной
+/// запрос.
+bool _signedIn(Ref ref) =>
+    ref.watch(authControllerProvider.select((AuthState s) => s.isSignedIn));
+
 /// Плейлисты пользователя.
 final FutureProvider<List<Playlist>> likedPlaylistsProvider =
     FutureProvider<List<Playlist>>((ref) async {
-  if (!ref.watch(authControllerProvider).isSignedIn) return const <Playlist>[];
+  if (!_signedIn(ref)) return const <Playlist>[];
   return ref.watch(librarySourceProvider).likedPlaylists();
 });
 
 /// Лайкнутые треки.
 final FutureProvider<List<Track>> likedSongsProvider =
     FutureProvider<List<Track>>((ref) async {
-  if (!ref.watch(authControllerProvider).isSignedIn) return const <Track>[];
+  if (!_signedIn(ref)) return const <Track>[];
   return ref.watch(librarySourceProvider).likedSongs();
 });
 
@@ -35,7 +45,7 @@ final FutureProvider<List<Track>> likedSongsProvider =
 /// авторизованно и сам подставляет понятное название.
 final FutureProvider<Playlist> likedSongsPlaylistProvider =
     FutureProvider<Playlist>((ref) async {
-  if (!ref.watch(authControllerProvider).isSignedIn) {
+  if (!_signedIn(ref)) {
     // Без входа запрос всё равно вернул бы пустоту — показываем пустой
     // плейлист с названием, а не сетевую ошибку.
     return const Playlist(id: 'VLLM', title: 'Мне нравится');
@@ -51,37 +61,52 @@ final FutureProvider<Playlist> likedSongsPlaylistProvider =
 /// ставило лайк ещё раз вместо снятия. Теперь состояние одно на всё
 /// приложение, поэтому все кнопки показывают одно и то же.
 class LikedIdsController extends Notifier<Set<String>> {
+  /// Локальные правки, ещё не подтверждённые сервером: `id → лайк`.
+  ///
+  /// Накладываются поверх серверного списка, поэтому перезагрузка «Мне
+  /// нравится» (в том числе сразу после нашего же лайка) не «съедает» только
+  /// что нажатое сердце, пока сервер не согласится.
+  final Map<String, bool> _overrides = <String, bool>{};
+
+  /// Последний полученный серверный список — чтобы краткая ошибка или
+  /// повторная загрузка не гасили уже показанные лайки.
+  Set<String> _lastServer = <String>{};
+
   @override
   Set<String> build() {
-    // Стартовое значение берём из уже загруженного списка (если успел прийти):
-    // в отличие от `watch`, `read` не подписывает нотификатор, поэтому
-    // перезагрузка списка не пересоздаёт его и не сбрасывает оптимистичный
-    // лайк. Дальнейшие обновления ловим через `listen` ниже.
-    final List<Track>? loaded = ref.read(likedSongsProvider).asData?.value;
-
     // Выход из аккаунта очищает множество: иначе на экране входа остались бы
-    // чужие лайки.
-    ref.listen(
-      authControllerProvider.select((AuthState s) => s.isSignedIn),
-      (bool? _, bool signedIn) {
-        if (!signedIn) state = <String>{};
-      },
+    // чужие лайки. `watch` заодно пересобирает состояние при входе.
+    if (!_signedIn(ref)) {
+      _overrides.clear();
+      _lastServer = <String>{};
+      return <String>{};
+    }
+
+    // Именно `watch`, а не `read` + `listen`: так новые данные списка
+    // пересобирают множество через обычный `build`, и подписчики интерфейса
+    // гарантированно получают новое значение. Прежний вариант заполнял
+    // состояние из слушателя; если тот не срабатывал, уже лайкнутый трек
+    // оставался «нелайкнутым» до перезапуска.
+    final List<Track>? songs = ref.watch(likedSongsProvider).value;
+
+    if (songs != null) {
+      _lastServer = songs.map((Track t) => t.id).toSet();
+    }
+
+    // Правки, которые сервер уже подтвердил, больше не нужны.
+    _overrides.removeWhere(
+      (String id, bool liked) => _lastServer.contains(id) == liked,
     );
 
-    // Серверная правда — список «Мне нравится». Когда он загрузился или
-    // перезагрузился, приводим множество к нему.
-    ref.listen<AsyncValue<List<Track>>>(
-      likedSongsProvider,
-      (AsyncValue<List<Track>>? _, AsyncValue<List<Track>> next) {
-        final List<Track>? songs = next.asData?.value;
-        // Пока идёт загрузка, значение не трогаем: иначе только что
-        // поставленный лайк мигнул бы и пропал.
-        if (songs == null) return;
-        state = songs.map((Track t) => t.id).toSet();
-      },
-    );
-
-    return loaded?.map((Track t) => t.id).toSet() ?? <String>{};
+    final Set<String> ids = <String>{..._lastServer};
+    _overrides.forEach((String id, bool liked) {
+      if (liked) {
+        ids.add(id);
+      } else {
+        ids.remove(id);
+      }
+    });
+    return ids;
   }
 
   /// Ставит или снимает лайк, меняя множество оптимистично.
@@ -93,6 +118,7 @@ class LikedIdsController extends Notifier<Set<String>> {
     final Set<String> before = state;
     final bool liked = !before.contains(videoId);
 
+    _overrides[videoId] = liked;
     state = liked
         ? <String>{...before, videoId}
         : <String>{...before}..remove(videoId);
@@ -104,6 +130,7 @@ class LikedIdsController extends Notifier<Set<String>> {
       ref.invalidate(likedSongsProvider);
     } on Object {
       // Не вышло — возвращаем как было, иначе сердце соврёт.
+      _overrides.remove(videoId);
       state = before;
       rethrow;
     }
@@ -116,21 +143,21 @@ final NotifierProvider<LikedIdsController, Set<String>> likedIdsProvider =
 /// Все сохранённые треки (включая добавленные вручную).
 final FutureProvider<List<Track>> librarySongsProvider =
     FutureProvider<List<Track>>((ref) async {
-  if (!ref.watch(authControllerProvider).isSignedIn) return const <Track>[];
+  if (!_signedIn(ref)) return const <Track>[];
   return ref.watch(librarySourceProvider).librarySongs();
 });
 
 /// Исполнители, чьи треки сохранены.
 final FutureProvider<List<Artist>> libraryArtistsProvider =
     FutureProvider<List<Artist>>((ref) async {
-  if (!ref.watch(authControllerProvider).isSignedIn) return const <Artist>[];
+  if (!_signedIn(ref)) return const <Artist>[];
   return ref.watch(librarySourceProvider).libraryArtists();
 });
 
 /// Каналы, на которые оформлена подписка.
 final FutureProvider<List<Artist>> subscriptionsProvider =
     FutureProvider<List<Artist>>((ref) async {
-  if (!ref.watch(authControllerProvider).isSignedIn) return const <Artist>[];
+  if (!_signedIn(ref)) return const <Artist>[];
   return ref.watch(librarySourceProvider).subscriptions();
 });
 
