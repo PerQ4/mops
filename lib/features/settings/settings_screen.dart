@@ -7,8 +7,6 @@ import '../../core/theme/ui_scaler.dart';
 import '../../data/local/app_settings.dart';
 import '../../state/auth_controller.dart';
 import '../../core/theme/layout.dart';
-import '../../core/audio/audio_engine.dart';
-import '../../state/player_controller.dart';
 import '../../state/providers.dart';
 import '../player/player_controls.dart';
 import '../../state/ui_scale.dart';
@@ -147,9 +145,6 @@ class SettingsScreen extends ConsumerWidget {
             trailing: const Icon(Icons.chevron_right),
             onTap: () => _pickProgressBarStyle(context, controller, settings),
           ),
-          // Превью выбранного стиля: видно результат, не открывая плеер.
-          _seekBarPreview(settings),
-
           const Divider(height: 24),
 
           // ------------------------------------------------------ воспроизведение
@@ -347,36 +342,66 @@ class SettingsScreen extends ConsumerWidget {
     if (result != null) await controller.setLyricsSource(result);
   }
 
-  /// Превью выбранного стиля полосы: видно, как он выглядит, не открывая плеер.
-  Widget _seekBarPreview(AppSettings settings) {
-    return IgnorePointer(
-      child: Padding(
-        // Своих боковых полей не добавляем: полоса сама отступает на 32
-        // (PlayerHorizontalPadding), иначе превью «уезжало» вглубь от плиток.
-        padding: const EdgeInsets.only(bottom: 12),
-        child: PlayerSeekBar(
-          player: const PlayerUiState(
-            playback: PlaybackState(
-              position: Duration(minutes: 1, seconds: 12),
-              duration: Duration(minutes: 3, seconds: 24),
-            ),
-          ),
-        ),
-      ),
-    );
-  }
-
+  /// Выбор стиля полосы — карточками с живым предпросмотром, как в
+  /// ArchiveTune (`SliderStyleOptionCard`, `AppearanceSettings.kt:1194`):
+  /// квадратные карточки по три в ряд, выбранная обведена акцентом.
   Future<void> _pickProgressBarStyle(
     BuildContext context,
     SettingsController controller,
     AppSettings settings,
   ) async {
-    final ProgressBarStyle? result = await _showChoice<ProgressBarStyle>(
-      context,
-      title: 'Полоса перемотки',
-      current: settings.progressBarStyle,
-      values: ProgressBarStyle.values,
-      label: (ProgressBarStyle v) => v.label,
+    final ProgressBarStyle? result = await showDialog<ProgressBarStyle>(
+      context: context,
+      builder: (BuildContext dialogContext) {
+        return AlertDialog(
+          title: const Text('Полоса перемотки'),
+          content: Column(
+            mainAxisSize: MainAxisSize.min,
+            children: <Widget>[
+              for (int row = 0;
+                  row < (ProgressBarStyle.values.length / 3).ceil();
+                  row++)
+                Padding(
+                  padding: EdgeInsets.only(top: row == 0 ? 0 : 8),
+                  child: Row(
+                    children: <Widget>[
+                      for (final ProgressBarStyle style in ProgressBarStyle
+                          .values
+                          .skip(row * 3)
+                          .take(3))
+                        Expanded(
+                          child: Padding(
+                            padding: const EdgeInsets.symmetric(horizontal: 4),
+                            child: _SliderStyleCard(
+                              style: style,
+                              selected: settings.progressBarStyle == style,
+                              onTap: () =>
+                                  Navigator.of(dialogContext).pop(style),
+                            ),
+                          ),
+                        ),
+                      // Пустые места: без них карточки последнего ряда
+                      // растянулись бы на всю ширину.
+                      for (int i = ProgressBarStyle.values
+                              .skip(row * 3)
+                              .take(3)
+                              .length;
+                          i < 3;
+                          i++)
+                        const Expanded(child: SizedBox()),
+                    ],
+                  ),
+                ),
+            ],
+          ),
+          actions: <Widget>[
+            TextButton(
+              onPressed: () => Navigator.of(dialogContext).pop(),
+              child: const Text('Отмена'),
+            ),
+          ],
+        );
+      },
     );
     if (result != null) await controller.setProgressBarStyle(result);
   }
@@ -686,6 +711,70 @@ class _SeedColorPicker extends StatelessWidget {
               ),
             ),
         ],
+      ),
+    );
+  }
+}
+
+/// Карточка стиля полосы перемотки — `SliderStyleOptionCard` в ArchiveTune
+/// (`AppearanceSettings.kt:1194`).
+///
+/// Квадрат со скруглением 16 и рамкой: акцентной у выбранной, приглушённой у
+/// остальных. Внутри — живая полоса при 50 % и подпись под ней.
+class _SliderStyleCard extends StatelessWidget {
+  const _SliderStyleCard({
+    required this.style,
+    required this.selected,
+    required this.onTap,
+  });
+
+  final ProgressBarStyle style;
+  final bool selected;
+  final VoidCallback onTap;
+
+  @override
+  Widget build(BuildContext context) {
+    final ColorScheme scheme = Theme.of(context).colorScheme;
+    return AspectRatio(
+      aspectRatio: 1,
+      child: Material(
+        color: Colors.transparent,
+        clipBehavior: Clip.antiAlias,
+        shape: RoundedRectangleBorder(
+          borderRadius: BorderRadius.circular(16),
+          side: BorderSide(
+            color: selected ? scheme.primary : scheme.outlineVariant,
+          ),
+        ),
+        child: InkWell(
+          onTap: onTap,
+          child: Padding(
+            padding: const EdgeInsets.all(16),
+            child: Column(
+              children: <Widget>[
+                Expanded(
+                  child: Center(
+                    // Полоса всегда показывается целиком: на узком диалоге
+                    // карточка ужимается, а не выдаёт переполнение.
+                    child: FittedBox(
+                      fit: BoxFit.scaleDown,
+                      child: SizedBox(
+                        width: 160,
+                        height: 44,
+                        child: SeekBarPreview(style: style),
+                      ),
+                    ),
+                  ),
+                ),
+                const SizedBox(height: 8),
+                Text(
+                  style.label,
+                  style: Theme.of(context).textTheme.labelLarge,
+                ),
+              ],
+            ),
+          ),
+        ),
       ),
     );
   }

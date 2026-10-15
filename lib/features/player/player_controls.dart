@@ -1,5 +1,3 @@
-import 'dart:math' as math;
-
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 
@@ -91,7 +89,11 @@ class _PlayerSeekBarState extends ConsumerState<PlayerSeekBar> {
       ),
       child: Column(
         children: <Widget>[
-          if (style == ProgressBarStyle.standard)
+          // «Обычный» и «с кружком» в ArchiveTune — это штатный Slider
+          // Material 3 (`StyledPlaybackSlider`, ветки Standard и Circular):
+          // у них отличается только название, набор цветов совпадает.
+          if (style == ProgressBarStyle.standard ||
+              style == ProgressBarStyle.circular)
             SliderTheme(
               // Оформление как в ArchiveTune: активная часть — цветом акцента,
               // неактивная — приглушённая дорожка; пока играет, ползунок
@@ -114,10 +116,9 @@ class _PlayerSeekBarState extends ConsumerState<PlayerSeekBar> {
                 disabledInactiveTrackColor:
                     scheme.primary.withValues(alpha: 0.12),
                 thumbColor: scheme.primary,
-                thumbShape: _SeekThumbShape(
-                  playing: playing,
-                  hueColor: scheme.surface,
-                ),
+                // Ползунок — как `SliderDefaults.Thumb`: в покое круг, при
+                // перетаскивании вытягивается в вертикальную «ручку».
+                thumbShape: _SeekThumbShape(pressed: _dragValue != null),
                 overlayShape: const RoundSliderOverlayShape(overlayRadius: 22),
                 activeTickMarkColor: Colors.transparent,
                 inactiveTickMarkColor: Colors.transparent,
@@ -186,28 +187,90 @@ class _PlayerSeekBarState extends ConsumerState<PlayerSeekBar> {
   }
 }
 
-/// Ползунок полосы перемотки.
+/// Предпросмотр стиля полосы — как карточка `SliderStyleOptionCard` в
+/// ArchiveTune (`ui/screens/settings/AppearanceSettings.kt:1194`).
 ///
-/// Отличается от стандартного тем, что при воспроизведении он крупнее и
-/// обведён цветом фона: «ручка» не сливается с дорожкой и сразу видно, что
-/// трек играет. В паузе — компактнее и без обводки.
+/// Это та же полоса, что и в плеере, но без подписей времени: в оригинале
+/// карточка показывает её при значении 50 % и подписью снизу. Полоса живая —
+/// по ней можно провести пальцем, чтобы почувствовать поведение стиля.
+class SeekBarPreview extends StatefulWidget {
+  const SeekBarPreview({super.key, required this.style});
+
+  /// Какой стиль показывать.
+  final ProgressBarStyle style;
+
+  @override
+  State<SeekBarPreview> createState() => _SeekBarPreviewState();
+}
+
+class _SeekBarPreviewState extends State<SeekBarPreview> {
+  /// В оригинале предпросмотр стоит на середине шкалы.
+  double _value = 0.5;
+
+  @override
+  Widget build(BuildContext context) {
+    final ColorScheme scheme = Theme.of(context).colorScheme;
+    final bool m3 = widget.style == ProgressBarStyle.standard ||
+        widget.style == ProgressBarStyle.circular;
+    if (m3) {
+      return SliderTheme(
+        data: SliderTheme.of(context).copyWith(
+          trackHeight: 16,
+          activeTrackColor: scheme.primary,
+          inactiveTrackColor:
+              scheme.primary.withValues(alpha: _kInactiveTrackAlpha),
+          thumbColor: scheme.primary,
+          thumbShape: const _SeekThumbShape(pressed: false),
+          overlayColor: scheme.primary.withValues(alpha: 0.12),
+          overlayShape: const RoundSliderOverlayShape(overlayRadius: 22),
+          activeTickMarkColor: Colors.transparent,
+          inactiveTickMarkColor: Colors.transparent,
+        ),
+        child: Slider(
+          value: _value,
+          onChanged: (double v) => setState(() => _value = v),
+        ),
+      );
+    }
+    return _StyledSeekBar(
+      progress: _value,
+      style: widget.style,
+      activeColor: scheme.primary,
+      inactiveColor: scheme.primary,
+      // В карточке показываем «играющее» состояние — как в оригинале.
+      playing: true,
+      enabled: true,
+      onSeek: (double v) => setState(() => _value = v),
+      onSeekEnd: (double v) => setState(() => _value = v),
+    );
+  }
+}
+
+/// Ползунок полосы перемотки — как у Material 3 Expressive.
+///
+/// В покое это круг, при перетаскивании он вытягивается в вертикальную
+/// «ручку» 4×44 с закруглением: так ведёт себя `SliderDefaults.Thumb` в
+/// Compose и `WavySliderExpressive.kt:269-283`. Раньше здесь был круг с
+/// обводкой при воспроизведении — из-за него «обычный» стиль не походил на
+/// оригинал.
 class _SeekThumbShape extends SliderComponentShape {
-  const _SeekThumbShape({required this.playing, required this.hueColor});
+  const _SeekThumbShape({required this.pressed});
 
-  /// Играет ли трек прямо сейчас.
-  final bool playing;
+  /// Тянет ли пользователь ползунок прямо сейчас.
+  final bool pressed;
 
-  /// Цвет обводки — фон поверхности под ползунком.
-  final Color hueColor;
+  /// Размеры «ручки» при перетаскивании — `WavySliderExpressive.kt:88-90`:
+  /// ширина `strokeWidth * 1.2` (5 dp → 6 dp), высота 24 dp.
+  static const double _barWidth = 6;
+  static const double _barHeight = 24;
 
-  /// Радиусы из ArchiveTune: у штатного Material 3 Slider ползунок 20 dp в
-  /// диаметре (радиус 10), у «волнистого» — `thumbRadius = 8`. В паузе берём
-  /// меньший, чтобы ручка не спорила с дорожкой.
-  double get _radius => playing ? 10 : 8;
+  /// В покое — круг `thumbRadius = 8` (`WavySliderExpressive.kt:84`), то есть
+  /// ровно в толщину дорожки: так и выглядит ползунок в Material 3.
+  static const double _circleRadius = 8;
 
   @override
   Size getPreferredSize(bool isEnabled, bool isDiscrete) =>
-      Size.fromRadius(_radius + 3);
+      const Size(_barWidth, _barHeight);
 
   @override
   void paint(
@@ -225,11 +288,19 @@ class _SeekThumbShape extends SliderComponentShape {
     required Size sizeWithOverflow,
   }) {
     final Canvas canvas = context.canvas;
-    final Color fill = sliderTheme.thumbColor ?? hueColor;
-    if (playing) {
-      canvas.drawCircle(center, _radius + 2, Paint()..color = hueColor);
+    final Color fill = sliderTheme.thumbColor ?? const Color(0xFFFFFFFF);
+    final Paint paint = Paint()..color = fill;
+    if (!pressed) {
+      canvas.drawCircle(center, _circleRadius, paint);
+      return;
     }
-    canvas.drawCircle(center, _radius, Paint()..color = fill);
+    canvas.drawRRect(
+      RRect.fromRectAndRadius(
+        Rect.fromCenter(center: center, width: _barWidth, height: _barHeight),
+        const Radius.circular(_barWidth / 2),
+      ),
+      paint,
+    );
   }
 }
 
@@ -712,26 +783,15 @@ class _StyledSeekBar extends StatefulWidget {
   State<_StyledSeekBar> createState() => _StyledSeekBarState();
 }
 
-class _StyledSeekBarState extends State<_StyledSeekBar>
-    with SingleTickerProviderStateMixin {
-  /// Фаза волны: гоняем бесконечно, чтобы «волнистый» стиль жил.
-  late final AnimationController _wave = AnimationController(
-    vsync: this,
-    duration: const Duration(milliseconds: 1400),
-  )..repeat();
-
+class _StyledSeekBarState extends State<_StyledSeekBar> {
   double _lastFraction = 0;
 
-  @override
-  void dispose() {
-    _wave.dispose();
-    super.dispose();
-  }
-
+  /// Высота области попадания. Сама дорожка рисуется по центру и тоньше —
+  /// запас нужен, чтобы по полосе было удобно попадать пальцем.
   double get _height => switch (widget.style) {
         ProgressBarStyle.thick => 16,
         ProgressBarStyle.simple => 8,
-        ProgressBarStyle.wavy => 20,
+        ProgressBarStyle.wavy => 16,
         ProgressBarStyle.circular => 22,
         ProgressBarStyle.standard => 24,
       };
@@ -764,18 +824,14 @@ class _StyledSeekBarState extends State<_StyledSeekBar>
           child: SizedBox(
             width: width,
             height: _height,
-            child: AnimatedBuilder(
-              animation: _wave,
-              builder: (BuildContext context, Widget? child) => CustomPaint(
-                painter: _SeekBarPainter(
-                  progress: widget.progress,
-                  style: widget.style,
-                  activeColor: widget.activeColor,
-                  inactiveColor: widget.inactiveColor,
-                  wave: _wave.value,
-                  amplitude: widget.playing ? 1.0 : 0.0,
-                  enabled: widget.enabled,
-                ),
+            child: CustomPaint(
+              painter: _SeekBarPainter(
+                progress: widget.progress,
+                style: widget.style,
+                activeColor: widget.activeColor,
+                inactiveColor: widget.inactiveColor,
+                playing: widget.playing,
+                enabled: widget.enabled,
               ),
             ),
           ),
@@ -792,8 +848,7 @@ class _SeekBarPainter extends CustomPainter {
     required this.style,
     required this.activeColor,
     required this.inactiveColor,
-    required this.wave,
-    required this.amplitude,
+    required this.playing,
     required this.enabled,
   });
 
@@ -802,11 +857,8 @@ class _SeekBarPainter extends CustomPainter {
   final Color activeColor;
   final Color inactiveColor;
 
-  /// Фаза волны, 0..1.
-  final double wave;
-
-  /// Насколько выражена волна: 1 — играет, 0 — пауза.
-  final double amplitude;
+  /// Играет ли трек: у «волнистого» стиля от этого зависит толщина линии.
+  final bool playing;
   final bool enabled;
 
   @override
@@ -826,46 +878,34 @@ class _SeekBarPainter extends CustomPainter {
       _ => inactiveColor.withValues(alpha: _kInactiveTrackAlpha),
     };
 
-    switch (style) {
-      case ProgressBarStyle.thick:
-      case ProgressBarStyle.simple:
-        // Толщина сегментов: толстый — 12 dp, простой — 3 dp
-        // (`StyledPlaybackSlider` в ArchiveTune).
-        final double thickness = style == ProgressBarStyle.thick ? 12 : 3;
-        // Простой стиль ещё и активную часть делает полупрозрачной (0.85).
-        final Color active = style == ProgressBarStyle.simple
-            ? activeBase.withValues(alpha: _kSimpleActiveTrackAlpha)
-            : activeBase;
-        canvas.drawLine(
-          Offset(0, mid),
-          Offset(size.width, mid),
-          _linePaint(inactive, thickness),
-        );
-        canvas.drawLine(
-          Offset(0, mid),
-          Offset(size.width * p, mid),
-          _linePaint(active, thickness),
-        );
+    // Толщина дорожки — как в `StyledPlaybackSlider` (ArchiveTune): толстый
+    // 12 dp, простой 3 dp, «волнистый» 6 dp в игре и 3 dp в паузе.
+    //
+    // Волну не рисуем: в ArchiveTune ни один из этих стилей не рисует синус —
+    // дорожка у них прямая, а «волнистость» выражается только толщиной
+    // (`PlayerComponents.kt:803-828`, `ui/component/PlayerSlider.kt`).
+    final double thickness = switch (style) {
+      ProgressBarStyle.thick => 12,
+      ProgressBarStyle.simple => 3,
+      ProgressBarStyle.wavy => playing ? 6 : 3,
+      _ => 3,
+    };
+    // Простой стиль ещё и активную часть делает полупрозрачной (0.85).
+    final Color active = style == ProgressBarStyle.simple
+        ? activeBase.withValues(alpha: _kSimpleActiveTrackAlpha)
+        : activeBase;
 
-      case ProgressBarStyle.wavy:
-      case ProgressBarStyle.circular:
-        // Волна толще, пока играет: 6 dp против 3 dp в паузе
-        // (`trackHeight = if (isPlaying) 6.dp else 3.dp`).
-        final double stroke = amplitude > 0 ? 6 : 3;
-        _paintWave(canvas, size, mid, p, inactive, false, stroke);
-        _paintWave(canvas, size, mid, p, activeBase, true, stroke);
-        if (style == ProgressBarStyle.circular) {
-          // Ползунок волны — `thumbRadius = 8` (`WavySliderExpressive`).
-          canvas.drawCircle(
-            Offset(size.width * p, mid),
-            8,
-            Paint()..color = activeBase,
-          );
-        }
-
-      case ProgressBarStyle.standard:
-        // Этим стилем управляет обычный Slider — сюда не попадаем.
-        break;
+    canvas.drawLine(
+      Offset(0, mid),
+      Offset(size.width, mid),
+      _linePaint(inactive, thickness),
+    );
+    if (size.width * p > 0.5) {
+      canvas.drawLine(
+        Offset(0, mid),
+        Offset(size.width * p, mid),
+        _linePaint(active, thickness),
+      );
     }
   }
 
@@ -874,45 +914,12 @@ class _SeekBarPainter extends CustomPainter {
     ..strokeWidth = width
     ..strokeCap = StrokeCap.round;
 
-  void _paintWave(
-    Canvas canvas,
-    Size size,
-    double mid,
-    double p,
-    Color color,
-    bool active,
-    double strokeWidth,
-  ) {
-    final double start = active ? 0 : size.width * p;
-    final double end = active ? size.width * p : size.width;
-    if (end - start <= 0.5) return;
-
-    // В паузе волна выпрямляется — как в ArchiveTune.
-    final double amp = 1.0 + amplitude * 3.0;
-    const double wavelength = 26;
-    final Path path = Path()..moveTo(start, mid);
-    for (double x = start; x <= end; x += 2) {
-      final double y = mid +
-          amp *
-              math.sin((x / wavelength) * 2 * math.pi + wave * 2 * math.pi);
-      path.lineTo(x, y);
-    }
-    canvas.drawPath(
-      path,
-      Paint()
-        ..color = color
-        ..strokeWidth = strokeWidth
-        ..strokeCap = StrokeCap.round
-        ..style = PaintingStyle.stroke,
-    );
-  }
-
   @override
   bool shouldRepaint(covariant _SeekBarPainter old) =>
       old.progress != progress ||
-      old.wave != wave ||
-      old.amplitude != amplitude ||
       old.style != style ||
+      old.playing != playing ||
       old.activeColor != activeColor ||
+      old.inactiveColor != inactiveColor ||
       old.enabled != enabled;
 }
