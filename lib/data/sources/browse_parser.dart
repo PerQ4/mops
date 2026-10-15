@@ -619,7 +619,8 @@ class BrowseParser {
 
   /// Текст заголовка страницы (для альбома, плейлиста, исполнителя).
   static String? pageTitle(dynamic response) {
-    return _firstString(response, <List<String>>[
+    return _responsiveHeaderText(response, 'title') ??
+        _firstString(response, <List<String>>[
       <String>['header', 'musicDetailHeaderRenderer', 'title', 'runs', 'text'],
       <String>['header', 'musicImmersiveHeaderRenderer', 'title', 'runs', 'text'],
       <String>['header', 'musicVisualHeaderRenderer', 'title', 'runs', 'text'],
@@ -630,11 +631,67 @@ class BrowseParser {
 
   /// Подзаголовок страницы (исполнители, год, число треков).
   static String? pageSubtitle(dynamic response) {
-    return _firstString(response, <List<String>>[
+    return _responsiveHeaderText(response, 'subtitle') ??
+        _firstString(response, <List<String>>[
       <String>['header', 'musicDetailHeaderRenderer', 'subtitle', 'runs', 'text'],
       <String>['header', 'musicImmersiveHeaderRenderer', 'subtitle', 'runs', 'text'],
       <String>['header', 'musicVisualHeaderRenderer', 'subtitle', 'runs', 'text'],
     ]);
+  }
+
+  /// Новая шапка страницы — `musicResponsiveHeaderRenderer`.
+  ///
+  /// Лежит она не по фиксированному пути: в разных ответах обёртки разные,
+  /// поэтому ищем её по всему дереву. Если искать по пути вида
+  /// `header → musicResponsiveHeaderRenderer`, шапка не находится, и страница
+  /// остаётся без названия и без исполнителей.
+  static Map<dynamic, dynamic>? _responsiveHeader(dynamic response) {
+    for (final dynamic header
+        in traverseList(response, <String>['musicResponsiveHeaderRenderer'])) {
+      if (header is Map) return header;
+    }
+    return null;
+  }
+
+  /// Текст поля новой шапки (`title`, `subtitle`) одной строкой.
+  static String? _responsiveHeaderText(dynamic response, String field) {
+    final Map<dynamic, dynamic>? header = _responsiveHeader(response);
+    if (header == null) return null;
+    final String text = traverseList(header, <String>[field, 'runs', 'text'])
+        .whereType<String>()
+        .join()
+        .trim();
+    return text.isEmpty ? null : text;
+  }
+
+  /// Исполнители из шапки страницы.
+  ///
+  /// У новой шапки (`musicResponsiveHeaderRenderer`) исполнитель лежит не в
+  /// подзаголовке, а в `straplineTextOne`: в подзаголовке там «Сингл • 2026»,
+  /// то есть тип и год, а вовсе не автор. Из-за этого у альбомов список
+  /// исполнителей шапки выходил пустым, подставлять трекам было нечего — и
+  /// каждый трек показывался как «Неизвестный исполнитель».
+  static List<ArtistRef> pageArtists(dynamic response) {
+    final Map<dynamic, dynamic>? header = _responsiveHeader(response);
+    final List<dynamic> runs = header == null
+        ? <dynamic>[]
+        : traverseList(header, <String>['straplineTextOne', 'runs']);
+    if (runs.isNotEmpty) {
+      final List<ArtistRef> linked = _linkedArtists(runs);
+      if (linked.isNotEmpty) return linked;
+      // Ссылки может не быть (урезанный или гостевой ответ) — берём хотя бы
+      // имя из текста, иначе подпись исполнителя пропадёт вовсе.
+      final String plain = runs
+          .map(textOf)
+          .whereType<String>()
+          .join()
+          .trim();
+      if (plain.isNotEmpty) {
+        return <ArtistRef>[ArtistRef(name: plain)];
+      }
+    }
+    // Старая шапка: исполнитель в подзаголовке.
+    return _artistsFromSubtitle(pageSubtitle(response));
   }
 
   /// Описание страницы.

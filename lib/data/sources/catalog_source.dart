@@ -141,8 +141,13 @@ class CatalogSource {
   /// Страница альбома.
   Future<Album> album(String albumId) async {
     final Map<String, dynamic> res = await _client.browse(albumId);
-    final List<ArtistRef> albumArtists =
-        _artistsFromSubtitle(BrowseParser.pageSubtitle(res));
+    // Исполнители шапки: у новой разметки они в `straplineTextOne`, а не
+    // в подзаголовке (см. `BrowseParser.pageArtists`). Если шапка старого
+    // вида, остаётся прежний путь — разбор подзаголовка.
+    List<ArtistRef> albumArtists = BrowseParser.pageArtists(res);
+    if (albumArtists.isEmpty) {
+      albumArtists = _artistsFromSubtitle(BrowseParser.pageSubtitle(res));
+    }
     final List<Thumbnail> albumThumbs = BrowseParser.pageThumbnails(res);
     // В списке треков альбома у строк часто нет ни исполнителя, ни обложки —
     // они известны из шапки. Подставляем их, иначе в списке стоит
