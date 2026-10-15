@@ -10,6 +10,7 @@ import '../../state/auth_controller.dart';
 import '../../state/catalog_providers.dart';
 import '../../state/library_providers.dart';
 import '../../state/player_controller.dart';
+import '../../widgets/horizontal_list.dart';
 import '../../widgets/async_views.dart';
 import '../../widgets/empty_state.dart';
 import '../../widgets/media_card.dart';
@@ -359,24 +360,20 @@ class _Suggestions extends ConsumerWidget {
           ),
         if (signedIn && artistList.isNotEmpty) ...<Widget>[
           const _SearchSectionTitle('Исполнители'),
-          SizedBox(
+          HorizontalList(
             height: AppLayout.artistAvatar + 90,
-            child: ListView.separated(
-              scrollDirection: Axis.horizontal,
-              // Отступ ленты — 12, как у заголовка секции.
-              padding: const EdgeInsets.symmetric(horizontal: 12),
-              itemCount: artistList.length,
-              separatorBuilder: (BuildContext context, int _) =>
-                  const SizedBox(width: 12),
-              itemBuilder: (BuildContext context, int index) {
-                final Artist artist = artistList[index];
-                return BrowseItemCard(
-                  item: ArtistItem(artist),
-                  width: 160,
-                  onTap: (BrowseItem _) => AppRoutes.artist(context, artist.id),
-                );
-              },
-            ),
+            // Отступ ленты — 12, как у заголовка секции.
+            padding: const EdgeInsets.symmetric(horizontal: 12),
+            separator: 12,
+            itemCount: artistList.length,
+            itemBuilder: (BuildContext context, int index) {
+              final Artist artist = artistList[index];
+              return BrowseItemCard(
+                item: ArtistItem(artist),
+                width: 160,
+                onTap: (BrowseItem _) => AppRoutes.artist(context, artist.id),
+              );
+            },
           ),
         ],
         if (signedIn && songList.isNotEmpty) ...<Widget>[
@@ -434,14 +431,13 @@ class _FilterBar extends StatelessWidget {
   Widget build(BuildContext context) {
     final ColorScheme scheme = Theme.of(context).colorScheme;
 
-    return SizedBox(
+    return HorizontalList(
       height: 48,
-      child: ListView.separated(
-        scrollDirection: Axis.horizontal,
-        padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 8),
-        itemCount: SearchFilter.values.length,
-        separatorBuilder: (BuildContext context, int _) => const SizedBox(width: 8),
-        itemBuilder: (BuildContext context, int index) {
+      padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 8),
+      showScrollbar: false,
+      separator: 8,
+      itemCount: SearchFilter.values.length,
+      itemBuilder: (BuildContext context, int index) {
           final SearchFilter filter = SearchFilter.values[index];
           final bool isSelected = filter == selected;
           return FilterChip(
@@ -461,7 +457,6 @@ class _FilterBar extends StatelessWidget {
             onSelected: (bool _) => onSelected(filter),
           );
         },
-      ),
     );
   }
 

@@ -47,6 +47,7 @@ class MediaCard extends StatelessWidget {
     this.icon,
     this.heroTag,
     this.showPlay = false,
+    this.onPlay,
   });
 
   final String title;
@@ -63,24 +64,38 @@ class MediaCard extends StatelessWidget {
 
   /// Показывать на обложке кнопку play — для карточек, которые играют.
   final bool showPlay;
+
+  /// Открыть страницу — нажатие на подпись под обложкой.
   final VoidCallback onTap;
+
+  /// Запустить воспроизведение — нажатие на обложку.
+  ///
+  /// Если не задано, обложка ведёт себя как подпись: так карточки, у которых
+  /// «запускать» нечего (например, исполнители в поиске), ничего не теряют.
+  final VoidCallback? onPlay;
 
   @override
   Widget build(BuildContext context) {
     final TextTheme text = Theme.of(context).textTheme;
     final ColorScheme scheme = Theme.of(context).colorScheme;
     final double art = artworkSize ?? width;
+    final VoidCallback artworkTap = onPlay ?? onTap;
 
+    // Две зоны нажатия вместо одной: обложка запускает, подпись открывает
+    // страницу. Раньше нажатие в любом месте открывало страницу, и запустить
+    // карточку из ленты было нельзя.
     return SizedBox(
       width: width,
-      child: InkWell(
-        onTap: onTap,
-        borderRadius: BorderRadius.circular(AppLayout.radiusM),
-        child: Column(
-          crossAxisAlignment: CrossAxisAlignment.start,
-          mainAxisSize: MainAxisSize.min,
-          children: <Widget>[
-            Stack(
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        mainAxisSize: MainAxisSize.min,
+        children: <Widget>[
+          InkWell(
+            onTap: artworkTap,
+            borderRadius: BorderRadius.circular(
+              circular ? art / 2 : AppLayout.gridThumbnailRadius,
+            ),
+            child: Stack(
               children: <Widget>[
                 Artwork(
                   url: imageUrl,
@@ -95,29 +110,40 @@ class MediaCard extends StatelessWidget {
                   // Кнопка play по центру обложки — как `OverlayPlayButton`
                   // в `SongGridItem`.
                   Positioned.fill(
-                    child: Center(child: _PlayBadge(onTap: onTap)),
+                    child: Center(child: _PlayBadge(onTap: artworkTap)),
                   ),
               ],
             ),
-            // Зазор до заголовка — 6, как `Spacer(height = 6.dp)` в `GridItem`.
-            const SizedBox(height: 6),
-            Text(
-              title,
-              maxLines: 1,
-              overflow: TextOverflow.ellipsis,
-              style: text.bodyLarge?.copyWith(fontWeight: FontWeight.w700),
+          ),
+          InkWell(
+            onTap: onTap,
+            borderRadius: BorderRadius.circular(AppLayout.radiusS),
+            child: Column(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              mainAxisSize: MainAxisSize.min,
+              children: <Widget>[
+                // Зазор до заголовка — 6, как `Spacer(height = 6.dp)`
+                // в `GridItem`.
+                const SizedBox(height: 6),
+                Text(
+                  title,
+                  maxLines: 1,
+                  overflow: TextOverflow.ellipsis,
+                  style: text.bodyLarge?.copyWith(fontWeight: FontWeight.w700),
+                ),
+                if (subtitle != null && subtitle!.isNotEmpty) ...<Widget>[
+                  const SizedBox(height: 2),
+                  Text(
+                    subtitle!,
+                    maxLines: 2,
+                    overflow: TextOverflow.ellipsis,
+                    style: text.bodyMedium?.copyWith(color: scheme.secondary),
+                  ),
+                ],
+              ],
             ),
-            if (subtitle != null && subtitle!.isNotEmpty) ...<Widget>[
-              const SizedBox(height: 2),
-              Text(
-                subtitle!,
-                maxLines: 2,
-                overflow: TextOverflow.ellipsis,
-                style: text.bodyMedium?.copyWith(color: scheme.secondary),
-              ),
-            ],
-          ],
-        ),
+          ),
+        ],
       ),
     );
   }
@@ -158,12 +184,19 @@ class BrowseItemCard extends StatelessWidget {
     super.key,
     required this.item,
     required this.onTap,
+    this.onPlay,
     this.width = AppLayout.cardWidth,
   });
 
   final BrowseItem item;
   final double width;
+
+  /// Открыть страницу — нажатие на подпись.
   final void Function(BrowseItem item) onTap;
+
+  /// Запустить — нажатие на обложку. Если не задано, обложка открывает
+  /// страницу, как и подпись.
+  final void Function(BrowseItem item)? onPlay;
 
   @override
   Widget build(BuildContext context) {
@@ -200,9 +233,10 @@ class BrowseItemCard extends StatelessWidget {
       artworkSize: avatarSize,
       icon: icon,
       // Кнопка play — у всего, что реально играется: треки и восстановленные
-      // видеоклипы. Альбом/плейлист/исполнитель открывают свою страницу.
+      // видеоклипы.
       showPlay: isPlayableItem(item),
       onTap: () => onTap(item),
+      onPlay: onPlay == null ? null : () => onPlay!(item),
     );
   }
 }

@@ -6,6 +6,7 @@ import '../../data/models/models.dart';
 import '../../state/auth_controller.dart';
 import '../../state/library_providers.dart';
 import '../../state/player_controller.dart';
+import '../../widgets/horizontal_list.dart';
 import '../../widgets/async_views.dart';
 import '../../widgets/empty_state.dart';
 import '../../widgets/section_list.dart';
@@ -119,23 +120,20 @@ class _FilterChips extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
-    return SizedBox(
+    return HorizontalList(
       height: 56,
-      child: ListView.separated(
-        scrollDirection: Axis.horizontal,
-        padding: const EdgeInsets.symmetric(horizontal: 24, vertical: 8),
-        itemCount: LibraryFilter.values.length,
-        separatorBuilder: (BuildContext context, int _) =>
-            const SizedBox(width: 12),
-        itemBuilder: (BuildContext context, int index) {
-          final LibraryFilter filter = LibraryFilter.values[index];
-          return _FilterCapsule(
-            filter: filter,
-            selected: filter == selected,
-            onTap: () => onSelected(filter),
-          );
-        },
-      ),
+      padding: const EdgeInsets.symmetric(horizontal: 24, vertical: 8),
+      showScrollbar: false,
+      separator: 12,
+      itemCount: LibraryFilter.values.length,
+      itemBuilder: (BuildContext context, int index) {
+        final LibraryFilter filter = LibraryFilter.values[index];
+        return _FilterCapsule(
+          filter: filter,
+          selected: filter == selected,
+          onTap: () => onSelected(filter),
+        );
+      },
     );
   }
 }

@@ -4,48 +4,93 @@ import 'package:flutter_riverpod/flutter_riverpod.dart';
 import '../core/theme/layout.dart';
 import '../data/models/models.dart';
 import '../features/common/navigation.dart';
+import '../state/catalog_providers.dart';
 import '../state/player_controller.dart';
 import 'artwork.dart';
+import 'horizontal_list.dart';
 import 'media_card.dart';
 import 'track_menu.dart';
 import 'track_tile.dart';
 
-/// Открывает элемент карусели: треки играют, остальное открывается.
-void openBrowseItem(
+/// Запускает элемент карусели — нажатие на обложку.
+///
+/// Трек играет сразу; альбом, плейлист и исполнитель — целиком, для чего их
+/// треки подтягиваются по сети. Открытие страницы — это [openBrowseItem],
+/// его вызывает нажатие на подпись под обложкой.
+Future<void> playBrowseItem(
   BuildContext context,
   WidgetRef ref,
   BrowseItem item, {
   List<Track>? playContext,
-}) {
+}) async {
+  final PlayerController controller =
+      ref.read(playerControllerProvider.notifier);
+
   switch (item) {
     case TrackItem(:final Track track):
-      ref.read(playerControllerProvider.notifier).playTrack(
-            track,
-            context: playContext,
-          );
+      controller.playTrack(track, context: playContext);
+
+    case AlbumItem(:final Album album):
+      final Album full = await ref.read(albumProvider(album.id).future);
+      if (full.tracks.isNotEmpty) controller.playQueue(full.tracks);
+
+    case PlaylistItem(:final Playlist playlist):
+      // Видеоклипы YouTube Music приходят как `musicTwoRowItemRenderer`
+      // со ссылкой `watchEndpoint`. Разбор пока относит их к плейлистам и
+      // теряет videoId — получается плейлист с пустым id, поэтому достаём
+      // идентификатор из адреса обложки и играем как трек.
+      final String? videoId = playlist.id.isEmpty
+          ? videoIdFromThumbnails(playlist.thumbnails)
+          : null;
+      if (videoId != null) {
+        controller.playTrack(
+          Track(
+            id: videoId,
+            title: playlist.title,
+            thumbnails: playlist.thumbnails,
+          ),
+        );
+      } else if (playlist.id.isNotEmpty) {
+        final Playlist full =
+            await ref.read(playlistProvider(playlist.id).future);
+        if (full.tracks.isNotEmpty) controller.playQueue(full.tracks);
+      }
+
+    case ArtistItem(:final Artist artist):
+      final Artist full = await ref.read(artistProvider(artist.id).future);
+      // У исполнителя играем верхние треки — как кнопка на его странице.
+      if (full.topTracks.isNotEmpty) controller.playQueue(full.topTracks);
+  }
+}
+
+/// Открывает страницу элемента — нажатие на подпись под обложкой.
+void openBrowseItem(
+  BuildContext context,
+  WidgetRef ref,
+  BrowseItem item,
+) {
+  switch (item) {
+    case TrackItem(:final Track track):
+      // У трека своей страницы нет: ведём к исполнителю, а если его нет —
+      // к альбому. Идентификатор исполнителя может быть пустым — тогда он
+      // не ссылка, а просто подпись.
+      final String? artistId = track.artists.isEmpty
+          ? null
+          : track.artists.first.id;
+      final String? albumId = track.album?.id;
+      if (artistId != null && artistId.isNotEmpty) {
+        AppRoutes.artist(context, artistId);
+      } else if (albumId != null && albumId.isNotEmpty) {
+        AppRoutes.album(context, albumId);
+      }
     case AlbumItem(:final Album album):
       AppRoutes.album(context, album.id);
     case ArtistItem(:final Artist artist):
       AppRoutes.artist(context, artist.id);
     case PlaylistItem(:final Playlist playlist):
-      // Видеоклипы YouTube Music приходят как `musicTwoRowItemRenderer`
-      // со ссылкой `watchEndpoint`. Разбор пока относит их к плейлистам и
-      // теряет videoId — получается плейлист с пустым id, и нажатие открывало
-      // бы пустую страницу вместо воспроизведения. Пока это так, достаём id
-      // из адреса обложки (единственное место, где он сохранился) и играем.
-      final String? videoId = playlist.id.isEmpty
-          ? videoIdFromThumbnails(playlist.thumbnails)
-          : null;
-      if (videoId != null) {
-        ref.read(playerControllerProvider.notifier).playTrack(
-              Track(
-                id: videoId,
-                title: playlist.title,
-                thumbnails: playlist.thumbnails,
-              ),
-            );
-      } else if (playlist.id.isNotEmpty) {
-        // Настоящий плейлист — открываем его страницу.
+      // Пустой id при живом videoId — это видеоклип, страницы у него нет.
+      if (playlist.id.isNotEmpty &&
+          videoIdFromThumbnails(playlist.thumbnails) == null) {
         AppRoutes.playlist(context, playlist.id);
       }
   }
@@ -271,42 +316,39 @@ class _CardCarousel extends ConsumerWidget {
       children: <Widget>[
         if (section.title.isNotEmpty)
           _SectionTitle(title: section.title, label: section.subtitle),
-        SizedBox(
+        HorizontalList(
           // Высота зафиксирована константой — карусель не «прыгает»:
           // обложка + заголовок в одну строку + подпись до двух строк.
           height: cardWidth + 84,
-          child: ListView.separated(
-            scrollDirection: Axis.horizontal,
-            // Отступ края 12 и зазор 24 — это внешний `padding(12.dp)` у
-            // каждого `GridItem` в оригинале (12 слева + 12 справа между
-            // карточками). Заголовок секции при этом стоит на 16.
-            padding: const EdgeInsets.symmetric(horizontal: 12),
-            itemCount: section.items.length,
-            separatorBuilder: (BuildContext context, int _) =>
-                const SizedBox(width: 24),
-            itemBuilder: (BuildContext context, int index) {
-              final BrowseItem item = section.items[index];
-              final Widget card = BrowseItemCard(
-                item: item,
-                width: cardWidth,
-                onTap: (BrowseItem value) => openBrowseItem(
-                  context,
-                  ref,
-                  value,
-                  playContext: tracksOf(section),
-                ),
+          // Отступ края 12 и зазор 24 — это внешний `padding(12.dp)` у
+          // каждого `GridItem` в оригинале (12 слева + 12 справа между
+          // карточками). Заголовок секции при этом стоит на 16.
+          padding: const EdgeInsets.symmetric(horizontal: 12),
+          separator: 24,
+          itemCount: section.items.length,
+          itemBuilder: (BuildContext context, int index) {
+            final BrowseItem item = section.items[index];
+            final Widget card = BrowseItemCard(
+              item: item,
+              width: cardWidth,
+              onPlay: (BrowseItem value) => playBrowseItem(
+                context,
+                ref,
+                value,
+                playContext: tracksOf(section),
+              ),
+              onTap: (BrowseItem value) => openBrowseItem(context, ref, value),
+            );
+            // У карточек треков долгое нажатие открывает то же меню, что и
+            // строка списка: иначе из карусели меню не вызвать вовсе.
+            if (item is TrackItem) {
+              return GestureDetector(
+                onLongPress: () => showTrackMenu(context, item.track),
+                child: card,
               );
-              // У карточек треков долгое нажатие открывает то же меню, что и
-              // строка списка: иначе из карусели меню не вызвать вовсе.
-              if (item is TrackItem) {
-                return GestureDetector(
-                  onLongPress: () => showTrackMenu(context, item.track),
-                  child: card,
-                );
-              }
-              return card;
-            },
-          ),
+            }
+            return card;
+          },
         ),
       ],
     );

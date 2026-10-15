@@ -1,6 +1,7 @@
 import 'package:flutter/material.dart';
 
 import '../data/models/models.dart';
+import 'horizontal_list.dart';
 import 'media_card.dart';
 
 /// Горизонтальная карусель секции: заголовок + прокручиваемые карточки.
@@ -58,25 +59,21 @@ class SectionCarousel extends StatelessWidget {
             ),
           ),
           const SizedBox(height: 4),
-          SizedBox(
+          HorizontalList(
             height: _carouselHeight(context, cardWidth),
-            child: ListView.separated(
-              scrollDirection: Axis.horizontal,
-              // Карточка в оригинале (`GridItem`) имеет внешний отступ 12,
-              // поэтому между карточками 24, а край — на 12.
-              padding: padding.copyWith(left: 12, right: 12),
-              itemCount: section.items.length,
-              separatorBuilder: (BuildContext context, int _) =>
-                  const SizedBox(width: 24),
-              itemBuilder: (BuildContext context, int index) {
-                final BrowseItem item = section.items[index];
-                return BrowseItemCard(
-                  item: item,
-                  width: cardWidth,
-                  onTap: onItemTap,
-                );
-              },
-            ),
+            // Карточка в оригинале (`GridItem`) имеет внешний отступ 12,
+            // поэтому между карточками 24, а край — на 12.
+            padding: padding.copyWith(left: 12, right: 12),
+            separator: 24,
+            itemCount: section.items.length,
+            itemBuilder: (BuildContext context, int index) {
+              final BrowseItem item = section.items[index];
+              return BrowseItemCard(
+                item: item,
+                width: cardWidth,
+                onTap: onItemTap,
+              );
+            },
           ),
         ],
       ),

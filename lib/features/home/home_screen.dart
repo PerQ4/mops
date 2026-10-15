@@ -6,6 +6,7 @@ import '../../core/theme/layout.dart';
 import '../../data/models/models.dart';
 import '../../state/auth_controller.dart';
 import '../../state/catalog_providers.dart';
+import '../../widgets/horizontal_list.dart';
 import '../../widgets/async_views.dart';
 import '../../widgets/empty_state.dart';
 import '../../widgets/section_list.dart';
@@ -304,25 +305,22 @@ class _MoodRow extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
-    return SizedBox(
+    return HorizontalList(
       // Высота ряда как в `HomeCategoryChips`: `heightIn(min = 68.dp)`.
       height: 68,
-      child: ListView.separated(
-        scrollDirection: Axis.horizontal,
-        // Отступы ряда — `padding(horizontal = 16.dp, vertical = 10.dp)`.
-        padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 10),
-        itemCount: _moods.length,
-        separatorBuilder: (BuildContext context, int _) =>
-            const SizedBox(width: 8),
-        itemBuilder: (BuildContext context, int index) {
-          final (String label, IconData icon) = _moods[index];
-          return _MoodChip(
-            label: label,
-            icon: icon,
-            onTap: () => _openMood(context, label),
-          );
-        },
-      ),
+      // Отступы ряда — `padding(horizontal = 16.dp, vertical = 10.dp)`.
+      padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 10),
+      showScrollbar: false,
+      separator: 8,
+      itemCount: _moods.length,
+      itemBuilder: (BuildContext context, int index) {
+        final (String label, IconData icon) = _moods[index];
+        return _MoodChip(
+          label: label,
+          icon: icon,
+          onTap: () => _openMood(context, label),
+        );
+      },
     );
   }
 
