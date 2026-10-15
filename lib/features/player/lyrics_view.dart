@@ -136,7 +136,12 @@ class _LyricsViewState extends ConsumerState<LyricsView> {
         _matchCursor = 0;
       }
     });
-    if (_searchOpen) _searchFocus.requestFocus();
+    if (_searchOpen) {
+      // Поле появляется только после перестройки — фокус просим кадром позже.
+      WidgetsBinding.instance.addPostFrameCallback((_) {
+        if (mounted) _searchFocus.requestFocus();
+      });
+    }
   }
 
   void _onQueryChanged(String _) {
@@ -177,7 +182,6 @@ class _LyricsViewState extends ConsumerState<LyricsView> {
         : _matchCursor.clamp(0, matches.length - 1);
     final _LyricsSearch search = _LyricsSearch(
       query: _query,
-      matchLines: matches.toSet(),
       currentLine: cursor >= 0 ? matches[cursor] : -1,
       jumpSeq: _jumpSeq,
     );
@@ -271,15 +275,11 @@ class _LyricsViewState extends ConsumerState<LyricsView> {
 class _LyricsSearch {
   const _LyricsSearch({
     required this.query,
-    required this.matchLines,
     required this.currentLine,
     required this.jumpSeq,
   });
 
   final String query;
-
-  /// Строки, в которых встречается запрос.
-  final Set<int> matchLines;
 
   /// Строка текущего совпадения (-1, если совпадений нет).
   final int currentLine;
@@ -288,13 +288,6 @@ class _LyricsSearch {
   final int jumpSeq;
 
   bool get isActive => query.isNotEmpty;
-
-  static const _LyricsSearch none = _LyricsSearch(
-    query: '',
-    matchLines: <int>{},
-    currentLine: -1,
-    jumpSeq: 0,
-  );
 }
 
 /// Шапка текста: откуда он, поиск и кнопка меню.
@@ -643,6 +636,10 @@ class _SyncedLyricsState extends ConsumerState<_SyncedLyrics>
   int _engineMs = 0;
   bool _playing = false;
 
+  /// Скорость воспроизведения — за кадр позиция идёт на `delta * speed`
+  /// (`LyricsEnhanced.kt:258-260`).
+  double _speed = 1;
+
   /// Ручная прокрутка: пока true, автопрокрутка молчит и видна кнопка возврата.
   bool _manualScrolling = false;
   Timer? _manualTimer;
@@ -664,6 +661,7 @@ class _SyncedLyricsState extends ConsumerState<_SyncedLyrics>
     final PlayerUiState state = ref.read(playerControllerProvider);
     _engineMs = state.playback.position.inMilliseconds;
     _playing = state.isPlaying;
+    _speed = state.playback.speed;
     _smoothMs = _engineMs.toDouble();
 
     _scrollAnimation = AnimationController.unbounded(vsync: this)
@@ -731,7 +729,7 @@ class _SyncedLyricsState extends ConsumerState<_SyncedLyrics>
     } else {
       // Позиция движка приходит рывками; между ними ведём время сами и
       // подтягиваемся к движку — иначе «караоке» шло бы ступеньками.
-      final double projected = _smoothMs + deltaMs;
+      final double projected = _smoothMs + deltaMs * _speed;
       final double drift = _engineMs - projected;
       if (drift > _smoothMaxForwardDriftMs ||
           drift < -_smoothMaxBackwardDriftMs) {
@@ -752,7 +750,11 @@ class _SyncedLyricsState extends ConsumerState<_SyncedLyrics>
     final int index = _indexForPosition(rounded + _leadMs);
     if (index != _activeIndex.value) {
       _activeIndex.value = index;
-      if (_canAutoScroll) _scheduleScroll(index);
+    }
+    // Прокручиваем при смене строки, а также один раз после первой раскладки
+    // (`_lastScrolledIndex` обновляется только после удачной прокрутки).
+    if (_canAutoScroll && index >= 0 && _lastScrolledIndex != index) {
+      _scheduleScroll(index);
     }
   }
 
@@ -874,6 +876,10 @@ class _SyncedLyricsState extends ConsumerState<_SyncedLyrics>
         if (!next) _smoothMs = _engineMs.toDouble();
       },
     );
+    ref.listen<double>(
+      playerControllerProvider.select((PlayerUiState s) => s.playback.speed),
+      (double? _, double next) => _speed = next,
+    );
 
     final TextTheme theme = Theme.of(context).textTheme;
     final double scale = ref.watch(
@@ -896,7 +902,10 @@ class _SyncedLyricsState extends ConsumerState<_SyncedLyrics>
                   index: i,
                   line: widget.lines[i],
                   active: i == active,
-                  distance: active < 0 ? 0 : (i - active).abs(),
+                  // До первой строки активной нет (active == -1): тогда
+                  // расстояние считаем от «минус первой», чтобы строки не
+                  // гасли все разом, а читались как близкие/дальние.
+                  distance: (i - active).abs(),
                   manualScrolling: _manualScrolling,
                   positionMs: _positionMs,
                   words: _wordTimings(i),
@@ -980,8 +989,12 @@ class _LyricLine extends StatelessWidget {
   }
 
   /// Размытие строки по расстоянию (`LyricsV2.kt:584-590`).
+  ///
+  /// Ограничено ближними строками (до трёх): дальние и без размытия почти
+  /// прозрачны (альфа 0.10), а размытие сотен `ImageFilter`-слоёв на слабой
+  /// машине заметно тормозит прокрутку. У ближних значения как в оригинале.
   double get _blur {
-    if (active || manualScrolling) return 0;
+    if (active || manualScrolling || distance > 3) return 0;
     if (distance == 1) return _blur1;
     if (distance == 2) return _blur2;
     return _blurFar;
@@ -1166,6 +1179,8 @@ class _KaraokeWord extends StatelessWidget {
     final String text = '${word.text} ';
 
     Widget content = Stack(
+      // Свечение и подскок выходят за границы слова — не обрезаем их.
+      clipBehavior: Clip.none,
       children: <Widget>[
         Text(text, style: baseStyle),
         if (complete)
@@ -1198,7 +1213,11 @@ class _KaraokeWord extends StatelessWidget {
       begin: Alignment.centerLeft,
       end: Alignment.centerRight,
       colors: const <Color>[Colors.white, Colors.white, Colors.transparent],
-      stops: <double>[0, softStart, math.max(softEnd, softStart + 0.001)],
+      stops: <double>[
+        0,
+        softStart,
+        math.min(1, math.max(softEnd, softStart + 0.001)),
+      ],
     ).createShader(bounds);
   }
 }

@@ -126,6 +126,7 @@ class LibrarySource {
 
     final List<Track> tracks = <Track>[
       ...BrowseParser.playlistShelf(first, playlistId: playlistId),
+      ..._responsiveItems(first, playlistId: playlistId),
     ];
 
     String? token = BrowseParser.continuationToken(first);
@@ -139,6 +140,12 @@ class LibrarySource {
       final List<Track> more = <Track>[
         ...BrowseParser.playlistShelf(page, playlistId: playlistId),
         ...BrowseParser.playlistShelfContinuation(page, playlistId: playlistId),
+        // Страницы продолжения приходят не «полкой», а просто списком
+        // элементов. Без этого разбора цикл обрывался на первой странице, и
+        // «Мне нравится» показывал ровно 100 треков вместо всех — а вместе с
+        // ним и множество лайков, из-за чего уже лайкнутый трек выглядел
+        // нелайкнутым. Так же собирает треки `CatalogSource._tracksFrom`.
+        ..._responsiveItems(page, playlistId: playlistId),
       ];
       if (more.isEmpty) break;
       tracks.addAll(more);
@@ -146,6 +153,21 @@ class LibrarySource {
     }
 
     return (first: first, tracks: _dedupe(tracks));
+  }
+
+  /// Все элементы списка на странице, независимо от того, обёрнуты ли они
+  /// в «полку»: на страницах продолжения обёртки нет.
+  List<Track> _responsiveItems(dynamic response, {required String playlistId}) {
+    final List<Track> tracks = <Track>[];
+    for (final dynamic renderer
+        in traverseList(response, <String>['musicResponsiveListItemRenderer'])) {
+      final Track? track = BrowseParser.responsiveItem(
+        renderer,
+        fallbackPlaylistId: playlistId,
+      );
+      if (track != null) tracks.add(track);
+    }
+    return tracks;
   }
 
   /// Убирает дубликаты по id, сохраняя порядок.
