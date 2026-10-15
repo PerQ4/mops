@@ -540,6 +540,8 @@ final lyricsProvider =
           artist: artist!,
           album: album,
           duration: duration,
+          // Сервис привязывает песню к видео — передаём идентификатор.
+          videoId: request.videoId,
         ));
       case LyricsSource.youlyPlus:
         if (!externalOk) return Future<Lyrics>.value(Lyrics.none);

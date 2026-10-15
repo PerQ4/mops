@@ -4,19 +4,28 @@ import 'dart:io';
 import '../models/models.dart';
 import 'lyrics_format.dart';
 
-/// Тексты из BetterLyrics (`lyrics-api.boidu.dev`).
+/// Тексты из BetterLyrics (`api.betterlyrics.org`).
 ///
 /// Почему она: отдаёт TTML — формат Apple Music с пословной синхронизацией,
 /// из которого мы берём строчную разметку. Тот же сервис проксирует KuGou,
 /// поэтому запасной запрос идёт на `kugou/getLyrics`, если TTML не нашёлся.
 ///
-/// Порядок как у ArchiveTune: сначала Apple Music (TTML), затем KuGou-прокси.
+/// ВАЖНО про ключ. Сервис работает по модели «сначала кэш»: уже
+/// закэшированную песню отдаёт без ключа, а свежий запрос требует заголовок
+/// `X-API-Key` — и отвечает 401. Ключи сейчас не выдают, поэтому для песен,
+/// которых нет в кэше, источник молчит; это не наша ошибка и не повод
+/// считать текст ненайденным — за него отвечают остальные базы.
+///
+/// Ключ кэша включает альбом и длительность, поэтому их нужно передавать
+/// всегда, когда они известны: без них даже закэшированная песня «промахнётся».
+/// По той же причине адрес — `api.betterlyrics.org`: старый
+/// (`lyrics-api.boidu.dev`) отвечает 401 почти на всё.
 class BetterLyricsSource {
   BetterLyricsSource({HttpClient? client}) : _client = client ?? HttpClient();
 
   final HttpClient _client;
 
-  static const String _host = 'https://lyrics-api.boidu.dev';
+  static const String _host = 'https://api.betterlyrics.org';
   static const String _ttmlPath = '/getLyrics';
   static const String _kugouPath = '/kugou/getLyrics';
 
@@ -34,17 +43,29 @@ class BetterLyricsSource {
       RegExp(r'<(?:[A-Za-z_][\w.-]*:)?tt[\s>]', caseSensitive: false);
 
   /// Ищет текст по исполнителю, названию, альбому и длительности.
+  ///
+  /// `videoId` не обязателен, но сервис использует его для привязки песни к
+  /// видео, поэтому передаём, когда он есть.
   Future<Lyrics> fetch({
     required String title,
     required String artist,
     String? album,
     Duration? duration,
+    String? videoId,
+    String? apiKey,
   }) async {
     if (title.trim().isEmpty || artist.trim().isEmpty) return Lyrics.none;
 
     for (final String path in <String>[_ttmlPath, _kugouPath]) {
-      final Lyrics lyrics =
-          await _fetchOne(path, title.trim(), artist.trim(), album, duration);
+      final Lyrics lyrics = await _fetchOne(
+        path,
+        title.trim(),
+        artist.trim(),
+        album,
+        duration,
+        videoId,
+        apiKey,
+      );
       if (!lyrics.isEmpty) return lyrics;
     }
     return Lyrics.none;
@@ -56,6 +77,8 @@ class BetterLyricsSource {
     String artist,
     String? album,
     Duration? duration,
+    String? videoId,
+    String? apiKey,
   ) async {
     final Uri uri = Uri.parse('$_host$path').replace(
       queryParameters: <String, String>{
@@ -64,10 +87,11 @@ class BetterLyricsSource {
         if (album != null && album.trim().isNotEmpty) 'al': album.trim(),
         if (duration != null && duration > Duration.zero)
           'd': '${duration.inSeconds}',
+        if (videoId != null && videoId.isNotEmpty) 'v': videoId,
       },
     );
 
-    final String? body = await _getText(uri);
+    final String? body = await _getText(uri, apiKey: apiKey);
     if (body == null) return Lyrics.none;
 
     // Некоторые ответы приходят готовым TTML-документом, без обёртки в JSON.
@@ -148,9 +172,12 @@ class BetterLyricsSource {
     }
   }
 
-  Future<String?> _getText(Uri uri) async {
+  Future<String?> _getText(Uri uri, {String? apiKey}) async {
     try {
       final HttpClientRequest request = await _client.getUrl(uri);
+      if (apiKey != null && apiKey.trim().isNotEmpty) {
+        request.headers.set('X-API-Key', apiKey.trim());
+      }
       final HttpClientResponse response =
           await request.close().timeout(const Duration(seconds: 20));
       if (response.statusCode != HttpStatus.ok) {

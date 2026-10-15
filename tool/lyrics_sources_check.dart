@@ -66,6 +66,10 @@ Future<void> main(List<String> args) async {
 
   await _probe('BetterLyrics', () => better.fetch(
         title: title, artist: artist, duration: duration));
+  // Кэш сервиса: закэшированную песню отдаёт без ключа, свежую — нет.
+  await _probe('BetterLyrics (в кэше)', () => better.fetch(
+        title: 'E85', artist: 'Don Toliver', album: 'OCTANE',
+        duration: const Duration(seconds: 154)));
   await _probe('YouLy+', () => youly.fetch(
         title: title, artist: artist, duration: duration));
   await _probe('KuGou', () => kugou.fetch(
