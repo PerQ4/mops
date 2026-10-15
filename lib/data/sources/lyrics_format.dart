@@ -51,6 +51,12 @@ List<TimedLyric> parseTtml(String ttml) {
     r'''\bbegin\s*=\s*["']([^"']+)["']''',
     caseSensitive: false,
   );
+  // Конец слова: у Apple Music он обычно есть, но некоторые зеркала его
+  // выкидывают — тогда пословная подсветка выводит конец из соседних слов.
+  final RegExp endAttr = RegExp(
+    r'''\bend\s*=\s*["']([^"']+)["']''',
+    caseSensitive: false,
+  );
   final RegExp brTag = RegExp(r'<br\s*/?>', caseSensitive: false);
   final RegExp anyTag = RegExp('<[^>]+>');
   final RegExp spaces = RegExp(r'\s+');
@@ -67,11 +73,19 @@ List<TimedLyric> parseTtml(String ttml) {
     for (final RegExpMatch span in spanTag.allMatches(inner)) {
       final Duration? wordTime =
           parseTtmlTime(beginAttr.firstMatch(span.group(1) ?? '')?.group(1));
+      final Duration? wordEnd =
+          parseTtmlTime(endAttr.firstMatch(span.group(1) ?? '')?.group(1));
       final String wordText = unescapeEntities(
         (span.group(2) ?? '').replaceAll(anyTag, ''),
       ).trim();
       if (wordTime == null || wordText.isEmpty) continue;
-      words.add(TimedWord(time: wordTime, text: wordText));
+      words.add(TimedWord(
+        time: wordTime,
+        text: wordText,
+        // Берём конец только если он есть и не раньше начала: иначе
+        // отрицательная длительность сломала бы «караоке».
+        end: (wordEnd != null && wordEnd > wordTime) ? wordEnd : null,
+      ));
     }
 
     final String text = words.isNotEmpty

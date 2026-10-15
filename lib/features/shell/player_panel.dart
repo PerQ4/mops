@@ -1,7 +1,6 @@
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 
-import '../../core/theme/layout.dart';
 import '../../data/local/app_settings.dart';
 import '../../state/providers.dart';
 import '../../core/utils/artwork_urls.dart';
@@ -152,16 +151,12 @@ class _PlayerRightPanelState extends ConsumerState<PlayerRightPanel> {
 
     return Material(
       color: scheme.surfaceContainer,
-      child: LayoutBuilder(
-        builder: (BuildContext context, BoxConstraints constraints) {
-          // Обложка занимает около трети высоты, но не больше «шапки» и не
-          // меньше читаемого размера: на низком окне панель не переполняется.
-          final double artSide = (constraints.maxHeight * 0.28)
-              .clamp(88.0, AppLayout.headerArtwork);
+      child: Builder(
+        builder: (BuildContext context) {
           return Column(
             crossAxisAlignment: CrossAxisAlignment.stretch,
             children: <Widget>[
-              _PanelInfo(
+              _PanelTrackRow(
                 track: track,
                 player: player,
                 showLyrics: _showLyrics,
@@ -170,7 +165,6 @@ class _PlayerRightPanelState extends ConsumerState<PlayerRightPanel> {
                 onClose: () =>
                     ref.read(playerRightPanelProvider.notifier).close(),
               ),
-              _PanelArtwork(track: track, side: artSide),
               PlayerSeekBar(player: player, compact: true),
               Padding(
                 padding: const EdgeInsets.symmetric(horizontal: 8),
@@ -201,44 +195,17 @@ class _PlayerRightPanelState extends ConsumerState<PlayerRightPanel> {
   }
 }
 
-/// Обложка играющего трека — крупная, но по ширине панели.
-class _PanelArtwork extends StatelessWidget {
-  const _PanelArtwork({required this.track, required this.side});
-
-  final Track track;
-
-  /// Сторона квадрата; уменьшается на низком окне (см. `LayoutBuilder`).
-  final double side;
-
-  @override
-  Widget build(BuildContext context) {
-    final List<String> variants = track.artworkFallbacks(kArtworkLarge);
-
-    return Padding(
-      padding: const EdgeInsets.symmetric(horizontal: 20, vertical: 2),
-      child: Center(
-        child: SizedBox(
-          width: side,
-          height: side,
-          child: Artwork(
-            url: variants.isEmpty ? null : variants.first,
-            fallbacks:
-                variants.length > 1 ? variants.sublist(1) : const <String>[],
-            radius: BorderRadius.circular(AppLayout.radiusL),
-          ),
-        ),
-      ),
-    );
-  }
-}
-
-/// Название, исполнитель, отметка качества и все действия строкой.
+/// Строка играющего трека в правой панели.
 ///
-/// Отдельной шапки «Сейчас играет» больше нет: название трека уже всё говорит,
-/// а кнопки текста и сворачивания стоят в этой же строке вместе с
-/// перемешиванием, повтором, лайком и «…».
-class _PanelInfo extends ConsumerWidget {
-  const _PanelInfo({
+/// Вариант «очередь главная»: вместо крупной обложки — одна строка высотой 72
+/// с миниатюрой 56, как `CurrentSongHeader` в ArchiveTune
+/// (`ui/player/QueueComponents.kt`): обложка 64 с радиусом 12, название
+/// `titleLarge` жирным, исполнитель `bodyMedium` приглушённым, лайк и «…».
+///
+/// Освободившиеся ~300 px уходят очереди — раньше она обрезалась, потому что
+/// делила колонку с обложкой и управлением.
+class _PanelTrackRow extends ConsumerWidget {
+  const _PanelTrackRow({
     required this.track,
     required this.player,
     required this.showLyrics,
@@ -264,8 +231,9 @@ class _PanelInfo extends ConsumerWidget {
     final bool signedIn = ref.watch(
       authControllerProvider.select((AuthState s) => s.isSignedIn),
     );
+    final List<String> variants = track.artworkFallbacks(kArtworkLarge);
 
-    // Компактные кнопки: в строке их семь, обычный размер не поместился бы
+    // Компактные кнопки: в строке их четыре, обычный размер не поместился бы
     // в узкую панель.
     Widget action({
       required String tooltip,
@@ -277,79 +245,91 @@ class _PanelInfo extends ConsumerWidget {
       return IconButton(
         tooltip: tooltip,
         isSelected: selected,
-        iconSize: 18,
+        iconSize: 20,
         padding: EdgeInsets.zero,
         visualDensity: VisualDensity.compact,
-        constraints: const BoxConstraints.tightFor(width: 32, height: 32),
+        constraints: const BoxConstraints.tightFor(width: 34, height: 34),
         icon: Icon(icon, color: selected ? scheme.primary : null),
         selectedIcon: selectedIcon == null
             ? null
-            : Icon(selectedIcon, size: 18, color: scheme.primary),
+            : Icon(selectedIcon, size: 20, color: scheme.primary),
         onPressed: onPressed,
       );
     }
 
     return Padding(
-      padding: const EdgeInsets.fromLTRB(16, 6, 4, 2),
-      child: Row(
-        crossAxisAlignment: CrossAxisAlignment.start,
-        children: <Widget>[
-          Expanded(
-            child: Column(
-              crossAxisAlignment: CrossAxisAlignment.start,
-              children: <Widget>[
-                Text(
-                  track.title,
-                  maxLines: 1,
-                  overflow: TextOverflow.ellipsis,
-                  style: text.titleMedium?.copyWith(
-                    fontWeight: FontWeight.w700,
-                  ),
+      padding: const EdgeInsets.fromLTRB(16, 10, 6, 6),
+      child: SizedBox(
+        height: 72,
+        child: Row(
+          children: <Widget>[
+            ClipRRect(
+              borderRadius: BorderRadius.circular(10),
+              child: SizedBox(
+                width: 56,
+                height: 56,
+                child: Artwork(
+                  url: variants.isEmpty ? null : variants.first,
+                  fallbacks: variants.length > 1
+                      ? variants.sublist(1)
+                      : const <String>[],
+                  radius: BorderRadius.circular(10),
                 ),
-                const SizedBox(height: 2),
-                Text(
-                  player.error ?? track.artistLine,
-                  maxLines: 1,
-                  overflow: TextOverflow.ellipsis,
-                  style: text.bodySmall?.copyWith(
-                    color: player.error != null
-                        ? scheme.error
-                        : scheme.onSurfaceVariant,
-                  ),
-                ),
-                // Отметка качества — отдельной строкой: рядом с длинным именем
-                // исполнителя она сжималась и выглядела неаккуратно.
-                if (player.streamNote != null) ...<Widget>[
-                  const SizedBox(height: 6),
-                  QualityBadge(player: player),
-                ],
-              ],
+              ),
             ),
-          ),
-          action(
-            tooltip: showLyrics ? 'Скрыть текст' : 'Показать текст',
-            icon: Icons.lyrics_outlined,
-            selectedIcon: Icons.lyrics,
-            selected: showLyrics,
-            onPressed: onToggleLyrics,
-          ),
-          action(
-            tooltip: 'Свернуть в островок',
-            icon: Icons.keyboard_double_arrow_right_rounded,
-            onPressed: onClose,
-          ),
-          action(
-            tooltip: liked ? 'Убрать из «Мне нравится»' : 'Нравится',
-            icon: liked ? Icons.favorite : Icons.favorite_border,
-            selected: liked,
-            onPressed: signedIn ? () => _like(context, ref) : null,
-          ),
-          action(
-            tooltip: 'Действия',
-            icon: Icons.more_vert,
-            onPressed: () => showTrackMenu(context, track),
-          ),
-        ],
+            const SizedBox(width: 12),
+            Expanded(
+              child: Column(
+                mainAxisAlignment: MainAxisAlignment.center,
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: <Widget>[
+                  Text(
+                    track.title,
+                    maxLines: 1,
+                    overflow: TextOverflow.ellipsis,
+                    style: text.titleMedium?.copyWith(
+                      fontWeight: FontWeight.w700,
+                    ),
+                  ),
+                  const SizedBox(height: 2),
+                  Text(
+                    player.error ?? track.artistLine,
+                    maxLines: 1,
+                    overflow: TextOverflow.ellipsis,
+                    style: text.bodySmall?.copyWith(
+                      color: player.error != null
+                          ? scheme.error
+                          : scheme.onSurfaceVariant,
+                    ),
+                  ),
+                ],
+              ),
+            ),
+            action(
+              tooltip: showLyrics ? 'Скрыть текст' : 'Показать текст',
+              icon: Icons.lyrics_outlined,
+              selectedIcon: Icons.lyrics,
+              selected: showLyrics,
+              onPressed: onToggleLyrics,
+            ),
+            action(
+              tooltip: 'Свернуть в островок',
+              icon: Icons.keyboard_double_arrow_right_rounded,
+              onPressed: onClose,
+            ),
+            action(
+              tooltip: liked ? 'Убрать из «Мне нравится»' : 'Нравится',
+              icon: liked ? Icons.favorite : Icons.favorite_border,
+              selected: liked,
+              onPressed: signedIn ? () => _like(context, ref) : null,
+            ),
+            action(
+              tooltip: 'Действия',
+              icon: Icons.more_vert,
+              onPressed: () => showTrackMenu(context, track),
+            ),
+          ],
+        ),
       ),
     );
   }

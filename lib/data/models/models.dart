@@ -306,10 +306,16 @@ class BrowseSection {
 /// Слово синхронизированного текста — для «караоке»-подсветки.
 @immutable
 class TimedWord {
-  const TimedWord({required this.time, required this.text});
+  const TimedWord({required this.time, required this.text, this.end});
 
+  /// Начало слова. Есть всегда — по нему включается подсветка.
   final Duration time;
   final String text;
+
+  /// Конец слова из TTML (`end`). Не все источники его отдают, поэтому null —
+  /// это норма: конец тогда выводится из начала следующего слова или из конца
+  /// строки (см. `lyrics_view.dart`). Ничего не выдумываем сверх данных.
+  final Duration? end;
 }
 
 /// Строка синхронизированного текста.
