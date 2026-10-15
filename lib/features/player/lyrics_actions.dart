@@ -2,6 +2,7 @@ import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 
 import '../../data/local/app_settings.dart';
+import '../../data/models/models.dart';
 import '../../state/catalog_providers.dart';
 import '../../state/providers.dart';
 
@@ -86,6 +87,16 @@ class _LyricsMenuSheet extends ConsumerWidget {
               ),
             );
 
+    // Найденные параллельным поиском варианты: лучший уже выбран, остальные
+    // можно посмотреть и переключиться. Пока поиск идёт, список пополняется.
+    final LyricsSearchState search = ref.watch(lyricsProvider(request)).value ??
+        const LyricsSearchState();
+
+    // Какой вариант показывается сейчас: в «Авто» — лучший, иначе выбранный.
+    final LyricsSource? shownSource = current == LyricsSource.auto
+        ? search.best?.source
+        : current;
+
     return SafeArea(
       child: SingleChildScrollView(
         child: Column(
@@ -115,9 +126,74 @@ class _LyricsMenuSheet extends ConsumerWidget {
               ),
             ),
             const Divider(height: 1),
+            if (search.candidates.isNotEmpty) ...<Widget>[
+              const Padding(
+                padding: EdgeInsets.fromLTRB(16, 14, 16, 4),
+                child: Text('Найденные варианты — по совместимости'),
+              ),
+              for (final LyricsCandidate candidate in search.candidates)
+                ListTile(
+                  leading: Icon(_iconFor(candidate.source)),
+                  title: Row(
+                    children: <Widget>[
+                      Flexible(child: Text(candidate.source.label)),
+                      const SizedBox(width: 8),
+                      _SyncBadge(candidate: candidate),
+                    ],
+                  ),
+                  subtitle: Text(_candidateSubtitle(candidate)),
+                  trailing: candidate.source == shownSource
+                      ? Icon(
+                          Icons.check,
+                          color: Theme.of(context).colorScheme.primary,
+                        )
+                      : Text(
+                          '${candidate.score}',
+                          style: Theme.of(context)
+                              .textTheme
+                              .labelMedium
+                              ?.copyWith(
+                                color:
+                                    Theme.of(context).colorScheme.onSurfaceVariant,
+                              ),
+                        ),
+                  selected: candidate.source == shownSource,
+                  onTap: () => _select(context, ref, candidate.source),
+                ),
+              if (search.loading)
+                const Padding(
+                  padding: EdgeInsets.fromLTRB(16, 4, 16, 8),
+                  child: Row(
+                    children: <Widget>[
+                      SizedBox(
+                        width: 16,
+                        height: 16,
+                        child: CircularProgressIndicator(strokeWidth: 2),
+                      ),
+                      SizedBox(width: 12),
+                      Text('Поиск ещё идёт…'),
+                    ],
+                  ),
+                ),
+              const Divider(height: 1),
+            ] else if (search.loading)
+              const Padding(
+                padding: EdgeInsets.fromLTRB(16, 16, 16, 16),
+                child: Row(
+                  children: <Widget>[
+                    SizedBox(
+                      width: 16,
+                      height: 16,
+                      child: CircularProgressIndicator(strokeWidth: 2),
+                    ),
+                    SizedBox(width: 12),
+                    Text('Ищем текст во всех источниках…'),
+                  ],
+                ),
+              ),
             const Padding(
               padding: EdgeInsets.fromLTRB(16, 14, 16, 4),
-              child: Text('Найти текст в другом источнике'),
+              child: Text('Все источники'),
             ),
             for (final LyricsSource source in LyricsSource.values)
               ListTile(
@@ -148,6 +224,12 @@ class _LyricsMenuSheet extends ConsumerWidget {
     );
   }
 
+  /// Подпись варианта: причины оценки, а если их нет — описание источника.
+  String _candidateSubtitle(LyricsCandidate candidate) {
+    if (candidate.reasons.isEmpty) return candidate.source.description;
+    return candidate.reasons.join(' · ');
+  }
+
   IconData _iconFor(LyricsSource source) => switch (source) {
         LyricsSource.auto => Icons.auto_awesome,
         LyricsSource.music => Icons.library_music_outlined,
@@ -168,9 +250,53 @@ class _LyricsMenuSheet extends ConsumerWidget {
     ref
         .read(lyricsSourceOverrideProvider.notifier)
         .setSource(request.videoId, source);
-    // Перезапрашиваем явно: даже если источник совпал с прежним, текст
-    // обновится (может, предыдущий запрос упал).
-    ref.invalidate(lyricsProvider(request));
+    // Перезапрашивать не нужно: все варианты уже получены параллельным
+    // поиском и лежат в состоянии — переключение мгновенное. Если нужного
+    // источника в списке не оказалось, есть пункт «Обновить текст».
     Navigator.pop(context);
+  }
+}
+
+/// Метка типа синхронизации у варианта текста.
+class _SyncBadge extends StatelessWidget {
+  const _SyncBadge({required this.candidate});
+
+  final LyricsCandidate candidate;
+
+  @override
+  Widget build(BuildContext context) {
+    final ColorScheme scheme = Theme.of(context).colorScheme;
+    final bool wordSynced = candidate.lyrics.timed
+            ?.any((TimedLyric line) => line.hasWords) ??
+        false;
+    final String label;
+    final Color background;
+    final Color foreground;
+    if (wordSynced) {
+      label = 'пословно';
+      background = scheme.primaryContainer;
+      foreground = scheme.onPrimaryContainer;
+    } else if (candidate.lyrics.isSynced) {
+      label = 'построчно';
+      background = scheme.secondaryContainer;
+      foreground = scheme.onSecondaryContainer;
+    } else {
+      label = 'без синхр.';
+      background = scheme.surfaceContainerHighest;
+      foreground = scheme.onSurfaceVariant;
+    }
+    return Container(
+      padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 2),
+      decoration: BoxDecoration(
+        color: background,
+        borderRadius: BorderRadius.circular(8),
+      ),
+      child: Text(
+        label,
+        style: Theme.of(context).textTheme.labelSmall?.copyWith(
+              color: foreground,
+            ),
+      ),
+    );
   }
 }

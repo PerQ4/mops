@@ -91,6 +91,16 @@ class LrclibSource {
 
   /// Превращает ответ базы в наш [Lyrics].
   Lyrics _fromJson(Map<String, dynamic> json) {
+    // Метаданные нужны оценке совместимости: у LRCLIB это название,
+    // исполнитель и длительность в секундах.
+    final num? duration = json['duration'] as num?;
+    final LyricsMatch match = LyricsMatch(
+      title: json['trackName'] as String?,
+      artist: json['artistName'] as String?,
+      duration:
+          duration == null ? null : Duration(seconds: duration.toInt()),
+    );
+
     final String? synced = json['syncedLyrics'] as String?;
     if (synced != null && synced.trim().isNotEmpty) {
       final List<TimedLyric> timed = parseLrc(synced);
@@ -99,13 +109,14 @@ class LrclibSource {
           timed: timed,
           plain: timed.map((TimedLyric l) => l.text).join('\n'),
           source: 'LRCLIB',
+          match: match,
         );
       }
     }
 
     final String? plain = json['plainLyrics'] as String?;
     if (plain != null && plain.trim().isNotEmpty) {
-      return Lyrics(plain: plain.trim(), source: 'LRCLIB');
+      return Lyrics(plain: plain.trim(), source: 'LRCLIB', match: match);
     }
     return Lyrics.none;
   }

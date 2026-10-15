@@ -108,7 +108,16 @@ class UnisonSource {
   Lyrics _fromEntry(Map<String, dynamic> entry) {
     final String? lyrics = entry['lyrics'] as String?;
     if (lyrics != null && lyrics.trim().isNotEmpty) {
-      return lyricsFromText(lyrics, 'Unison');
+      final num? seconds = entry['durationSeconds'] as num?;
+      return lyricsFromText(
+        lyrics,
+        'Unison',
+        match: LyricsMatch(
+          title: entry['title'] as String?,
+          artist: entry['artist'] as String?,
+          duration: seconds == null ? null : Duration(seconds: seconds.toInt()),
+        ),
+      );
     }
     return Lyrics.none;
   }

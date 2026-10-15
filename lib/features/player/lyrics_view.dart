@@ -56,9 +56,13 @@ const double _manualAlpha3 = 0.40;
 const double _manualFarAlpha = 0.28;
 
 /// Радиус размытия неактивных строк (`LyricsV2.kt:584-590`).
-const double _blur1 = 2;
-const double _blur2 = 5;
-const double _blurFar = 12;
+///
+/// Значения уменьшены, а дальняя граница убрана: `ImageFilter` — самый дорогой
+/// слой в строке, а на расстоянии 3 и дальше строки почти прозрачны (альфа 0.18
+/// и ниже) — размытие там не читается, но стоит кадров при прокрутке. Ближние
+/// строки сохраняют вид оригинала.
+const double _blur1 = 1.6;
+const double _blur2 = 4;
 
 /// Анимации строк (`LyricsV2.kt:600-617`).
 const int _scaleDurationMs = 166;
@@ -88,6 +92,24 @@ final SpringDescription _autoScrollSpring = SpringDescription(
   stiffness: 200,
   damping: 2 * math.sqrt(200),
 );
+
+/// Прокрутка без полосы.
+///
+/// На десктопе Material сам добавляет `Scrollbar` к каждой вертикальной
+/// прокрутке, и в тексте песни он висел серой полосой посреди строк — там,
+/// где никакого ползунка быть не должно (текст листается колесом или пальцем).
+/// Оставляем прокрутку и инерцию, но убираем полосу.
+class _LyricsScrollBehavior extends MaterialScrollBehavior {
+  const _LyricsScrollBehavior();
+
+  @override
+  Widget buildScrollbar(
+    BuildContext context,
+    Widget child,
+    ScrollableDetails details,
+  ) =>
+      child;
+}
 
 /// Текст песни: синхронизированный (с автопрокруткой) или обычный.
 class LyricsView extends ConsumerStatefulWidget {
@@ -170,11 +192,29 @@ class _LyricsViewState extends ConsumerState<LyricsView> {
         ? LyricsRequest.fromTrack(current)
         : LyricsRequest(videoId: widget.videoId);
 
-    final AsyncValue<Lyrics> lyrics = ref.watch(lyricsProvider(request));
+    // Источник: ручной выбор для этого трека важнее настройки.
+    final LyricsSource selected =
+        ref.watch(lyricsSourceOverrideProvider)[request.videoId] ??
+            ref.watch(
+              settingsControllerProvider.select(
+                (AppSettings s) => s.lyricsSource,
+              ),
+            );
+
+    final AsyncValue<LyricsSearchState> searchAsync =
+        ref.watch(lyricsProvider(request));
+    final LyricsSearchState state =
+        searchAsync.value ?? const LyricsSearchState();
+
+    // Что показываем: в «Авто» — лучший по совместимости, иначе — ровно
+    // выбранную базу. Пустота выбранной базы остаётся пустотой, подмены нет.
+    final Lyrics? data = _resolve(state, selected);
+    final LyricsCandidate? shown = selected == LyricsSource.auto
+        ? state.best
+        : state.candidateFor(selected);
 
     // Подсветку и переходы считаем по уже загруженному тексту: держать это в
     // состоянии было бы рассинхронизацией, а строк в песне немного.
-    final Lyrics? data = lyrics.value;
     final List<String> lineTexts = _lineTexts(data);
     final List<int> matches = _findMatches(lineTexts, _query);
     final int cursor = matches.isEmpty
@@ -190,9 +230,9 @@ class _LyricsViewState extends ConsumerState<LyricsView> {
       children: <Widget>[
         _LyricsToolbar(
           request: request,
-          // Показываем настоящий источник строк, а не только выбранный:
-          // основной источник умеет подтягивать синхронизацию из LRCLIB.
-          actualSource: data?.source,
+          // Показываем настоящий источник строк: в «Авто» это лучший вариант,
+          // а не слово «Авто»; выбранный вручную источник тоже виден.
+          actualSource: shown?.source.label,
           searchOpen: _searchOpen,
           onToggleSearch: _toggleSearch,
         ),
@@ -208,13 +248,20 @@ class _LyricsViewState extends ConsumerState<LyricsView> {
             onClose: _toggleSearch,
           ),
         Expanded(
-          child: lyrics.when(
-            data: (Lyrics value) {
-              if (value.isEmpty) {
+          child: searchAsync.when(
+            data: (LyricsSearchState value) {
+              final Lyrics? resolved = _resolve(value, selected);
+              // Поиск ещё идёт и показывать нечего — честное ожидание вместо
+              // пустого экрана: вариант может появиться в любой момент.
+              if (resolved == null && value.loading) {
+                return const Center(child: CircularProgressIndicator());
+              }
+              final Lyrics lyricsValue = resolved ?? Lyrics.none;
+              if (lyricsValue.isEmpty) {
                 return EmptyState(
                   icon: Icons.lyrics_outlined,
                   title: 'Текста нет',
-                  subtitle: value.source == 'Субтитры'
+                  subtitle: selected == LyricsSource.subtitles
                       ? 'У этого видео нет субтитров. Выберите другой источник.'
                       : 'Для этого трека текст не нашёлся ни в YouTube Music, '
                           'ни в открытой базе. Попробуйте субтитры.',
@@ -227,14 +274,17 @@ class _LyricsViewState extends ConsumerState<LyricsView> {
                         ),
                 );
               }
-              if (value.isSynced) {
-                return _SyncedLyrics(lines: value.timed!, search: search);
+              if (lyricsValue.isSynced) {
+                return _SyncedLyrics(
+                  lines: lyricsValue.timed!,
+                  search: search,
+                );
               }
               // Обычный текст: подсветки и автопрокрутки нет — их честно
               // показывает подпись, иначе казалось бы, что плеер «сломался».
               return _PlainLyrics(
-                text: value.plain ?? '',
-                source: value.source,
+                text: lyricsValue.plain ?? '',
+                source: lyricsValue.source,
                 search: search,
                 onFindSource: () => showLyricsMenu(context, request),
               );
@@ -246,6 +296,16 @@ class _LyricsViewState extends ConsumerState<LyricsView> {
         ),
       ],
     );
+  }
+
+  /// Текст, который нужно показать для текущего выбора источника.
+  ///
+  /// В «Авто» показываем лучший по совместимости вариант, при явном выборе —
+  /// только результат выбранной базы (её отсутствие не подменяем чужой
+  /// выдачей — так честнее и понятнее, почему текста нет).
+  Lyrics? _resolve(LyricsSearchState state, LyricsSource selected) {
+    if (selected == LyricsSource.auto) return state.best?.lyrics;
+    return state.candidateFor(selected)?.lyrics;
   }
 
   /// Тексты строк для подсветки поиска — из синхронизации или из обычного
@@ -559,32 +619,35 @@ class _PlainLyricsState extends ConsumerState<_PlainLyrics> {
     );
 
     final List<String> lines = widget.text.split('\n');
-    return SingleChildScrollView(
-      padding: const EdgeInsets.fromLTRB(24, 16, 24, 48),
-      child: Column(
-        crossAxisAlignment: CrossAxisAlignment.start,
-        children: <Widget>[
-          // Честно предупреждаем: у этого текста нет времён, поэтому плеер
-          // не подсвечивает строки и не прокручивает их.
-          const SizedBox(height: 16),
-          for (int i = 0; i < lines.length; i++)
-            Padding(
-              key: i < _keys.length ? _keys[i] : null,
-              padding: const EdgeInsets.only(bottom: 2),
-              child: Text.rich(
-                TextSpan(
-                  children: _highlightSpans(
-                    lines[i],
-                    widget.search.query,
-                    matchStyle: widget.search.currentLine == i
-                        ? currentStyle
-                        : matchStyle,
+    return ScrollConfiguration(
+      behavior: const _LyricsScrollBehavior(),
+      child: SingleChildScrollView(
+        padding: const EdgeInsets.fromLTRB(24, 16, 24, 48),
+        child: Column(
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: <Widget>[
+            // Честно предупреждаем: у этого текста нет времён, поэтому плеер
+            // не подсвечивает строки и не прокручивает их.
+            const SizedBox(height: 16),
+            for (int i = 0; i < lines.length; i++)
+              Padding(
+                key: i < _keys.length ? _keys[i] : null,
+                padding: const EdgeInsets.only(bottom: 2),
+                child: Text.rich(
+                  TextSpan(
+                    children: _highlightSpans(
+                      lines[i],
+                      widget.search.query,
+                      matchStyle: widget.search.currentLine == i
+                          ? currentStyle
+                          : matchStyle,
+                    ),
                   ),
+                  style: baseStyle,
                 ),
-                style: baseStyle,
               ),
-            ),
-        ],
+          ],
+        ),
       ),
     );
   }
@@ -890,29 +953,32 @@ class _SyncedLyricsState extends ConsumerState<_SyncedLyrics>
     final Widget list = ValueListenableBuilder<int>(
       valueListenable: _activeIndex,
       builder: (BuildContext context, int active, Widget? _) {
-        return SingleChildScrollView(
-          controller: _controller,
-          padding: const EdgeInsets.fromLTRB(24, 72, 24, 160),
-          child: Column(
-            crossAxisAlignment: CrossAxisAlignment.start,
-            children: <Widget>[
-              for (int i = 0; i < widget.lines.length; i++)
-                _LyricLine(
-                  key: _keys[i],
-                  index: i,
-                  line: widget.lines[i],
-                  active: i == active,
-                  // До первой строки активной нет (active == -1): тогда
-                  // расстояние считаем от «минус первой», чтобы строки не
-                  // гасли все разом, а читались как близкие/дальние.
-                  distance: (i - active).abs(),
-                  manualScrolling: _manualScrolling,
-                  positionMs: _positionMs,
-                  words: _wordTimings(i),
-                  baseSize: baseSize,
-                  search: widget.search,
-                ),
-            ],
+        return ScrollConfiguration(
+          behavior: const _LyricsScrollBehavior(),
+          child: SingleChildScrollView(
+            controller: _controller,
+            padding: const EdgeInsets.fromLTRB(24, 72, 24, 160),
+            child: Column(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: <Widget>[
+                for (int i = 0; i < widget.lines.length; i++)
+                  _LyricLine(
+                    key: _keys[i],
+                    index: i,
+                    line: widget.lines[i],
+                    active: i == active,
+                    // До первой строки активной нет (active == -1): тогда
+                    // расстояние считаем от «минус первой», чтобы строки не
+                    // гасли все разом, а читались как близкие/дальние.
+                    distance: (i - active).abs(),
+                    manualScrolling: _manualScrolling,
+                    positionMs: _positionMs,
+                    words: _wordTimings(i),
+                    baseSize: baseSize,
+                    search: widget.search,
+                  ),
+              ],
+            ),
           ),
         );
       },
@@ -990,14 +1056,14 @@ class _LyricLine extends StatelessWidget {
 
   /// Размытие строки по расстоянию (`LyricsV2.kt:584-590`).
   ///
-  /// Ограничено ближними строками (до трёх): дальние и без размытия почти
-  /// прозрачны (альфа 0.10), а размытие сотен `ImageFilter`-слоёв на слабой
-  /// машине заметно тормозит прокрутку. У ближних значения как в оригинале.
+  /// Размытие дорогое, поэтому ограничено двумя ближними строками: на
+  /// расстоянии 3+ альфа уже 0.18/0.10, и разница не видна, а лишний
+  /// `ImageFilter` на каждой строке заметно тормозит прокрутку на слабой
+  /// машине. У ближних строк вид как в оригинале.
   double get _blur {
-    if (active || manualScrolling || distance > 3) return 0;
+    if (active || manualScrolling || distance > 2) return 0;
     if (distance == 1) return _blur1;
-    if (distance == 2) return _blur2;
-    return _blurFar;
+    return _blur2;
   }
 
   @override

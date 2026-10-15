@@ -36,15 +36,31 @@ class SimpMusicSource {
     if (best.isEmpty) return Lyrics.none;
 
     final String? synced = best['syncedLyrics'] as String?;
+    final LyricsMatch match = _matchFrom(best);
     if (synced != null && synced.trim().isNotEmpty) {
-      return lyricsFromText(synced, 'SimpMusic');
+      return lyricsFromText(synced, 'SimpMusic', match: match);
     }
 
-    final String? plain = best['plainLyrics'] as String?;
+    final String? plain = (best['plainLyric'] ?? best['plainLyrics']) as String?;
     if (plain != null && plain.trim().isNotEmpty) {
-      return Lyrics(plain: plain.trim(), source: 'SimpMusic');
+      return Lyrics(plain: plain.trim(), source: 'SimpMusic', match: match);
     }
     return Lyrics.none;
+  }
+
+  /// Метаданные кандидата для оценки совместимости.
+  ///
+  /// Поля у SimpMusic называются `songTitle`/`artistName`/`durationSeconds`
+  /// (а не `title`/`duration`) — раньше сравнение по длительности из-за этого
+  /// не работало вовсе и всегда давало «неизвестно».
+  LyricsMatch _matchFrom(Map<String, dynamic> entry) {
+    final num? seconds =
+        (entry['durationSeconds'] ?? entry['duration']) as num?;
+    return LyricsMatch(
+      title: entry['songTitle'] as String?,
+      artist: entry['artistName'] as String?,
+      duration: seconds == null ? null : Duration(seconds: seconds.toInt()),
+    );
   }
 
   /// Выбирает запись, ближайшую по длительности: так одноимённые версии
@@ -61,7 +77,8 @@ class SimpMusicSource {
   }
 
   int _delta(Map<String, dynamic> track, Duration want) {
-    final num? seconds = track['duration'] as num?;
+    final num? seconds =
+        (track['durationSeconds'] ?? track['duration']) as num?;
     if (seconds == null) return 1 << 30;
     return (seconds.toInt() - want.inSeconds).abs();
   }

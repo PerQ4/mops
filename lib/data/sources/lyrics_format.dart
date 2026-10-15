@@ -12,100 +12,235 @@ import 'lrclib_source.dart';
 /// Формат определяем по меткам времени: если они есть — это LRC с
 /// синхронизацией, иначе честно возвращаем обычный текст. Так интерфейс сам
 /// покажет, что подсветки и автопрокрутки у этого текста не будет.
-Lyrics lyricsFromText(String raw, String source) {
+Lyrics lyricsFromText(String raw, String source, {LyricsMatch? match}) {
   final String text = raw.trim();
   if (text.isEmpty) return Lyrics.none;
 
   final List<TimedLyric> timed = LrclibSource.parseLrc(text);
   if (timed.isNotEmpty) {
-    return lyricsFromTimed(timed, source);
+    return lyricsFromTimed(timed, source, match: match);
   }
-  return Lyrics(plain: text, source: source);
+  return Lyrics(plain: text, source: source, match: match);
 }
 
 /// Собирает [Lyrics] из готовых строк со временами.
-Lyrics lyricsFromTimed(List<TimedLyric> timed, String source) {
+Lyrics lyricsFromTimed(
+  List<TimedLyric> timed,
+  String source, {
+  LyricsMatch? match,
+}) {
   if (timed.isEmpty) return Lyrics.none;
   return Lyrics(
     timed: timed,
     plain: timed.map((TimedLyric line) => line.text).join('\n'),
     source: source,
+    match: match,
   );
 }
 
+/// Есть ли в TTML отдельный блок перевода (`x-translation`).
+///
+/// Проверяем по сырому документу, а не по разобранным строкам: перевод идёт
+/// вложенными узлами и в основной текст не попадает, но для оценки
+/// совместимости важно знать, что он вообще есть.
+bool ttmlHasTranslation(String ttml) => _roleAttr
+    .allMatches(ttml)
+    .any((RegExpMatch m) => m.group(1)?.toLowerCase() == 'x-translation');
+
+final RegExp _roleAttr = RegExp(
+  r'''\b(?:ttm:)?role\s*=\s*["']([^"']+)["']''',
+  caseSensitive: false,
+);
+
 /// Разбирает TTML (формат Apple Music) в строки со временами.
 ///
-/// Текст строки собирается из содержимого `<p>` с удалением тегов — так
+/// Текст строки берётся из содержимого `<p>` с удалением тегов — так
 /// сохраняются пробелы между пословными `<span>` (склейка содержимого спанов
-/// без пробелов давала «Theclubisn't...»). Если у спанов есть `begin`, из них
-/// дополнительно собирается пословная разметка для «караоке».
+/// без пробелов давала «Theclubisn't...»). Пословная разметка собирается
+/// только из **основных** спанов.
+///
+/// Почему так сложно: Apple Music кладёт бэк-вокал и перевод отдельными
+/// спанами с `ttm:role="x-bg"`/`"x-translation"`. Раньше роли игнорировались,
+/// и бэк-вокал («Sunshine, beautiful life») попадал в ту же строку вторым
+/// экземпляром — строка показывалась дважды подряд. Теперь дополнительные
+/// спаны (вместе с их вложенностью) в основной текст и в «караоке» не идут.
 List<TimedLyric> parseTtml(String ttml) {
   final RegExp pTag =
       RegExp(r'<p\b[^>]*>(.*?)</p>', caseSensitive: false, dotAll: true);
-  final RegExp spanTag = RegExp(
-    r'<span\b([^>]*)>(.*?)</span>',
-    caseSensitive: false,
-    dotAll: true,
-  );
-  final RegExp beginAttr = RegExp(
-    r'''\bbegin\s*=\s*["']([^"']+)["']''',
-    caseSensitive: false,
-  );
-  // Конец слова: у Apple Music он обычно есть, но некоторые зеркала его
-  // выкидывают — тогда пословная подсветка выводит конец из соседних слов.
-  final RegExp endAttr = RegExp(
-    r'''\bend\s*=\s*["']([^"']+)["']''',
-    caseSensitive: false,
-  );
-  final RegExp brTag = RegExp(r'<br\s*/?>', caseSensitive: false);
-  final RegExp anyTag = RegExp('<[^>]+>');
   final RegExp spaces = RegExp(r'\s+');
 
   final List<TimedLyric> lines = <TimedLyric>[];
   for (final RegExpMatch paragraph in pTag.allMatches(ttml)) {
-    final Duration? time =
-        parseTtmlTime(beginAttr.firstMatch(paragraph.group(0) ?? '')?.group(1));
-    if (time == null) continue;
+    // Роль и время берём из открывающего тега <p>, а не из всего содержимого:
+    // иначе роль вложенного спана (x-bg/x-translation) ошибочно «повесила» бы
+    // перевод на весь параграф.
+    final String raw = paragraph.group(0) ?? '';
+    final int openEnd = raw.indexOf('>');
+    final String openTag = openEnd < 0 ? raw : raw.substring(0, openEnd + 1);
 
-    final String inner = paragraph.group(1) ?? '';
-
-    final List<TimedWord> words = <TimedWord>[];
-    for (final RegExpMatch span in spanTag.allMatches(inner)) {
-      final Duration? wordTime =
-          parseTtmlTime(beginAttr.firstMatch(span.group(1) ?? '')?.group(1));
-      final Duration? wordEnd =
-          parseTtmlTime(endAttr.firstMatch(span.group(1) ?? '')?.group(1));
-      final String wordText = unescapeEntities(
-        (span.group(2) ?? '').replaceAll(anyTag, ''),
-      ).trim();
-      if (wordTime == null || wordText.isEmpty) continue;
-      words.add(TimedWord(
-        time: wordTime,
-        text: wordText,
-        // Берём конец только если он есть и не раньше начала: иначе
-        // отрицательная длительность сломала бы «караоке».
-        end: (wordEnd != null && wordEnd > wordTime) ? wordEnd : null,
-      ));
+    // Параграф может целиком быть переводом/бэк-вокалом — тогда его пропускаем.
+    if (_isSupplementaryRole(_roleAttr.firstMatch(openTag)?.group(1))) {
+      continue;
     }
 
-    final String text = words.isNotEmpty
-        ? words.map((TimedWord w) => w.text).join(' ')
-        : unescapeEntities(
-            inner.replaceAll(brTag, ' ').replaceAll(anyTag, ''),
-          ).replaceAll(spaces, ' ').trim();
+    final Duration? time =
+        parseTtmlTime(_beginAttr.firstMatch(openTag)?.group(1));
+    if (time == null) continue;
+
+    final _ParseResult parsed = _parseParagraph(paragraph.group(1) ?? '');
+    final String text = parsed.text.toString().replaceAll(spaces, ' ').trim();
     if (text.isEmpty) continue;
 
     lines.add(
       TimedLyric(
         time: time,
         text: text,
-        words: words.isEmpty ? null : words,
+        words: parsed.words.isEmpty ? null : parsed.words,
       ),
     );
   }
 
   lines.sort((TimedLyric a, TimedLyric b) => a.time.compareTo(b.time));
-  return lines;
+  // Дубликаты одной и той же строки с одной и той же меткой (например, бэк-вокал
+  // отдельным <p> с тем же временем) убираем: показывать её дважды незачем.
+  // Повторы на разных временах — законный припев, их не трогаем.
+  return _dedupeTimed(lines);
+}
+
+/// Убирает соседние строки с одинаковым временем и текстом.
+List<TimedLyric> _dedupeTimed(List<TimedLyric> lines) {
+  final List<TimedLyric> result = <TimedLyric>[];
+  for (final TimedLyric line in lines) {
+    if (result.isNotEmpty) {
+      final TimedLyric previous = result.last;
+      if (previous.time == line.time && previous.text == line.text) continue;
+    }
+    result.add(line);
+  }
+  return result;
+}
+
+/// Итог разбора содержимого `<p>`: текст строки и основные слова.
+class _ParseResult {
+  _ParseResult();
+
+  final StringBuffer text = StringBuffer();
+  final List<TimedWord> words = <TimedWord>[];
+}
+
+/// Один открытый `<span>`. `leaf` снимается, когда внутри открывается
+/// основной дочерний span — чтобы контейнер не превратился в лишнее слово.
+class _SpanFrame {
+  _SpanFrame({
+    required this.supplementary,
+    required this.begin,
+    required this.end,
+  });
+
+  final bool supplementary;
+  final Duration? begin;
+  final Duration? end;
+  final StringBuffer text = StringBuffer();
+  bool leaf = true;
+}
+
+final RegExp _beginAttr = RegExp(
+  r'''\bbegin\s*=\s*["']([^"']+)["']''',
+  caseSensitive: false,
+);
+final RegExp _endAttr = RegExp(
+  r'''\bend\s*=\s*["']([^"']+)["']''',
+  caseSensitive: false,
+);
+final RegExp _tagOrText = RegExp(r'<[^>]*>|[^<]+');
+final RegExp _tagName = RegExp(r'^<\s*([a-zA-Z0-9:_-]+)');
+final RegExp _anyTag = RegExp('<[^>]+>');
+
+bool _isSupplementaryRole(String? role) {
+  final String? value = role?.toLowerCase();
+  return value == 'x-bg' || value == 'x-translation' || value == 'x-roman';
+}
+
+/// Разбирает внутренность одного `<p>`.
+///
+/// Идём по тегам и тексту вручную (regexp не умеет парную вложенность):
+/// считаем глубину дополнительных спанов, копим текст строки и пословную
+/// разметку по основным спанам с `begin`.
+_ParseResult _parseParagraph(String inner) {
+  final _ParseResult result = _ParseResult();
+  final List<_SpanFrame> stack = <_SpanFrame>[];
+  int supplementaryDepth = 0;
+
+  for (final RegExpMatch match in _tagOrText.allMatches(inner)) {
+    final String token = match.group(0)!;
+
+    if (token.startsWith('</')) {
+      if (stack.isEmpty) continue;
+      final _SpanFrame frame = stack.removeLast();
+      if (frame.supplementary) {
+        supplementaryDepth--;
+        continue;
+      }
+      // Слово берём только с листового спана с временем; текст контейнера
+      // уже разошёлся по строке, дублировать его словом не нужно.
+      final Duration? begin = frame.begin;
+      if (!frame.leaf || begin == null) continue;
+      final String wordText = unescapeEntities(
+        frame.text.toString().replaceAll(_anyTag, ''),
+      ).trim();
+      if (wordText.isEmpty) continue;
+      final Duration? end = frame.end;
+      result.words.add(TimedWord(
+        time: begin,
+        text: wordText,
+        // Конец берём только если он позже начала: иначе отрицательная
+        // длительность сломала бы «караоке».
+        end: (end != null && end > begin) ? end : null,
+      ));
+      continue;
+    }
+
+    if (token.startsWith('<')) {
+      // Перенос строки — это пробел, а не отдельный текст.
+      if (token.startsWith('<br')) {
+        if (supplementaryDepth == 0) result.text.write(' ');
+        continue;
+      }
+      final String local = _tagName.firstMatch(token)?.group(1) ?? '';
+      if (!local.toLowerCase().endsWith('span')) continue;
+
+      final String? role = _roleAttr.firstMatch(token)?.group(1);
+      final bool supplementary = _isSupplementaryRole(role);
+      if (!supplementary &&
+          stack.isNotEmpty &&
+          !stack.last.supplementary) {
+        // У основного родителя появился основной ребёнок — родитель контейнер.
+        stack.last.leaf = false;
+      }
+      if (supplementary) supplementaryDepth++;
+      stack.add(_SpanFrame(
+        supplementary: supplementary,
+        begin: parseTtmlTime(_beginAttr.firstMatch(token)?.group(1)),
+        end: parseTtmlTime(_endAttr.firstMatch(token)?.group(1)),
+      ));
+      continue;
+    }
+
+    // Текстовый узел.
+    if (supplementaryDepth > 0) continue;
+    final String text = unescapeEntities(token.replaceAll(_anyTag, ''));
+    result.text.write(text);
+    // Копим слово — в ближайшем открытом основном спане с временем.
+    for (int i = stack.length - 1; i >= 0; i--) {
+      final _SpanFrame frame = stack[i];
+      if (!frame.supplementary && frame.begin != null) {
+        frame.text.write(text);
+        break;
+      }
+    }
+  }
+
+  return result;
 }
 
 /// Разбирает время TTML: `12.345`, `00:12.345`, `0:00:12.345`, возможно с

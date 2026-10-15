@@ -57,13 +57,27 @@ class KugouSource {
       final String? key = item['accesskey'] as String?;
       if (id.isEmpty || key == null || key.isEmpty) continue;
 
-      final Lyrics lyrics = await _download(id, key);
+      // KuGou присылает длительность в миллисекундах (как и в запросе) и
+      // название/исполнителя кандидата — по ним потом оценивается совместимость.
+      final num? duration = item['duration'] as num?;
+      final LyricsMatch match = LyricsMatch(
+        title: item['song'] as String?,
+        artist: item['singer'] as String?,
+        duration:
+            duration == null ? null : Duration(milliseconds: duration.toInt()),
+      );
+
+      final Lyrics lyrics = await _download(id, key, match: match);
       if (!lyrics.isEmpty) return lyrics;
     }
     return Lyrics.none;
   }
 
-  Future<Lyrics> _download(String id, String accessKey) async {
+  Future<Lyrics> _download(
+    String id,
+    String accessKey, {
+    LyricsMatch? match,
+  }) async {
     final Map<String, dynamic>? json = await _get(
       Uri.parse(_downloadHost).replace(queryParameters: <String, String>{
         'ver': '1',
@@ -93,6 +107,7 @@ class KugouSource {
       timed: timed,
       plain: timed.map((TimedLyric l) => l.text).join('\n'),
       source: 'KuGou',
+      match: match,
     );
   }
 

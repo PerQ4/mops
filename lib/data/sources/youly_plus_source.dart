@@ -79,7 +79,7 @@ class YouLyPlusSource {
     if (trimmed.isEmpty) return Lyrics.none;
 
     if (_looksLikeTtml(trimmed)) {
-      final Lyrics synced = lyricsFromTimed(parseTtml(trimmed), 'YouLy+');
+      final Lyrics synced = _fromTtml(trimmed);
       if (!synced.isEmpty) return synced;
     }
 
@@ -91,7 +91,7 @@ class YouLyPlusSource {
 
     final String? ttml = _findString(decoded, 'ttml');
     if (ttml != null) {
-      final Lyrics synced = lyricsFromTimed(parseTtml(ttml), 'YouLy+');
+      final Lyrics synced = _fromTtml(ttml);
       if (!synced.isEmpty) return synced;
     }
 
@@ -104,6 +104,13 @@ class YouLyPlusSource {
     }
     return Lyrics.none;
   }
+
+  /// Собирает [Lyrics] из TTML, отметив наличие перевода (для оценки).
+  Lyrics _fromTtml(String ttml) => lyricsFromTimed(
+        parseTtml(ttml),
+        'YouLy+',
+        match: LyricsMatch(hasTranslation: ttmlHasTranslation(ttml)),
+      );
 
   /// Собирает текст из списка строк вида `{time, text}`.
   Lyrics _fromLineList(List<dynamic> node) {

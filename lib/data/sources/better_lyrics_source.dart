@@ -72,7 +72,7 @@ class BetterLyricsSource {
 
     // Некоторые ответы приходят готовым TTML-документом, без обёртки в JSON.
     if (_looksLikeTtml(body)) {
-      final Lyrics direct = lyricsFromTimed(parseTtml(body), 'BetterLyrics');
+      final Lyrics direct = _fromTtml(body);
       if (!direct.isEmpty) return direct;
     }
 
@@ -81,7 +81,7 @@ class BetterLyricsSource {
 
     final String? ttml = _extractString(decoded, ttml: true, depth: 0);
     if (ttml != null) {
-      final Lyrics synced = lyricsFromTimed(parseTtml(ttml), 'BetterLyrics');
+      final Lyrics synced = _fromTtml(ttml);
       if (!synced.isEmpty) return synced;
     }
 
@@ -92,6 +92,13 @@ class BetterLyricsSource {
     }
     return Lyrics.none;
   }
+
+  /// Собирает [Lyrics] из TTML, отметив наличие перевода (для оценки).
+  Lyrics _fromTtml(String ttml) => lyricsFromTimed(
+        parseTtml(ttml),
+        'BetterLyrics',
+        match: LyricsMatch(hasTranslation: ttmlHasTranslation(ttml)),
+      );
 
   bool _looksLikeTtml(String value) {
     final String head =

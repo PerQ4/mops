@@ -333,14 +333,45 @@ class TimedLyric {
   bool get hasWords => words != null && words!.isNotEmpty;
 }
 
+/// Необязательные метаданные найденного текста — по ним считается
+/// совместимость с играющим треком.
+///
+/// Базы отдают их не всегда: LRCLIB и KuGou присылают длительность и имена,
+/// TTML — пометку перевода. Где данных нет, поле остаётся `null`, и оценка
+/// просто не получает эти баллы (это не штраф: неизвестное — не значит неверное).
+@immutable
+class LyricsMatch {
+  const LyricsMatch({
+    this.title,
+    this.artist,
+    this.duration,
+    this.hasTranslation = false,
+  });
+
+  /// Название, как его вернула база (может отличаться от нашего).
+  final String? title;
+
+  /// Исполнитель, как его вернула база.
+  final String? artist;
+
+  /// Длительность по данным базы.
+  final Duration? duration;
+
+  /// Есть ли в тексте отдельный перевод (в TTML — блок `x-translation`).
+  final bool hasTranslation;
+}
+
 /// Текст песни: обычный, синхронизированный или отсутствует.
 @immutable
 class Lyrics {
-  const Lyrics({this.plain, this.timed, this.source});
+  const Lyrics({this.plain, this.timed, this.source, this.match});
 
   final String? plain;
   final List<TimedLyric>? timed;
   final String? source;
+
+  /// Метаданные для оценки совместимости; `null` — база их не дала.
+  final LyricsMatch? match;
 
   bool get isEmpty => (plain == null || plain!.isEmpty) && (timed?.isEmpty ?? true);
 

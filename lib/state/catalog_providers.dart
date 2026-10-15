@@ -1,4 +1,6 @@
 import '../data/local/app_settings.dart';
+import 'dart:async';
+
 import 'package:flutter/foundation.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 
@@ -8,6 +10,7 @@ import '../data/sources/catalog_source.dart';
 import '../data/sources/library_source.dart';
 import '../data/sources/kugou_source.dart';
 import '../data/sources/lrclib_source.dart';
+import '../data/sources/lyrics_match.dart';
 import '../data/sources/megalobiz_source.dart';
 import '../data/sources/musixmatch_source.dart';
 import '../data/sources/simpmusic_source.dart';
@@ -374,17 +377,71 @@ final NotifierProvider<LyricsSourceOverride, Map<String, LyricsSource>>
   LyricsSourceOverride.new,
 );
 
-/// Текст песни.
+/// Один найденный вариант текста вместе с оценкой совместимости.
 ///
-/// Выбранный источник авторитетен: если пользователь указал конкретную базу,
-/// возвращаем ровно её результат, а пустота остаётся пустотой — тихого ухода
-/// на текст YouTube Music больше нет. «Текст YouTube Music» и «Субтитры
-/// видео» тоже честные: каждый отдаёт только своё.
+/// Это результат работы одного источника: сам текст и балл, по которому он
+/// занимает место в общем списке (см. [scoreLyrics]).
+class LyricsCandidate {
+  const LyricsCandidate({
+    required this.source,
+    required this.lyrics,
+    required this.score,
+    this.reasons = const <String>[],
+  });
+
+  final LyricsSource source;
+  final Lyrics lyrics;
+
+  /// Балл совместимости (см. [scoreLyrics]).
+  final int score;
+
+  /// Человекочитаемые причины оценки — показываются в меню.
+  final List<String> reasons;
+}
+
+/// Состояние поиска текста: найденные варианты и признак незавершённости.
+@immutable
+class LyricsSearchState {
+  const LyricsSearchState({
+    this.candidates = const <LyricsCandidate>[],
+    this.loading = true,
+  });
+
+  /// Варианты, отсортированные по убыванию совместимости.
+  final List<LyricsCandidate> candidates;
+
+  /// Поиск ещё идёт: в меню это показывается индикатором.
+  final bool loading;
+
+  LyricsCandidate? get best => candidates.isEmpty ? null : candidates.first;
+
+  bool get isEmpty => candidates.isEmpty && !loading;
+
+  LyricsCandidate? candidateFor(LyricsSource source) {
+    for (final LyricsCandidate candidate in candidates) {
+      if (candidate.source == source) return candidate;
+    }
+    return null;
+  }
+}
+
+/// Порядок источников для «Авто» и для тай-брейка совместимости.
 ///
-/// Единственное исключение — режим «Авто»: он перебирает реальные базы, а
-/// тексты YouTube берёт только в самом конце, когда ни одна база не ответила.
-/// Приоритет в «Авто» отдан синхронизированным текстам — они дают подсветку
-/// и автопрокрутку.
+/// Повторяет приоритет ArchiveTune: сначала сервисы, отдающие пословную или
+/// строчную синхронизацию, затем обычные базы. Тексты YouTube Music и субтитры
+/// добавляются последними — у них нет метаданных для оценки, поэтому внешняя
+/// база с той же синхронизацией всегда выигрывает.
+const List<LyricsSource> lyricsAutoOrder = <LyricsSource>[
+  LyricsSource.betterLyrics,
+  LyricsSource.youlyPlus,
+  LyricsSource.lrclib,
+  LyricsSource.kugou,
+  LyricsSource.megalobiz,
+  LyricsSource.simpmusic,
+  LyricsSource.unison,
+  LyricsSource.musixmatch,
+];
+
 /// id треков, для которых текст уже найден.
 ///
 /// Отметка в списках появляется только после того, как текст реально получен
@@ -404,153 +461,206 @@ final NotifierProvider<LyricsAvailability, Set<String>>
     lyricsAvailabilityProvider =
     NotifierProvider<LyricsAvailability, Set<String>>(LyricsAvailability.new);
 
+/// Текст песни: асинхронный параллельный поиск по всем источникам.
+///
+/// Почему переписано: раньше источники опрашивались последовательно, поэтому
+/// ожидание складывалось из времени самого медленного, а текст появлялся только
+/// в самом конце. Теперь все базы запускаются одновременно (как
+/// `LyricsHelper.getAllLyrics` в ArchiveTune), а результат приходит потоком:
+/// каждый ответ сразу попадает в список вариантов, отсортированный по
+/// совместимости. Лучший виден ещё до того, как ответят все.
+///
+/// Выбранный вручную источник остаётся авторитетным: показываем ровно его
+/// результат, а пустота остаётся пустотой. Режим «Авто» показывает лучший по
+/// оценке [scoreLyrics].
 final lyricsProvider =
-    FutureProvider.family<Lyrics, LyricsRequest>((ref, request) async {
-  final LyricsSource defaultSource = ref.watch(
-    settingsControllerProvider.select((AppSettings s) => s.lyricsSource),
-  );
-  final LyricsSource? override = ref.watch(
-    lyricsSourceOverrideProvider
-        .select((Map<String, LyricsSource> m) => m[request.videoId]),
-  );
-  final LyricsSource source = override ?? defaultSource;
+    StreamProvider.family<LyricsSearchState, LyricsRequest>((ref, request) {
+  final StreamController<LyricsSearchState> controller =
+      StreamController<LyricsSearchState>();
+  bool disposed = false;
+  ref.onDispose(() {
+    disposed = true;
+    controller.close();
+  });
 
+  // Все зависимости читаем синхронно, пока ref жив: дальше идут сетевые
+  // ожидания, а обращаться к ref после dispose нельзя.
   final CatalogSource catalog = ref.watch(catalogSourceProvider);
+  final BetterLyricsSource betterLyrics =
+      ref.watch(betterLyricsSourceProvider);
+  final YouLyPlusSource youlyPlus = ref.watch(youlyPlusSourceProvider);
+  final LrclibSource lrclib = ref.watch(lrclibSourceProvider);
+  final KugouSource kugou = ref.watch(kugouSourceProvider);
+  final MegalobizSource megalobiz = ref.watch(megalobizSourceProvider);
+  final SimpMusicSource simpmusic = ref.watch(simpmusicSourceProvider);
+  final UnisonSource unison = ref.watch(unisonSourceProvider);
+  final MusixmatchSource musixmatch = ref.watch(musixmatchSourceProvider);
+  final String musixmatchKey = ref.watch(
+    settingsControllerProvider.select((AppSettings s) => s.musixmatchApiKey),
+  );
 
-  // Порядок «Авто» повторяет приоритет ArchiveTune: сначала сервисы, которые
-  // отдают пословную или строчную синхронизацию, затем обычные базы.
-  const List<LyricsSource> autoOrder = <LyricsSource>[
-    LyricsSource.betterLyrics,
-    LyricsSource.youlyPlus,
-    LyricsSource.lrclib,
-    LyricsSource.kugou,
-    LyricsSource.megalobiz,
-    LyricsSource.simpmusic,
-    LyricsSource.unison,
-    LyricsSource.musixmatch,
-  ];
+  final bool externalOk = request.canQueryExternal;
+  final String? title = request.title?.trim();
+  final String? artist = request.artist?.trim();
+  final String? album = request.album;
+  final Duration? duration = request.duration;
 
   // Ограничиваем ожидание каждой базы: если она недоступна (бывает за
-  // блокировками), не заставляем пользователя ждать её таймаут.
+  // блокировками), не заставляем пользователя ждать её таймаут — вариант
+  // просто не попадёт в список.
   Future<Lyrics> bounded(Future<Lyrics> future) =>
       future.timeout(const Duration(seconds: 8), onTimeout: () => Lyrics.none);
 
-  // Внешние базы, которым нужны название и исполнитель.
-  Future<Lyrics> fetchMetadataSource(LyricsSource target) {
-    if (!request.canQueryExternal) return Future<Lyrics>.value(Lyrics.none);
-    final String title = request.title!.trim();
-    final String artist = request.artist!.trim();
+  Future<Lyrics> fetchSource(LyricsSource target) {
     switch (target) {
-      case LyricsSource.betterLyrics:
-        return bounded(ref.watch(betterLyricsSourceProvider).fetch(
+      case LyricsSource.music:
+        return bounded(catalog.lyrics(request.videoId));
+      case LyricsSource.subtitles:
+        return bounded(catalog.subtitleLyrics(request.videoId));
+      // SimpMusic и Unison индексируются по id видео и в метаданных не
+      // нуждаются — их пробуем всегда.
+      case LyricsSource.simpmusic:
+        return bounded(simpmusic.fetch(
+          videoId: request.videoId,
+          duration: duration,
+        ));
+      case LyricsSource.unison:
+        return bounded(unison.fetch(
+          videoId: request.videoId,
           title: title,
           artist: artist,
-          album: request.album,
-          duration: request.duration,
+          album: album,
+          duration: duration,
+        ));
+      // Остальные базы ищут по названию и исполнителю: без них — пропуск.
+      case LyricsSource.betterLyrics:
+        if (!externalOk) return Future<Lyrics>.value(Lyrics.none);
+        return bounded(betterLyrics.fetch(
+          title: title!,
+          artist: artist!,
+          album: album,
+          duration: duration,
         ));
       case LyricsSource.youlyPlus:
-        return bounded(ref.watch(youlyPlusSourceProvider).fetch(
-          title: title,
-          artist: artist,
-          album: request.album,
-          duration: request.duration,
+        if (!externalOk) return Future<Lyrics>.value(Lyrics.none);
+        return bounded(youlyPlus.fetch(
+          title: title!,
+          artist: artist!,
+          album: album,
+          duration: duration,
         ));
       case LyricsSource.lrclib:
-        return bounded(ref.watch(lrclibSourceProvider).fetch(
-          title: title,
-          artist: artist,
-          album: request.album,
-          duration: request.duration,
+        if (!externalOk) return Future<Lyrics>.value(Lyrics.none);
+        return bounded(lrclib.fetch(
+          title: title!,
+          artist: artist!,
+          album: album,
+          duration: duration,
         ));
       case LyricsSource.kugou:
-        return bounded(ref.watch(kugouSourceProvider).fetch(
-          title: title,
-          artist: artist,
-          duration: request.duration,
+        if (!externalOk) return Future<Lyrics>.value(Lyrics.none);
+        return bounded(kugou.fetch(
+          title: title!,
+          artist: artist!,
+          duration: duration,
         ));
       case LyricsSource.megalobiz:
-        return bounded(ref.watch(megalobizSourceProvider).fetch(
-          title: title,
-          artist: artist,
-        ));
+        if (!externalOk) return Future<Lyrics>.value(Lyrics.none);
+        return bounded(megalobiz.fetch(title: title!, artist: artist!));
       case LyricsSource.musixmatch:
-        // Musixmatch идёт через Paxsenix и требует ключ; без него — пропуск.
-        final String key = ref.watch(
-          settingsControllerProvider.select(
-            (AppSettings s) => s.musixmatchApiKey,
-          ),
-        );
-        if (key.isEmpty) return Future<Lyrics>.value(Lyrics.none);
-        return bounded(ref.watch(musixmatchSourceProvider).fetch(
-          title: title,
-          artist: artist,
-          apiKey: key,
-          duration: request.duration,
+        // Musixmatch идёт через Paxsenix и требует ключ; без ключа — пропуск.
+        if (!externalOk || musixmatchKey.isEmpty) {
+          return Future<Lyrics>.value(Lyrics.none);
+        }
+        return bounded(musixmatch.fetch(
+          title: title!,
+          artist: artist!,
+          apiKey: musixmatchKey,
+          duration: duration,
         ));
-      default:
+      case LyricsSource.auto:
         return Future<Lyrics>.value(Lyrics.none);
     }
   }
 
-  // Один источник — ровно его результат. Пусто остаётся пустым: ни YouTube,
-  // ни другие базы не подставляются.
-  Future<Lyrics> fetchDirect(LyricsSource target) {
-    switch (target) {
-      case LyricsSource.music:
-        return catalog.lyrics(request.videoId);
-      case LyricsSource.subtitles:
-        return bounded(catalog.subtitleLyrics(request.videoId));
-      case LyricsSource.simpmusic:
-        return bounded(ref.watch(simpmusicSourceProvider).fetch(
-          videoId: request.videoId,
-          duration: request.duration,
-        ));
-      case LyricsSource.unison:
-        return bounded(ref.watch(unisonSourceProvider).fetch(
-          videoId: request.videoId,
-          title: request.title,
-          artist: request.artist,
-          album: request.album,
-          duration: request.duration,
-        ));
-      default:
-        return fetchMetadataSource(target);
+  controller.add(const LyricsSearchState(loading: true));
+
+  unawaited(() async {
+    final List<LyricsCandidate> found = <LyricsCandidate>[];
+
+    void accept(LyricsSource source, int rank, Lyrics lyrics) {
+      if (disposed || lyrics.isEmpty) return;
+      final LyricsScore score = scoreLyrics(
+        lyrics: lyrics,
+        rank: rank,
+        requestTitle: title,
+        requestArtist: artist,
+        requestDuration: duration,
+      );
+      found.add(LyricsCandidate(
+        source: source,
+        lyrics: lyrics,
+        score: score.value,
+        reasons: score.reasons,
+      ));
+      // Балл уже включает тай-брейк по приоритету источника (см. scoreLyrics),
+      // поэтому равных баллов у разных рангов не бывает и порядок стабилен.
+      found.sort((LyricsCandidate a, LyricsCandidate b) =>
+          b.score.compareTo(a.score));
+      if (disposed) return;
+      // Отмечаем трек как «с текстом» — по этой отметке в списках появляется
+      // значок, поэтому она ставится только для непустого результата.
+      ref.read(lyricsAvailabilityProvider.notifier).mark(request.videoId);
+      controller.add(LyricsSearchState(
+        candidates: List<LyricsCandidate>.of(found),
+        loading: true,
+      ));
     }
-  }
 
-  // «Авто»: базы опрашиваются параллельно, чтобы ожидание не складывалось.
-  // Синхронизированный текст приоритетнее обычного, при равном качестве
-  // выигрывает источник, стоящий в списке выше.
-  Future<Lyrics> fetchAuto() async {
-    final List<Lyrics> results =
-        await Future.wait(autoOrder.map(fetchDirect).toList());
+    final List<Future<void>> tasks = <Future<void>>[];
 
-    Lyrics best = Lyrics.none;
-    for (final Lyrics lyrics in results) {
-      if (lyrics.isEmpty) continue;
-      if (best.isEmpty || (lyrics.isSynced && !best.isSynced)) {
-        best = lyrics;
+    // Запуск источника: синхронная ошибка (маловероятна, но возможна) не
+    // должна ронять весь поиск — просто пропускаем этот источник.
+    void spawn(LyricsSource source, int rank) {
+      try {
+        tasks.add(fetchSource(source).then<void>(
+          (Lyrics lyrics) => accept(source, rank, lyrics),
+          // Асинхронная ошибка одной базы тоже не роняет поиск.
+          onError: (Object _, StackTrace _) {},
+        ));
+      } on Object catch (error) {
+        debugPrint('[Lyrics] источник ${source.name} пропущен: $error');
       }
     }
-    if (!best.isEmpty) return best;
 
-    // Ни одна база не ответила — только теперь тексты YouTube.
-    final Lyrics subtitles =
-        await bounded(catalog.subtitleLyrics(request.videoId));
-    if (!subtitles.isEmpty) return subtitles;
-    return catalog.lyrics(request.videoId);
-  }
+    try {
+      for (int rank = 0; rank < lyricsAutoOrder.length; rank++) {
+        spawn(lyricsAutoOrder[rank], rank);
+      }
 
-  final Lyrics resolved = source == LyricsSource.auto
-      ? await fetchAuto()
-      : await fetchDirect(source);
+      // Тексты YouTube — последними и в самом низу списка: у них нет
+      // метаданных, поэтому при равной синхронизации внешняя база
+      // всегда предпочтительнее.
+      final int youtubeRank = lyricsAutoOrder.length;
+      spawn(LyricsSource.subtitles, youtubeRank);
+      spawn(LyricsSource.music, youtubeRank + 1);
 
-  // Отмечаем трек как «с текстом» — по этой отметке в списках появляется
-  // значок, поэтому она ставится только для непустого результата.
-  if (!resolved.isEmpty) {
-    ref.read(lyricsAvailabilityProvider.notifier).mark(request.videoId);
-  }
-  return resolved;
+      await Future.wait(tasks);
+    } on Object catch (error) {
+      debugPrint('[Lyrics] поиск прерван: $error');
+    } finally {
+      // Терминальное состояние выставляем всегда, иначе интерфейс навсегда
+      // остался бы в «идёт поиск».
+      if (!disposed) {
+        controller.add(LyricsSearchState(
+          candidates: List<LyricsCandidate>.of(found),
+          loading: false,
+        ));
+      }
+    }
+  }());
+
+  return controller.stream;
 });
 
 /// Пара «поисковый запрос + фильтр» — ключ кэша поиска.
