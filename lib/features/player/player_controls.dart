@@ -241,6 +241,13 @@ class _M3ESeekBar extends StatelessWidget {
             onChangeEnd: onChangeEnd,
             amplitude: playing ? 2 : 0,
             wavelength: 36,
+            // Толщина волны — не как у обычной дорожки: у `SquigglySlider`
+            // штрих 6 (`strokeWidth = 6.dp`), иначе волна выходит втрое
+            // жирнее оригинала.
+            trackThickness: 6,
+            // Ползунок «с кружком» — прямоугольник 6x24 из `SquigglySlider`
+            // (`height = strokeWidth * 4`), а не высокая ручка Material 3.
+            thumbLength: 24,
             // Ползунок есть только у «с кружком»; у «волнистого» его нет.
             thumbBuilder: style == ProgressBarStyle.wavy ? _noThumb : null,
           )
