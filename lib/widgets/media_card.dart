@@ -92,14 +92,15 @@ class MediaCard extends StatelessWidget {
                   ),
                 ),
                 if (showPlay)
-                  Positioned(
-                    right: 6,
-                    bottom: 6,
-                    child: _PlayBadge(onTap: onTap),
+                  // Кнопка play по центру обложки — как `OverlayPlayButton`
+                  // в `SongGridItem`.
+                  Positioned.fill(
+                    child: Center(child: _PlayBadge(onTap: onTap)),
                   ),
               ],
             ),
-            const SizedBox(height: 8),
+            // Зазор до заголовка — 6, как `Spacer(height = 6.dp)` в `GridItem`.
+            const SizedBox(height: 6),
             Text(
               title,
               maxLines: 1,
@@ -122,8 +123,10 @@ class MediaCard extends StatelessWidget {
   }
 }
 
-/// Кнопка play на обложке: круг 36, фон `black` α0.6.
+/// Кнопка play на обложке: круг 36, фон `black` α0.6, значок 20.
 ///
+/// Числа — из `OverlayPlayButton` (Items.kt): `size(36.dp)`, чёрный фон с
+/// альфой `ActiveBoxAlpha` = 0.6, значок `size(20.dp)` цвета `Color.White`.
 /// Нужна, чтобы карточку-трек было видно как «играющую», а не как ссылку
 /// на страницу: нажатие в любом месте всё равно запускает воспроизведение.
 class _PlayBadge extends StatelessWidget {
@@ -142,7 +145,7 @@ class _PlayBadge extends StatelessWidget {
         child: const SizedBox(
           width: 36,
           height: 36,
-          child: Icon(Icons.play_arrow_rounded, size: 22, color: Colors.white),
+          child: Icon(Icons.play_arrow_rounded, size: 20, color: Colors.white),
         ),
       ),
     );

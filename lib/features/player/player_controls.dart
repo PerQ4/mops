@@ -8,6 +8,24 @@ import '../../data/local/app_settings.dart';
 import '../../state/player_controller.dart';
 import '../../state/providers.dart';
 
+/// Альфы дорожки слайдера — из ArchiveTune
+/// (`ui/theme/PlayerSliderColors.kt`, `object Config`).
+///
+/// Активная часть всюду рисуется цветом акцента без прозрачности, а вот
+/// неактивная — той же ролью, но приглушённой. Значения перенесены точно:
+/// `INACTIVE_TRACK_ALPHA = 0.22`, `THICK_INACTIVE_TRACK_ALPHA = 0.28`,
+/// `SIMPLE_ACTIVE_TRACK_ALPHA = 0.85`, `SIMPLE_INACTIVE_TRACK_ALPHA = 0.15`,
+/// `INACTIVE_TICK_ALPHA = 0.25`.
+const double _kInactiveTrackAlpha = 0.22;
+const double _kThickInactiveTrackAlpha = 0.28;
+const double _kSimpleActiveTrackAlpha = 0.85;
+const double _kSimpleInactiveTrackAlpha = 0.15;
+
+/// Горизонтальный отступ содержимого плеера — `PlayerHorizontalPadding`
+/// (`constants/Dimensions.kt:45`). Используется полосой перемотки и её
+/// подписями времени.
+const double _kPlayerHorizontalPadding = 32;
+
 /// Полоса перемотки со временем по краям и отметкой качества в центре.
 ///
 /// Используется и в панели плеера на десктопе, и в полноэкранном плеере на
@@ -66,7 +84,11 @@ class _PlayerSeekBarState extends ConsumerState<PlayerSeekBar> {
         );
 
     return Padding(
-      padding: EdgeInsets.symmetric(horizontal: widget.compact ? 16 : 24),
+      // Отступ как `PlayerHorizontalPadding` в ArchiveTune (32), в панели —
+      // вдвое уже (16): там колонка узкая.
+      padding: EdgeInsets.symmetric(
+        horizontal: widget.compact ? 16 : _kPlayerHorizontalPadding,
+      ),
       child: Column(
         children: <Widget>[
           if (style == ProgressBarStyle.standard)
@@ -76,15 +98,21 @@ class _PlayerSeekBarState extends ConsumerState<PlayerSeekBar> {
               // крупнее и с обводкой фона, поэтому заметен с первого взгляда.
               // Пока тянем, над ползунком показывается время.
               data: SliderTheme.of(context).copyWith(
-                trackHeight: 12,
+                // ArchiveTune для стиля Standard не задаёт толщину — это
+                // штатный Material 3 Slider (`TrackHeight = 16`), поэтому и
+                // здесь берём 16, а не произвольные 12.
+                trackHeight: 16,
                 trackShape: const RoundedRectSliderTrackShape(),
                 activeTrackColor: scheme.primary,
+                // Неактивная часть — той же ролью акцента с альфой 0.22
+                // (`PlayerSliderColors.Config.INACTIVE_TRACK_ALPHA`), а не
+                // приглушённым `onSurfaceVariant`.
                 inactiveTrackColor:
-                    scheme.onSurfaceVariant.withValues(alpha: 0.18),
+                    scheme.primary.withValues(alpha: _kInactiveTrackAlpha),
                 disabledActiveTrackColor:
                     scheme.primary.withValues(alpha: 0.38),
                 disabledInactiveTrackColor:
-                    scheme.onSurfaceVariant.withValues(alpha: 0.12),
+                    scheme.primary.withValues(alpha: 0.12),
                 thumbColor: scheme.primary,
                 thumbShape: _SeekThumbShape(
                   playing: playing,
@@ -125,8 +153,10 @@ class _PlayerSeekBarState extends ConsumerState<PlayerSeekBar> {
             _StyledSeekBar(
               progress: value.clamp(0.0, 1.0),
               style: style,
+              // Обе части — цветом акцента; прозрачность каждой части задаёт
+              // сам painter по таблице `PlayerSliderColors.Config`.
               activeColor: scheme.primary,
-              inactiveColor: scheme.onSurfaceVariant.withValues(alpha: 0.18),
+              inactiveColor: scheme.primary,
               playing: playing,
               enabled: seekable,
               onSeek: (double fraction) =>
@@ -139,7 +169,9 @@ class _PlayerSeekBarState extends ConsumerState<PlayerSeekBar> {
               },
             ),
           Padding(
-            padding: const EdgeInsets.symmetric(horizontal: 8),
+            // Подписи времени стоят на 4 px глубже дорожки — как
+            // `PlayerTimeLabel` в ArchiveTune (`PlayerHorizontalPadding + 4`).
+            padding: const EdgeInsets.symmetric(horizontal: 4),
             child: Row(
               children: <Widget>[
                 Text(formatDurationClock(shown), style: label),
@@ -168,7 +200,10 @@ class _SeekThumbShape extends SliderComponentShape {
   /// Цвет обводки — фон поверхности под ползунком.
   final Color hueColor;
 
-  double get _radius => playing ? 9 : 7;
+  /// Радиусы из ArchiveTune: у штатного Material 3 Slider ползунок 20 dp в
+  /// диаметре (радиус 10), у «волнистого» — `thumbRadius = 8`. В паузе берём
+  /// меньший, чтобы ручка не спорила с дорожкой.
+  double get _radius => playing ? 10 : 8;
 
   @override
   Size getPreferredSize(bool isEnabled, bool isDiscrete) =>
@@ -265,80 +300,273 @@ class PlayerTransportBar extends ConsumerWidget {
         ref.read(playerControllerProvider.notifier);
     final ColorScheme scheme = Theme.of(context).colorScheme;
 
-    final double mainSize = dense ? 48 : 60;
-    final double skipSize = dense ? 32 : 40;
-    final double modeSize = dense ? 20 : 24;
-    final double gap = dense ? 6 : 14;
+    // Размеры и отступы — из ArchiveTune, стиль плеера V4
+    // (`ui/player/PlayerComponents.kt`, `PlayerPlaybackControls`):
+    // центр 88, боковые 56/46, зазор 12, иконки 44/28/22, радиусы 18/16.
+    const double baseLarge = 56;
+    const double baseSmall = 46;
+    const double baseGap = 12;
+    const double baseLargeIcon = 28;
+    const double baseSmallIcon = 22;
+    const double baseLargeRadius = 18;
+    const double baseSmallRadius = 16;
+    const double centerSize = 88;
+    const double centerPadding = 40;
 
-    return Row(
-      mainAxisAlignment: MainAxisAlignment.center,
-      children: <Widget>[
-        if (showModes)
-          IconButton(
-            tooltip: player.shuffle ? 'Перемешивание включено' : 'Перемешать',
-            isSelected: player.shuffle,
-            iconSize: modeSize,
-            icon: const Icon(Icons.shuffle),
-            selectedIcon:
-                Icon(Icons.shuffle, size: modeSize, color: scheme.primary),
-            onPressed: controller.toggleShuffle,
-          ),
-        if (showModes) SizedBox(width: gap),
-        IconButton(
-          tooltip: 'Предыдущий',
-          iconSize: skipSize,
-          icon: const Icon(Icons.skip_previous_rounded),
-          onPressed: player.queue.isEmpty ? null : controller.previous,
-        ),
-        SizedBox(width: gap),
-        SizedBox(
-          width: mainSize + 8,
-          height: mainSize + 8,
-          child: player.isLoading
-              ? const Center(
-                  child: SizedBox(
-                    width: 28,
-                    height: 28,
-                    child: CircularProgressIndicator(strokeWidth: 3),
-                  ),
-                )
-              : IconButton.filled(
-                  tooltip: player.isPlaying ? 'Пауза' : 'Играть',
-                  iconSize: mainSize * 0.62,
-                  icon: Icon(player.isPlaying
-                      ? Icons.pause_rounded
-                      : Icons.play_arrow_rounded),
-                  onPressed: controller.togglePlayPause,
+    final bool canPrevious = player.queue.isNotEmpty;
+    final bool canNext = player.queue.isNotEmpty;
+    final bool repeatOn = player.repeat != PlayerRepeatMode.off;
+
+    // Цвет «текста на фоне» и заливки кнопок — ролями схемы.
+    final Color onBackground = scheme.onSurface;
+    final Color buttonFill = scheme.primary;
+    final Color onButtonFill = scheme.onPrimary;
+
+    return LayoutBuilder(
+      builder: (BuildContext context, BoxConstraints constraints) {
+        // Масштаб как в ArchiveTune: боковые группы должны поместиться рядом
+        // с центральной кнопкой. В узкой панели плеера прижимаем сильнее.
+        final double sideTotal =
+            (constraints.maxWidth - centerSize - centerPadding) / 2;
+        final double cap = dense ? 0.8 : 1.0;
+        final double scale = ((sideTotal - baseGap) / (baseLarge + baseSmall))
+            .clamp(0.6, cap);
+
+        final double large = baseLarge * scale;
+        final double small = baseSmall * scale;
+        final double gap = baseGap * scale;
+        final double largeIcon = baseLargeIcon * scale;
+        final double smallIcon = baseSmallIcon * scale;
+        final double largeRadius = baseLargeRadius * scale;
+        final double smallRadius = baseSmallRadius * scale;
+
+        Widget modeButton({
+          required String tooltip,
+          required IconData icon,
+          required bool selected,
+          required VoidCallback onPressed,
+        }) {
+          return _TransportButton(
+            tooltip: tooltip,
+            icon: icon,
+            size: small,
+            radius: smallRadius,
+            iconSize: smallIcon,
+            // Заливка приглушённая: 0.08 в покое, 0.2 во включённом виде.
+            background: onBackground.withValues(alpha: selected ? 0.2 : 0.08),
+            foreground: onBackground.withValues(alpha: selected ? 1 : 0.6),
+            onPressed: onPressed,
+          );
+        }
+
+        Widget skipButton({
+          required String tooltip,
+          required IconData icon,
+          required bool enabled,
+          required VoidCallback onPressed,
+        }) {
+          return _TransportButton(
+            tooltip: tooltip,
+            icon: icon,
+            size: large,
+            radius: largeRadius,
+            iconSize: largeIcon,
+            background: onBackground.withValues(alpha: 0.15),
+            foreground: onBackground.withValues(alpha: enabled ? 1 : 0.4),
+            onPressed: enabled ? onPressed : null,
+          );
+        }
+
+        return Row(
+          children: <Widget>[
+            Expanded(
+              // FittedBox: когда масштаб упирается в нижнюю границу, группа
+              // кнопок перестаёт влезать и RenderFlex даёт переполнение.
+              // Здесь она просто чуть ужимается — без полосы переполнения.
+              child: FittedBox(
+                fit: BoxFit.scaleDown,
+                alignment: Alignment.centerRight,
+                child: Row(
+                  mainAxisSize: MainAxisSize.min,
+                  children: <Widget>[
+                    if (showModes) ...<Widget>[
+                      modeButton(
+                        tooltip: player.shuffle
+                            ? 'Перемешивание включено'
+                            : 'Перемешать',
+                        icon: Icons.shuffle,
+                        selected: player.shuffle,
+                        onPressed: controller.toggleShuffle,
+                      ),
+                      SizedBox(width: gap),
+                    ],
+                    skipButton(
+                      tooltip: 'Предыдущий',
+                      icon: Icons.skip_previous_rounded,
+                      enabled: canPrevious,
+                      onPressed: controller.previous,
+                    ),
+                  ],
                 ),
-        ),
-        SizedBox(width: gap),
-        IconButton(
-          tooltip: 'Следующий',
-          iconSize: skipSize,
-          icon: const Icon(Icons.skip_next_rounded),
-          onPressed: player.queue.isEmpty ? null : controller.next,
-        ),
-        if (showModes) SizedBox(width: gap),
-        if (showModes)
-          IconButton(
-            tooltip: player.repeat.label,
-            isSelected: player.repeat != PlayerRepeatMode.off,
-            iconSize: modeSize,
-            icon: Icon(
-              player.repeat == PlayerRepeatMode.one
-                  ? Icons.repeat_one
-                  : Icons.repeat,
+              ),
             ),
-            selectedIcon: Icon(
-              player.repeat == PlayerRepeatMode.one
-                  ? Icons.repeat_one
-                  : Icons.repeat,
-              size: modeSize,
-              color: scheme.primary,
+            Padding(
+              // Центральная кнопка не масштабируется и отделена отступом 20.
+              padding: const EdgeInsets.symmetric(horizontal: 20),
+              child: _TransportPlayButton(
+                playing: player.isPlaying,
+                loading: player.isLoading,
+                size: centerSize,
+                fill: buttonFill,
+                onFill: onButtonFill,
+                onPressed: controller.togglePlayPause,
+              ),
             ),
-            onPressed: controller.cycleRepeat,
+            Expanded(
+              // То же и для правой группы — см. пояснение слева.
+              child: FittedBox(
+                fit: BoxFit.scaleDown,
+                alignment: Alignment.centerLeft,
+                child: Row(
+                  mainAxisSize: MainAxisSize.min,
+                  children: <Widget>[
+                    skipButton(
+                      tooltip: 'Следующий',
+                      icon: Icons.skip_next_rounded,
+                      enabled: canNext,
+                      onPressed: controller.next,
+                    ),
+                    if (showModes) ...<Widget>[
+                      SizedBox(width: gap),
+                      modeButton(
+                        tooltip: player.repeat.label,
+                        icon: player.repeat == PlayerRepeatMode.one
+                            ? Icons.repeat_one
+                            : Icons.repeat,
+                        selected: repeatOn,
+                        onPressed: controller.cycleRepeat,
+                      ),
+                    ],
+                  ],
+                ),
+              ),
+            ),
+          ],
+        );
+      },
+    );
+  }
+}
+
+/// Квадратная кнопка транспорта — как `Surface` со скруглением в ArchiveTune.
+///
+/// Одинаково рисует и крупные «назад/вперёд», и мелкие «перемешать/повтор»:
+/// отличается только заливка и прозрачность иконки.
+class _TransportButton extends StatelessWidget {
+  const _TransportButton({
+    required this.tooltip,
+    required this.icon,
+    required this.size,
+    required this.radius,
+    required this.iconSize,
+    required this.background,
+    required this.foreground,
+    required this.onPressed,
+  });
+
+  final String tooltip;
+  final IconData icon;
+  final double size;
+  final double radius;
+  final double iconSize;
+  final Color background;
+  final Color foreground;
+  final VoidCallback? onPressed;
+
+  @override
+  Widget build(BuildContext context) {
+    final BorderRadius shape = BorderRadius.circular(radius);
+    return Tooltip(
+      message: tooltip,
+      child: SizedBox(
+        width: size,
+        height: size,
+        child: Material(
+          color: background,
+          borderRadius: shape,
+          clipBehavior: Clip.antiAlias,
+          child: InkWell(
+            borderRadius: shape,
+            onTap: onPressed,
+            child: Center(
+              child: Icon(icon, size: iconSize, color: foreground),
+            ),
           ),
-      ],
+        ),
+      ),
+    );
+  }
+}
+
+/// Центральная кнопка «играть/пауза» — 88 dp, со скруглением, которое
+/// меняется в зависимости от состояния (28 в воспроизведении, 44 в паузе) —
+/// `cinematicPlayPauseCorner` в ArchiveTune.
+class _TransportPlayButton extends StatelessWidget {
+  const _TransportPlayButton({
+    required this.playing,
+    required this.loading,
+    required this.size,
+    required this.fill,
+    required this.onFill,
+    required this.onPressed,
+  });
+
+  final bool playing;
+  final bool loading;
+  final double size;
+  final Color fill;
+  final Color onFill;
+  final VoidCallback onPressed;
+
+  @override
+  Widget build(BuildContext context) {
+    final double radius = playing ? 28 : 44;
+    final BorderRadius shape = BorderRadius.circular(radius);
+    return Tooltip(
+      message: playing ? 'Пауза' : 'Играть',
+      child: SizedBox(
+        width: size,
+        height: size,
+        child: AnimatedContainer(
+          duration: const Duration(milliseconds: 90),
+          curve: Curves.linear,
+          decoration: BoxDecoration(color: fill, borderRadius: shape),
+          child: Material(
+            type: MaterialType.transparency,
+            child: InkWell(
+              borderRadius: shape,
+              onTap: onPressed,
+              child: Center(
+                child: loading
+                    ? SizedBox(
+                        width: 40,
+                        height: 40,
+                        child: CircularProgressIndicator(
+                          strokeWidth: 3,
+                          color: onFill,
+                        ),
+                      )
+                    : Icon(
+                        playing ? Icons.pause_rounded : Icons.play_arrow_rounded,
+                        // Иконка центральной кнопки — 44 dp.
+                        size: 44,
+                        color: onFill,
+                      ),
+              ),
+            ),
+          ),
+        ),
+      ),
     );
   }
 }
@@ -412,8 +640,16 @@ class _PlayerVolumeControlState extends ConsumerState<PlayerVolumeControl> {
                   ? SizedBox(
                       width: 170,
                       child: SliderTheme(
+                        // Громкость как в ArchiveTune (`AppleMusicControls`):
+                        // дорожка 8 dp, активная часть — акцент с альфой 0.88,
+                        // неактивная — с 0.24, ползунок радиусом 6.
                         data: SliderTheme.of(context).copyWith(
-                          trackHeight: 3,
+                          trackHeight: 8,
+                          activeTrackColor:
+                              scheme.primary.withValues(alpha: 0.88),
+                          inactiveTrackColor:
+                              scheme.primary.withValues(alpha: 0.24),
+                          thumbColor: scheme.primary,
                           thumbShape: const RoundSliderThumbShape(
                               enabledThumbRadius: 6),
                           overlayShape:
@@ -577,17 +813,33 @@ class _SeekBarPainter extends CustomPainter {
   void paint(Canvas canvas, Size size) {
     final double mid = size.height / 2;
     final double p = progress.clamp(0.0, 1.0);
-    final Color active =
+    // Пока полоса недоступна (нет длительности) — приглушаем активную часть.
+    final Color activeBase =
         enabled ? activeColor : activeColor.withValues(alpha: 0.4);
+
+    // Прозрачности — из `PlayerSliderColors.Config` (ArchiveTune).
+    final Color inactive = switch (style) {
+      ProgressBarStyle.thick =>
+        inactiveColor.withValues(alpha: _kThickInactiveTrackAlpha),
+      ProgressBarStyle.simple =>
+        inactiveColor.withValues(alpha: _kSimpleInactiveTrackAlpha),
+      _ => inactiveColor.withValues(alpha: _kInactiveTrackAlpha),
+    };
 
     switch (style) {
       case ProgressBarStyle.thick:
       case ProgressBarStyle.simple:
+        // Толщина сегментов: толстый — 12 dp, простой — 3 dp
+        // (`StyledPlaybackSlider` в ArchiveTune).
         final double thickness = style == ProgressBarStyle.thick ? 12 : 3;
+        // Простой стиль ещё и активную часть делает полупрозрачной (0.85).
+        final Color active = style == ProgressBarStyle.simple
+            ? activeBase.withValues(alpha: _kSimpleActiveTrackAlpha)
+            : activeBase;
         canvas.drawLine(
           Offset(0, mid),
           Offset(size.width, mid),
-          _linePaint(inactiveColor, thickness),
+          _linePaint(inactive, thickness),
         );
         canvas.drawLine(
           Offset(0, mid),
@@ -597,10 +849,18 @@ class _SeekBarPainter extends CustomPainter {
 
       case ProgressBarStyle.wavy:
       case ProgressBarStyle.circular:
-        _paintWave(canvas, size, mid, p, inactiveColor, false);
-        _paintWave(canvas, size, mid, p, active, true);
+        // Волна толще, пока играет: 6 dp против 3 dp в паузе
+        // (`trackHeight = if (isPlaying) 6.dp else 3.dp`).
+        final double stroke = amplitude > 0 ? 6 : 3;
+        _paintWave(canvas, size, mid, p, inactive, false, stroke);
+        _paintWave(canvas, size, mid, p, activeBase, true, stroke);
         if (style == ProgressBarStyle.circular) {
-          canvas.drawCircle(Offset(size.width * p, mid), 7, Paint()..color = active);
+          // Ползунок волны — `thumbRadius = 8` (`WavySliderExpressive`).
+          canvas.drawCircle(
+            Offset(size.width * p, mid),
+            8,
+            Paint()..color = activeBase,
+          );
         }
 
       case ProgressBarStyle.standard:
@@ -621,6 +881,7 @@ class _SeekBarPainter extends CustomPainter {
     double p,
     Color color,
     bool active,
+    double strokeWidth,
   ) {
     final double start = active ? 0 : size.width * p;
     final double end = active ? size.width * p : size.width;
@@ -640,7 +901,7 @@ class _SeekBarPainter extends CustomPainter {
       path,
       Paint()
         ..color = color
-        ..strokeWidth = 6
+        ..strokeWidth = strokeWidth
         ..strokeCap = StrokeCap.round
         ..style = PaintingStyle.stroke,
     );

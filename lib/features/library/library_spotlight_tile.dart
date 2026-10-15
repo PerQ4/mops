@@ -6,10 +6,11 @@ import '../../widgets/artwork.dart';
 
 /// Плитка-подборка библиотеки.
 ///
-/// Форма из ArchiveTune: фон `surfaceContainerLow`, крупное скругление 26,
-/// обложка с малым радиусом и отступом 6. Отдельная от `BrowseItemCard`
-/// реализация: у плитки библиотеки есть подложка, которой у карточек каруселей
-/// нет.
+/// Форма из ArchiveTune: фон `surfaceContainerLow`, крупное скругление 32,
+/// отступ 12, обложка со скруглением 26. Заголовок — `labelLarge` полужирный,
+/// подпись — `bodySmall` приглушённая (PlaylistGridCard,
+/// `LibraryPlaylistsScreen.kt:823-945`; `GridItem`,
+/// `ui/component/Items.kt:312-346`).
 class LibrarySpotlightTile extends StatelessWidget {
   const LibrarySpotlightTile({
     super.key,
@@ -20,8 +21,9 @@ class LibrarySpotlightTile extends StatelessWidget {
   final BrowseItem item;
   final VoidCallback onTap;
 
-  /// Радиус плитки — 26, как у «spotlight»-карточек в спецификации.
-  static const double radius = 26;
+  /// Радиус плитки — 32, обложки — 26 (как у карточек-подборок в спецификации).
+  static const double radius = 32;
+  static const double thumbnailRadius = 26;
 
   @override
   Widget build(BuildContext context) {
@@ -55,7 +57,7 @@ class LibrarySpotlightTile extends StatelessWidget {
         child: InkWell(
           onTap: onTap,
           child: Padding(
-            padding: const EdgeInsets.all(6),
+            padding: const EdgeInsets.all(12),
             child: Column(
               crossAxisAlignment: CrossAxisAlignment.start,
               children: <Widget>[
@@ -83,9 +85,7 @@ class LibrarySpotlightTile extends StatelessWidget {
                             (AppLayout.gridThumbnailHeight * 2).round(),
                           ),
                           icon: icon,
-                          radius: BorderRadius.circular(
-                            AppLayout.gridThumbnailRadius,
-                          ),
+                          radius: BorderRadius.circular(thumbnailRadius),
                         ),
                 ),
                 const SizedBox(height: 8),
@@ -93,7 +93,7 @@ class LibrarySpotlightTile extends StatelessWidget {
                   item.title,
                   maxLines: 1,
                   overflow: TextOverflow.ellipsis,
-                  style: text.bodyLarge?.copyWith(fontWeight: FontWeight.w700),
+                  style: text.labelLarge?.copyWith(fontWeight: FontWeight.w700),
                 ),
                 if (subtitle != null && subtitle.isNotEmpty) ...<Widget>[
                   const SizedBox(height: 2),
@@ -101,8 +101,8 @@ class LibrarySpotlightTile extends StatelessWidget {
                     subtitle,
                     maxLines: 1,
                     overflow: TextOverflow.ellipsis,
-                    style: text.bodyMedium?.copyWith(
-                      color: scheme.onSurfaceVariant,
+                    style: text.bodySmall?.copyWith(
+                      color: scheme.onSurface.withValues(alpha: 0.6),
                     ),
                   ),
                 ],

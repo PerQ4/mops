@@ -34,7 +34,7 @@ class PlaylistScreen extends ConsumerWidget {
     return Scaffold(
       body: playlist.when(
         data: (Playlist data) => _PlaylistBody(playlist: data),
-        loading: () => const Center(child: CircularProgressIndicator()),
+        loading: () => const MediaDetailSkeleton(),
         error: (Object error, StackTrace _) => Scaffold(
           appBar: AppBar(),
           body: ErrorState(
@@ -84,7 +84,18 @@ class _PlaylistBody extends ConsumerWidget {
             description: playlist.description,
             imageUrl: playlist.thumbnails.sized(600),
             fallbackIcon: Icons.queue_music,
+            // Порядок действий как в ArchiveTune: перемешать, слушать, добавить.
             actions: <Widget>[
+              HeroCircleButton(
+                icon: Icons.shuffle,
+                tooltip: 'Перемешать',
+                size: 52,
+                onPressed: hasTracks
+                    ? () => ref
+                        .read(playerControllerProvider.notifier)
+                        .playQueue(playlist.tracks, shuffle: true)
+                    : null,
+              ),
               HeroPlayButton(
                 label: isCurrentPlaylist && playing ? 'Пауза' : 'Слушать',
                 icon: isCurrentPlaylist && playing
@@ -103,16 +114,6 @@ class _PlaylistBody extends ConsumerWidget {
                           controller.playQueue(playlist.tracks);
                         }
                       },
-              ),
-              HeroCircleButton(
-                icon: Icons.shuffle,
-                tooltip: 'Перемешать',
-                size: 52,
-                onPressed: hasTracks
-                    ? () => ref
-                        .read(playerControllerProvider.notifier)
-                        .playQueue(playlist.tracks, shuffle: true)
-                    : null,
               ),
               HeroCircleButton(
                 icon: Icons.playlist_add,
@@ -167,7 +168,7 @@ class _PlaylistBody extends ConsumerWidget {
       final String total = formatTotalDuration(playlist.duration!);
       if (total.isNotEmpty) parts.add(total);
     }
-    return parts.isEmpty ? null : parts.join(' • ');
+    return parts.isEmpty ? null : parts.join(mediaDetailMetadataSeparator);
   }
 
   /// Кладёт весь плейлист в конец очереди.

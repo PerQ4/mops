@@ -43,11 +43,17 @@ class SectionCarousel extends StatelessWidget {
                     section.title,
                     maxLines: 1,
                     overflow: TextOverflow.ellipsis,
-                    style: text.titleLarge?.copyWith(fontWeight: FontWeight.w700),
+                    style: text.titleLarge?.copyWith(fontWeight: FontWeight.w600),
                   ),
                 ),
                 if (onShowAll != null)
-                  TextButton(onPressed: onShowAll, child: const Text('Все')),
+                  OutlinedButton(
+                    onPressed: onShowAll,
+                    style: OutlinedButton.styleFrom(
+                      minimumSize: const Size(88, 40),
+                    ),
+                    child: const Text('Слушать все'),
+                  ),
               ],
             ),
           ),
@@ -56,10 +62,12 @@ class SectionCarousel extends StatelessWidget {
             height: _carouselHeight(context, cardWidth),
             child: ListView.separated(
               scrollDirection: Axis.horizontal,
-              padding: padding,
+              // Карточка в оригинале (`GridItem`) имеет внешний отступ 12,
+              // поэтому между карточками 24, а край — на 12.
+              padding: padding.copyWith(left: 12, right: 12),
               itemCount: section.items.length,
               separatorBuilder: (BuildContext context, int _) =>
-                  const SizedBox(width: 8),
+                  const SizedBox(width: 24),
               itemBuilder: (BuildContext context, int index) {
                 final BrowseItem item = section.items[index];
                 return BrowseItemCard(

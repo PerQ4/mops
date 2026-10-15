@@ -7,7 +7,10 @@ import '../../core/theme/ui_scaler.dart';
 import '../../data/local/app_settings.dart';
 import '../../state/auth_controller.dart';
 import '../../core/theme/layout.dart';
+import '../../core/audio/audio_engine.dart';
+import '../../state/player_controller.dart';
 import '../../state/providers.dart';
+import '../player/player_controls.dart';
 import '../../state/ui_scale.dart';
 import '../common/navigation.dart';
 
@@ -144,6 +147,8 @@ class SettingsScreen extends ConsumerWidget {
             trailing: const Icon(Icons.chevron_right),
             onTap: () => _pickProgressBarStyle(context, controller, settings),
           ),
+          // Превью выбранного стиля: видно результат, не открывая плеер.
+          _seekBarPreview(settings),
 
           const Divider(height: 24),
 
@@ -340,6 +345,25 @@ class SettingsScreen extends ConsumerWidget {
       label: (LyricsSource v) => v.label,
     );
     if (result != null) await controller.setLyricsSource(result);
+  }
+
+  /// Превью выбранного стиля полосы: видно, как он выглядит, не открывая плеер.
+  Widget _seekBarPreview(AppSettings settings) {
+    return IgnorePointer(
+      child: Padding(
+        // Своих боковых полей не добавляем: полоса сама отступает на 32
+        // (PlayerHorizontalPadding), иначе превью «уезжало» вглубь от плиток.
+        padding: const EdgeInsets.only(bottom: 12),
+        child: PlayerSeekBar(
+          player: const PlayerUiState(
+            playback: PlaybackState(
+              position: Duration(minutes: 1, seconds: 12),
+              duration: Duration(minutes: 3, seconds: 24),
+            ),
+          ),
+        ),
+      ),
+    );
   }
 
   Future<void> _pickProgressBarStyle(

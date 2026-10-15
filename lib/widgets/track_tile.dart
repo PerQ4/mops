@@ -78,23 +78,28 @@ class TrackTile extends StatelessWidget {
 
     final Widget tile = SizedBox(
       height: AppLayout.trackRowHeight,
-      // Внешний отступ строки — 8 по спецификации; внутренний добираем до
-      // прежних 20, чтобы обложка не съезжала относительно заголовков секций.
+      // Внешний отступ строки — 8, как `padding(horizontal = 8.dp)` у `ListItem`
+      // в Items.kt. Обложка лежит в `Box(padding(8))`, текст — в колонке с
+      // `padding(horizontal = 6)`: вместе это даёт прежний зазор 14 между
+      // обложкой и подписью.
       child: Padding(
         padding: const EdgeInsets.symmetric(horizontal: 8),
         child: Material(
-          // Активная строка подсвечивается `secondaryContainer`, радиус 12.
+          // Активная строка подсвечивается `secondaryContainer`, радиус 12 —
+          // как `RoundedCornerShape(12.dp)` у `ListItem`.
           color: isCurrent ? scheme.secondaryContainer : Colors.transparent,
           borderRadius: BorderRadius.circular(AppLayout.radiusS),
           clipBehavior: Clip.antiAlias,
           child: InkWell(
             onTap: onTap,
             onLongPress: openMenu,
-            child: Padding(
-              padding: const EdgeInsets.symmetric(horizontal: 12),
-              child: Row(
-                children: <Widget>[
-                  SizedBox(
+            child: Row(
+              children: <Widget>[
+                // Внутренний отступ обложки 8 — это `Box(padding(8.dp))`,
+                // в который `ListItem` заворачивает `thumbnailContent`.
+                Padding(
+                  padding: const EdgeInsets.all(8),
+                  child: SizedBox(
                     width: artworkSize,
                     height: artworkSize,
                     child: leadingNumber != null
@@ -119,8 +124,11 @@ class TrackTile extends StatelessWidget {
                             isDimmed: isDimmed,
                           ),
                   ),
-                  const SizedBox(width: 14),
-                  Expanded(
+                ),
+                Expanded(
+                  // Отступ подписи по горизонтали 6 — как у `Column` в `ListItem`.
+                  child: Padding(
+                    padding: const EdgeInsets.symmetric(horizontal: 6),
                     child: Column(
                       mainAxisAlignment: MainAxisAlignment.center,
                       crossAxisAlignment: CrossAxisAlignment.start,
@@ -137,47 +145,42 @@ class TrackTile extends StatelessWidget {
                           ),
                         ),
                         const SizedBox(height: 2),
-                        _TrackSubtitle(
-                          track: track,
-                          subtitleOverride: subtitleOverride,
-                          style: text.bodySmall?.copyWith(
-                            color: subtitleColor.withValues(
-                              alpha: isDimmed
-                                  ? subtitleColor.a * 0.6
-                                  : subtitleColor.a,
+                        // Бейджи и подпись — в одной строке: в `ListItem`
+                        // бейджи идут перед текстом подписи с зазором 4.
+                        Row(
+                          children: <Widget>[
+                            _LyricsMark(videoId: track.id),
+                            Flexible(
+                              child: _TrackSubtitle(
+                                track: track,
+                                subtitleOverride: subtitleOverride,
+                                showDuration: showDuration,
+                                style: text.bodySmall?.copyWith(
+                                  color: subtitleColor.withValues(
+                                    alpha: isDimmed
+                                        ? subtitleColor.a * 0.6
+                                        : subtitleColor.a,
+                                  ),
+                                ),
+                              ),
                             ),
-                          ),
+                          ],
                         ),
                       ],
                     ),
                   ),
-                  if (trailing != null)
-                    trailing!
-                  else ...<Widget>[
-                    _LyricsMark(videoId: track.id),
-                    if (showDuration && track.duration > Duration.zero)
-                      Padding(
-                        padding: const EdgeInsets.only(left: 8),
-                        child: Text(
-                          formatDuration(track.duration),
-                          style: text.labelMedium?.copyWith(
-                            color: scheme.onSurfaceVariant,
-                            fontFeatures: const <FontFeature>[
-                              FontFeature.tabularFigures(),
-                            ],
-                          ),
-                        ),
-                      ),
-                    IconButton(
-                      tooltip: 'Действия',
-                      iconSize: 20,
-                      color: scheme.onSurfaceVariant,
-                      icon: const Icon(Icons.more_vert),
-                      onPressed: openMenu,
-                    ),
-                  ],
-                ],
-              ),
+                ),
+                if (trailing != null)
+                  trailing!
+                else
+                  IconButton(
+                    tooltip: 'Действия',
+                    iconSize: 20,
+                    color: scheme.onSurfaceVariant,
+                    icon: const Icon(Icons.more_vert),
+                    onPressed: openMenu,
+                  ),
+              ],
             ),
           ),
         ),
@@ -192,6 +195,15 @@ class TrackTile extends StatelessWidget {
 
 }
 
+/// Дописывает длительность к готовой подписи через « • ».
+///
+/// Пустая/нулевая длительность ничего не добавляет — «0:00» в строке было бы
+/// мусором, когда YouTube её не отдал.
+String _withDuration(String base, Duration duration, bool show) {
+  if (!show || duration <= Duration.zero) return base;
+  return '$base • ${formatDuration(duration)}';
+}
+
 /// Подпись строки: имена исполнителей кликабельны и ведут на их страницы,
 /// альбом — просто текст. Собирается как `Text.rich`, поэтому длинные
 /// подписи по-прежнему обрезаются многоточием, а не переносятся.
@@ -200,11 +212,16 @@ class _TrackSubtitle extends StatefulWidget {
     required this.track,
     required this.style,
     this.subtitleOverride,
+    this.showDuration = true,
   });
 
   final Track track;
   final TextStyle? style;
   final String? subtitleOverride;
+
+  /// Длительность идёт частью подписи (через « • »), а не отдельным хвостом —
+  /// так устроена подпись в `SongListItem`/`MediaMetadataListItem`.
+  final bool showDuration;
 
   @override
   State<_TrackSubtitle> createState() => _TrackSubtitleState();
@@ -230,8 +247,12 @@ class _TrackSubtitleState extends State<_TrackSubtitle> {
   Widget build(BuildContext context) {
     final String? override = widget.subtitleOverride;
     if (override != null) {
+      // Подпись задана снаружи (список альбома/исполнителя) — длительность
+      // всё равно дописываем через « • », как это делает `joinByBullet`.
+      final String text =
+          _withDuration(override, widget.track.duration, widget.showDuration);
       return Text(
-        override,
+        text,
         maxLines: 1,
         overflow: TextOverflow.ellipsis,
         style: widget.style,
@@ -259,6 +280,12 @@ class _TrackSubtitleState extends State<_TrackSubtitle> {
           spans.add(TextSpan(text: name));
         }
       }
+    }
+
+    // Длительность — сразу после исполнителей, затем название альбома. Порядок
+    // повторяет `joinByBullet(artists, duration, …)` из `SongListItem`.
+    if (widget.showDuration && widget.track.duration > Duration.zero) {
+      spans.add(TextSpan(text: ' • ${formatDuration(widget.track.duration)}'));
     }
 
     final String? album = widget.track.album?.name;
@@ -289,11 +316,13 @@ class _LyricsMark extends ConsumerWidget {
       ),
     );
     if (!has) return const SizedBox.shrink();
+    // Бейдж-«значок текста». Размер и отступ как у остальных бейджей
+    // `ListItem` (18 с отступом 2 справа), чтобы строка не «плясала».
     return Padding(
-      padding: const EdgeInsets.only(left: 8),
+      padding: const EdgeInsets.only(right: 2),
       child: Icon(
         Icons.lyrics_outlined,
-        size: 16,
+        size: 18,
         color: Theme.of(context).colorScheme.onSurfaceVariant,
       ),
     );
@@ -318,7 +347,6 @@ class _Leading extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
-    final ColorScheme scheme = Theme.of(context).colorScheme;
     // Обложку просим под плотность экрана: ссылка переписывается на нужный
     // размер, поэтому картинка не растягивается из мелкого превью.
     final int physical =
@@ -338,18 +366,21 @@ class _Leading extends StatelessWidget {
             radius: BorderRadius.circular(AppLayout.thumbnailRadius),
           ),
           if (isCurrent)
+            // Затемнение и белый значок поверх него — как `PlayingIndicatorBox`
+            // в `ItemThumbnail` (Items.kt): `Color.Black` с альфой 0.6
+            // (`ActiveBoxAlpha`) и `Color.White` независимо от темы.
             Container(
               width: size,
               height: size,
               decoration: BoxDecoration(
-                color: scheme.scrim.withValues(alpha: 0.45),
+                color: Colors.black.withValues(alpha: 0.6),
                 borderRadius: BorderRadius.circular(
                   AppLayout.thumbnailRadius,
                 ),
               ),
               child: Icon(
                 isPlaying ? Icons.pause_rounded : Icons.play_arrow_rounded,
-                color: scheme.onPrimary,
+                color: Colors.white,
                 size: 26,
               ),
             ),
@@ -381,9 +412,10 @@ class _SwipeToSongBoxState extends ConsumerState<SwipeToSongBox> {
   /// Порог срабатывания по расстоянию. ArchiveTune: 300.
   static const double _threshold = 300;
 
-  /// Предел хода строки. Чуть больше порога — иначе порог был бы недостижим
-  /// медленным свайпом.
-  static const double _maxReveal = 340;
+  /// Предел хода строки. `SwipeToSongBox` держит смещение в `±threshold`,
+  /// поэтому и здесь не даём уехать дальше — иначе строка «висела» бы
+  /// подсвеченной после возврата.
+  static const double _maxReveal = _threshold;
 
   /// Быстрый «щелчок» срабатывает раньше, чем набрано расстояние.
   static const double _flickVelocity = 700;
@@ -506,10 +538,11 @@ class _SwipeBand extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
-    final Color background =
-        toEnd ? scheme.primaryContainer : scheme.secondaryContainer;
-    final Color foreground =
-        toEnd ? scheme.onPrimaryContainer : scheme.onSecondaryContainer;
+    // Цвета сторон — из `SwipeToSongBox` (Items.kt): вправо («играть
+    // следующим») полоса `secondary`, влево («в очередь») — `primary`.
+    // Подписи в оригинале нет, только значок с альфой 0.9.
+    final Color background = toEnd ? scheme.secondary : scheme.primary;
+    final Color foreground = toEnd ? scheme.onSecondary : scheme.onPrimary;
 
     return DecoratedBox(
       decoration: BoxDecoration(
@@ -517,26 +550,13 @@ class _SwipeBand extends StatelessWidget {
         borderRadius: BorderRadius.circular(AppLayout.radiusS),
       ),
       child: Padding(
-        padding: const EdgeInsets.symmetric(horizontal: 20),
+        padding: const EdgeInsets.symmetric(horizontal: 24),
         child: Align(
           alignment: toEnd ? Alignment.centerLeft : Alignment.centerRight,
-          child: Row(
-            mainAxisSize: MainAxisSize.min,
-            children: <Widget>[
-              Icon(
-                toEnd ? Icons.queue_play_next : Icons.playlist_add,
-                size: 24,
-                color: foreground,
-              ),
-              const SizedBox(width: 10),
-              Text(
-                toEnd ? 'Играть следующим' : 'В очередь',
-                style: Theme.of(context).textTheme.labelLarge?.copyWith(
-                      color: foreground,
-                      fontWeight: FontWeight.w700,
-                    ),
-              ),
-            ],
+          child: Icon(
+            toEnd ? Icons.queue_play_next : Icons.playlist_add,
+            size: 30,
+            color: foreground.withValues(alpha: 0.9),
           ),
         ),
       ),

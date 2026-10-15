@@ -35,9 +35,11 @@ class EmptyState extends StatelessWidget {
             children: <Widget>[
               Icon(icon, size: 48, color: scheme.primary),
               const SizedBox(height: 16),
+              // Заголовок заглушки — как сообщение у `HomeStatePane`
+              // (ArchiveTune): `titleLarge`, цвет `onSurface`, по центру.
               Text(
                 title,
-                style: text.titleMedium,
+                style: text.titleLarge,
                 textAlign: TextAlign.center,
               ),
               if (subtitle != null) ...<Widget>[
@@ -108,11 +110,11 @@ class ErrorState extends StatelessWidget {
                 ),
               ),
               if (onRetry != null) ...<Widget>[
-                const SizedBox(height: AppLayout.gutter),
-                FilledButton.tonalIcon(
+                const SizedBox(height: 20),
+                // Кнопка повтора — `FilledTonalButton` из `HomeStatePane`.
+                FilledButton.tonal(
                   onPressed: onRetry,
-                  icon: const Icon(Icons.refresh),
-                  label: const Text('Повторить'),
+                  child: const Text('Повторить'),
                 ),
               ],
             ],

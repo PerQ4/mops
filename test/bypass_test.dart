@@ -14,11 +14,19 @@ void main() {
         'music.youtube.com',
         'www.youtube.com',
         'i.ytimg.com',
-        'yt3.ggpht.com',
         'lh3.googleusercontent.com',
       ]) {
         expect(on.shouldFront(host), isTrue, reason: 'не подменяется: $host');
       }
+    });
+
+    test('аватары НЕ подменяются', () {
+      // На yt3.ggpht.com лежат аватары аккаунта, а фронт-узел картинку
+      // не отдаёт — из-за этого аватар не появлялся. Хост открывается
+      // напрямую, поэтому подмена ему только вредила.
+      final FrontingConfig on = const FrontingConfig().copyWith(enabled: true);
+      expect(on.shouldFront('yt3.ggpht.com'), isFalse);
+      expect(on.shouldFront('ggpht.com'), isFalse);
     });
 
     test('медиахосты НЕ подменяются', () {

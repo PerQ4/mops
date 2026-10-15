@@ -24,7 +24,7 @@ class AlbumScreen extends ConsumerWidget {
     return Scaffold(
       body: album.when(
         data: (Album data) => _AlbumBody(album: data),
-        loading: () => const Center(child: CircularProgressIndicator()),
+        loading: () => const MediaDetailSkeleton(),
         error: (Object error, StackTrace _) => Scaffold(
           appBar: AppBar(),
           body: ErrorState(
@@ -68,7 +68,19 @@ class _AlbumBody extends ConsumerWidget {
             description: album.description,
             imageUrl: album.thumbnails.sized(600),
             fallbackIcon: Icons.album_outlined,
+            // Порядок действий как в ArchiveTune: перемешать, слушать, добавить
+            // (MediaDetailHero.kt:341-409).
             actions: <Widget>[
+              HeroCircleButton(
+                icon: Icons.shuffle,
+                tooltip: 'Перемешать',
+                size: 52,
+                onPressed: hasTracks
+                    ? () => ref
+                        .read(playerControllerProvider.notifier)
+                        .playQueue(album.tracks, shuffle: true)
+                    : null,
+              ),
               HeroPlayButton(
                 label: isCurrentAlbum && playing ? 'Пауза' : 'Слушать',
                 icon: isCurrentAlbum && playing
@@ -89,16 +101,6 @@ class _AlbumBody extends ConsumerWidget {
                       },
               ),
               HeroCircleButton(
-                icon: Icons.shuffle,
-                tooltip: 'Перемешать',
-                size: 52,
-                onPressed: hasTracks
-                    ? () => ref
-                        .read(playerControllerProvider.notifier)
-                        .playQueue(album.tracks, shuffle: true)
-                    : null,
-              ),
-              HeroCircleButton(
                 icon: Icons.playlist_add,
                 tooltip: 'В очередь',
                 size: 52,
@@ -116,7 +118,10 @@ class _AlbumBody extends ConsumerWidget {
               subtitle: 'YouTube Music не вернул список треков для этого альбома.',
             ),
           )
-        else
+        else ...<Widget>[
+          // Заголовок списка треков — `NavigationTitle` из ArchiveTune
+          // (AlbumScreen.kt:403-407, NavigationTitle.kt:43-76).
+          const SliverToBoxAdapter(child: _SectionTitle('Треки')),
           SliverList.builder(
             itemCount: album.tracks.length,
             itemBuilder: (BuildContext context, int index) {
@@ -135,6 +140,7 @@ class _AlbumBody extends ConsumerWidget {
               );
             },
           ),
+        ],
         const SliverToBoxAdapter(
           // Отступ снизу: последние строки не уходят под плавающий островок.
           child: SizedBox(height: AppLayout.floatingDockClearance),
@@ -153,7 +159,7 @@ class _AlbumBody extends ConsumerWidget {
       final String total = formatTotalDuration(album.duration!);
       if (total.isNotEmpty) parts.add(total);
     }
-    return parts.isEmpty ? null : parts.join(' • ');
+    return parts.isEmpty ? null : parts.join(mediaDetailMetadataSeparator);
   }
 
   /// Кладёт весь альбом в конец очереди.
@@ -166,5 +172,29 @@ class _AlbumBody extends ConsumerWidget {
     for (final Track track in album.tracks) {
       controller.enqueue(track);
     }
+  }
+}
+
+/// Заголовок секции в стиле `NavigationTitle` из ArchiveTune: отступы 12/12,
+/// `titleLarge` полужирный цветом `primary` (NavigationTitle.kt:43-76).
+class _SectionTitle extends StatelessWidget {
+  const _SectionTitle(this.title);
+
+  final String title;
+
+  @override
+  Widget build(BuildContext context) {
+    return Padding(
+      padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 12),
+      child: Text(
+        title,
+        maxLines: 1,
+        overflow: TextOverflow.ellipsis,
+        style: Theme.of(context).textTheme.titleLarge?.copyWith(
+              fontWeight: FontWeight.w700,
+              color: Theme.of(context).colorScheme.primary,
+            ),
+      ),
+    );
   }
 }

@@ -106,7 +106,11 @@ enum LibraryFilter {
   final IconData icon;
 }
 
-/// Ряд капсул-фильтров. Высота капсулы — 48, как в спецификации.
+/// Ряд капсул-фильтров.
+///
+/// В ArchiveTune это `LazyRow` с отступом 24 по краям, шагом 12 между чипами и
+/// вертикальным отступом 8 (LibraryScreen.kt:332-341). Высота чипа — 40
+/// (иконка 20 + отступ 10×2), поэтому ряд занимает 56.
 class _FilterChips extends StatelessWidget {
   const _FilterChips({required this.selected, required this.onSelected});
 
@@ -116,14 +120,13 @@ class _FilterChips extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     return SizedBox(
-      // 48 (капсула) + 8×2 (отступы) = 64.
-      height: 64,
+      height: 56,
       child: ListView.separated(
         scrollDirection: Axis.horizontal,
-        padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 8),
+        padding: const EdgeInsets.symmetric(horizontal: 24, vertical: 8),
         itemCount: LibraryFilter.values.length,
         separatorBuilder: (BuildContext context, int _) =>
-            const SizedBox(width: 8),
+            const SizedBox(width: 12),
         itemBuilder: (BuildContext context, int index) {
           final LibraryFilter filter = LibraryFilter.values[index];
           return _FilterCapsule(
@@ -137,7 +140,12 @@ class _FilterChips extends StatelessWidget {
   }
 }
 
-class _FilterCapsule extends StatelessWidget {
+/// Капсула-фильтр в стиле `ExpressiveTabChip` (LibraryScreen.kt:540-617):
+/// выбранная — заливка `primary` с текстом `onPrimary`, невыбранная —
+/// `surfaceContainerHighest` α0.5 (роль `surfaceVariant` устарела во Flutter)
+/// с текстом `onSurfaceVariant`. Выбранная слегка увеличена (1.05), при нажатии
+/// сжимается (0.92).
+class _FilterCapsule extends StatefulWidget {
   const _FilterCapsule({
     required this.filter,
     required this.selected,
@@ -149,36 +157,51 @@ class _FilterCapsule extends StatelessWidget {
   final VoidCallback onTap;
 
   @override
+  State<_FilterCapsule> createState() => _FilterCapsuleState();
+}
+
+class _FilterCapsuleState extends State<_FilterCapsule> {
+  bool _pressed = false;
+
+  @override
   Widget build(BuildContext context) {
     final ColorScheme scheme = Theme.of(context).colorScheme;
+    final Color background = widget.selected
+        ? scheme.primary
+        : scheme.surfaceContainerHighest.withValues(alpha: 0.5);
     final Color foreground =
-        selected ? scheme.onSecondaryContainer : scheme.onSurfaceVariant;
+        widget.selected ? scheme.onPrimary : scheme.onSurfaceVariant;
+    final double scale = _pressed ? 0.92 : (widget.selected ? 1.05 : 1.0);
 
-    return Material(
-      color: selected
-          ? scheme.secondaryContainer.withValues(alpha: 0.94)
-          : scheme.surfaceContainerHigh.withValues(alpha: 0.78),
-      shape: const StadiumBorder(),
-      clipBehavior: Clip.antiAlias,
-      child: InkWell(
-        onTap: onTap,
-        child: Container(
-          height: 48,
-          padding: const EdgeInsets.symmetric(horizontal: 18),
-          alignment: Alignment.center,
-          child: Row(
-            mainAxisSize: MainAxisSize.min,
-            children: <Widget>[
-              Icon(selected ? Icons.check : filter.icon, size: 18, color: foreground),
-              const SizedBox(width: 8),
-              Text(
-                filter.label,
-                style: Theme.of(context).textTheme.labelLarge?.copyWith(
-                      fontWeight: FontWeight.w600,
-                      color: foreground,
-                    ),
-              ),
-            ],
+    return AnimatedScale(
+      scale: scale,
+      duration: const Duration(milliseconds: 180),
+      curve: Curves.easeOut,
+      child: Material(
+        color: background,
+        shape: const StadiumBorder(),
+        clipBehavior: Clip.antiAlias,
+        child: InkWell(
+          onTap: widget.onTap,
+          onHighlightChanged: (bool value) => setState(() => _pressed = value),
+          child: Padding(
+            // Отступы капсулы: 18 по горизонтали, 10 по вертикали.
+            padding: const EdgeInsets.symmetric(horizontal: 18, vertical: 10),
+            child: Row(
+              mainAxisSize: MainAxisSize.min,
+              children: <Widget>[
+                Icon(widget.filter.icon, size: 20, color: foreground),
+                const SizedBox(width: 8),
+                Text(
+                  widget.filter.label,
+                  style: Theme.of(context).textTheme.labelLarge?.copyWith(
+                        fontWeight: FontWeight.w600,
+                        fontSize: 15,
+                        color: foreground,
+                      ),
+                ),
+              ],
+            ),
           ),
         ),
       ),
@@ -503,12 +526,8 @@ class _TileGrid extends StatelessWidget {
     return CustomScrollView(
       slivers: <Widget>[
         SliverPadding(
-          padding: const EdgeInsets.fromLTRB(
-            AppLayout.gutter,
-            16,
-            AppLayout.gutter,
-            0,
-          ),
+          // Отступ сетки — 24 по краям, как в ArchiveTune (LibraryPlaylistsScreen.kt:463-465).
+          padding: const EdgeInsets.fromLTRB(24, 16, 24, 0),
           sliver: SliverGrid(
             gridDelegate: _libraryGridDelegate,
             delegate: SliverChildBuilderDelegate(
@@ -536,8 +555,8 @@ const SliverGridDelegateWithMaxCrossAxisExtent _libraryGridDelegate =
     SliverGridDelegateWithMaxCrossAxisExtent(
   maxCrossAxisExtent: 200,
   mainAxisExtent: 200,
-  crossAxisSpacing: 12,
-  mainAxisSpacing: 12,
+  crossAxisSpacing: 16,
+  mainAxisSpacing: 16,
 );
 
 /// Секция сводного раздела: заголовок и сетка плиток.
@@ -550,7 +569,7 @@ List<Widget> _gridSection(
   return <Widget>[
     SliverToBoxAdapter(child: _GridHeader(title)),
     SliverPadding(
-      padding: const EdgeInsets.symmetric(horizontal: AppLayout.gutter),
+      padding: const EdgeInsets.symmetric(horizontal: 24),
       sliver: SliverGrid(
         gridDelegate: _libraryGridDelegate,
         delegate: SliverChildBuilderDelegate(
@@ -573,19 +592,19 @@ class _GridHeader extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
+    // Заголовок секции сводной библиотеки — как в `LibraryMixScreen`
+    // (LibraryMixScreen.kt:325-330): `titleMedium` полужирный, цвет
+    // поверхности, отступы 24/8.
     return Padding(
-      padding: const EdgeInsets.fromLTRB(
-        AppLayout.gutter,
-        20,
-        AppLayout.gutter,
-        12,
-      ),
+      padding: const EdgeInsets.symmetric(horizontal: 24, vertical: 8),
       child: Text(
         title,
-        style: Theme.of(context)
-            .textTheme
-            .titleLarge
-            ?.copyWith(fontWeight: FontWeight.w600),
+        maxLines: 1,
+        overflow: TextOverflow.ellipsis,
+        style: Theme.of(context).textTheme.titleMedium?.copyWith(
+              fontWeight: FontWeight.w700,
+              color: Theme.of(context).colorScheme.onSurface,
+            ),
       ),
     );
   }
@@ -616,24 +635,41 @@ class _PlayAllHeader extends ConsumerWidget {
 
   @override
   Widget build(BuildContext context, WidgetRef ref) {
-    final TextTheme text = Theme.of(context).textTheme;
+    final ColorScheme scheme = Theme.of(context).colorScheme;
 
     return Padding(
-      padding: const EdgeInsets.fromLTRB(16, 8, 16, 12),
+      padding: const EdgeInsets.symmetric(horizontal: 24, vertical: 8),
       child: Row(
         children: <Widget>[
           Expanded(
             child: Text(
               title,
-              style: text.headlineSmall?.copyWith(fontWeight: FontWeight.w700),
+              maxLines: 1,
+              overflow: TextOverflow.ellipsis,
+              style: Theme.of(context).textTheme.titleMedium?.copyWith(
+                    fontWeight: FontWeight.w700,
+                    color: scheme.onSurface,
+                  ),
             ),
           ),
-          FilledButton.tonalIcon(
+          // Кнопка «слушать всё» — как в ArchiveTune: заливка `primary`,
+          // иконка 16, подпись `labelMedium` полужирная (LibrarySongsScreen.kt:382-411).
+          FilledButton.icon(
+            style: FilledButton.styleFrom(
+              shape: const StadiumBorder(),
+              padding: const EdgeInsets.symmetric(horizontal: 20, vertical: 10),
+            ),
             onPressed: () => ref
                 .read(playerControllerProvider.notifier)
                 .playQueue(tracks, shuffle: true),
-            icon: const Icon(Icons.shuffle),
-            label: const Text('Слушать'),
+            icon: const Icon(Icons.shuffle, size: 16),
+            label: const Text(
+              'Слушать',
+              style: TextStyle(
+                fontWeight: FontWeight.w700,
+                fontSize: 12,
+              ),
+            ),
           ),
         ],
       ),

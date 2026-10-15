@@ -78,8 +78,12 @@ class _NowPlayingScreenState extends ConsumerState<NowPlayingScreen> {
                                       children: <Widget>[
                                         // Свободное место над полосой трека
                                         // занимает очередь: на широком экране
-                                        // она иначе оставалась пустой.
-                                        const Expanded(child: QueueList()),
+                                        // она иначе оставалась пустой. Шапку
+                                        // очереди скрываем — название и действия
+                                        // уже есть в блоке управления ниже.
+                                        const Expanded(
+                                          child: QueueList(showHeader: false),
+                                        ),
                                         _Controls(
                                           track: track,
                                           player: player,
@@ -140,21 +144,26 @@ class _Controls extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
+    // Отступы между блоками — как в `PlayerControlsContent` (ArchiveTune):
+    // 12 после названия, 12 после полосы перемотки, 30 в самом низу.
+    // Боковой отступ — `PlayerHorizontalPadding` (32).
+    const EdgeInsets side = EdgeInsets.symmetric(horizontal: 32);
     return Column(
       mainAxisSize: MainAxisSize.min,
       children: <Widget>[
         _InfoRow(track: track, player: player),
-        const SizedBox(height: 2),
+        const SizedBox(height: 12),
         PlayerSeekBar(player: player),
+        const SizedBox(height: 12),
         Padding(
-          padding: const EdgeInsets.symmetric(horizontal: 8),
+          padding: side,
           child: PlayerTransportBar(player: player),
         ),
         const Padding(
-          padding: EdgeInsets.symmetric(horizontal: 8),
+          padding: side,
           child: PlayerVolumeControl(),
         ),
-        const SizedBox(height: 6),
+        const SizedBox(height: 30),
       ],
     );
   }
@@ -190,22 +199,25 @@ class _ArtworkBackdrop extends StatelessWidget {
               radius: BorderRadius.zero,
             ),
           ),
+        // Градиент поверх размытой обложки — как `PlayerBackground` в
+        // ArchiveTune (стиль GRADIENT): три точки на 0.0 / 0.5 / 1.0 с
+        // альфами 0.92 / 0.75 / 0.65, плюс мягкая чёрная подложка 0.18.
+        // Цвета берём ролями схемы: извлечения палитры обложки у нас нет.
         DecoratedBox(
           decoration: BoxDecoration(
             gradient: LinearGradient(
               begin: Alignment.topCenter,
               end: Alignment.bottomCenter,
-              // Затемнение сильнее прежнего: фон не должен спорить
-              // с обложкой и управлением на переднем плане.
               colors: <Color>[
-                scheme.surface.withValues(alpha: 0.72),
                 scheme.surface.withValues(alpha: 0.92),
-                scheme.surface,
+                scheme.surface.withValues(alpha: 0.75),
+                scheme.surface.withValues(alpha: 0.65),
               ],
-              stops: const <double>[0.2, 0.6, 0.92],
+              stops: const <double>[0.0, 0.5, 1.0],
             ),
           ),
         ),
+        ColoredBox(color: Colors.black.withValues(alpha: 0.18)),
       ],
     );
   }
@@ -222,7 +234,9 @@ class _ArtworkStage extends StatelessWidget {
     final List<String> variants = track.artworkFallbacks(kArtworkLarge);
 
     return Padding(
-      padding: const EdgeInsets.all(AppLayout.gutter),
+      // Отступы обложки — `PlayerHorizontalPadding` по бокам (32) и 16 сверху
+      // и снизу, как `Thumbnail` в ArchiveTune.
+      padding: const EdgeInsets.symmetric(horizontal: 32, vertical: 16),
       child: Center(
         child: LayoutBuilder(
           builder: (BuildContext context, BoxConstraints constraints) {
@@ -239,7 +253,8 @@ class _ArtworkStage extends StatelessWidget {
                 fallbacks: variants.length > 1
                     ? variants.sublist(1)
                     : const <String>[],
-                radius: BorderRadius.circular(AppLayout.radiusXL),
+                // Радиус обложки плеера в ArchiveTune — 16.
+                radius: BorderRadius.circular(16),
               ),
             );
           },
@@ -320,7 +335,9 @@ class _InfoRow extends ConsumerWidget {
         ref.read(playerControllerProvider.notifier);
 
     return Padding(
-      padding: const EdgeInsets.fromLTRB(AppLayout.gutter, 6, 8, 0),
+      // Название и действия — с боковым отступом 32, как
+      // `PlayerHorizontalPadding` в `PlayerControlsContent`.
+      padding: const EdgeInsets.fromLTRB(32, 6, 8, 0),
       child: Row(
         crossAxisAlignment: CrossAxisAlignment.start,
         children: <Widget>[
@@ -332,12 +349,12 @@ class _InfoRow extends ConsumerWidget {
                   track.title,
                   maxLines: 1,
                   overflow: TextOverflow.ellipsis,
-                  style: text.headlineSmall?.copyWith(
-                    fontWeight: FontWeight.w700,
-                    letterSpacing: -0.5,
+                  // `PlayerTitleSection`: titleLarge, жирный.
+                  style: text.titleLarge?.copyWith(
+                    fontWeight: FontWeight.bold,
                   ),
                 ),
-                const SizedBox(height: 2),
+                const SizedBox(height: 6),
                 Row(
                   children: <Widget>[
                     Flexible(
@@ -345,7 +362,8 @@ class _InfoRow extends ConsumerWidget {
                         player.error ?? track.artistLine,
                         maxLines: 1,
                         overflow: TextOverflow.ellipsis,
-                        style: text.bodyMedium?.copyWith(
+                        // `PlayerTitleSection`: titleMedium (16 sp).
+                        style: text.titleMedium?.copyWith(
                           color: player.error != null
                               ? scheme.error
                               : scheme.onSurfaceVariant,
@@ -359,52 +377,41 @@ class _InfoRow extends ConsumerWidget {
               ],
             ),
           ),
-          const SizedBox(width: 8),
-          // Перемешивание и повтор переехали сюда из строки транспорта:
-          // там остались только «назад / играть / вперёд».
-          IconButton(
+          const SizedBox(width: 12),
+          // Действия — как в стиле V4: квадраты 44 с радиусом 14, фон с
+          // альфой 0.12, иконка 22, зазор 10. Перемешивание и повтор
+          // переехали сюда из транспорта, поэтому здесь их четыре.
+          _PlayerActionButton(
             tooltip: player.shuffle ? 'Перемешивание включено' : 'Перемешать',
-            isSelected: player.shuffle,
-            iconSize: 20,
-            icon: const Icon(Icons.shuffle),
-            selectedIcon: Icon(Icons.shuffle, size: 20, color: scheme.primary),
+            icon: Icons.shuffle,
+            selected: player.shuffle,
             onPressed: controller.toggleShuffle,
           ),
-          IconButton(
+          const SizedBox(width: 10),
+          _PlayerActionButton(
             tooltip: player.repeat.label,
-            isSelected: player.repeat != PlayerRepeatMode.off,
-            iconSize: 20,
-            icon: Icon(
-              player.repeat == PlayerRepeatMode.one
-                  ? Icons.repeat_one
-                  : Icons.repeat,
-            ),
-            selectedIcon: Icon(
-              player.repeat == PlayerRepeatMode.one
-                  ? Icons.repeat_one
-                  : Icons.repeat,
-              size: 20,
-              color: scheme.primary,
-            ),
+            icon: player.repeat == PlayerRepeatMode.one
+                ? Icons.repeat_one
+                : Icons.repeat,
+            selected: player.repeat != PlayerRepeatMode.off,
             onPressed: controller.cycleRepeat,
           ),
+          const SizedBox(width: 10),
           // «…» открывает то же меню, что и из островка: исполнитель, альбом,
           // очередь и лайк. rootNavigator: плеер сам лежит в корневом
           // навигаторе — иначе переход остался бы под его экраном.
-          IconButton(
+          _PlayerActionButton(
             tooltip: 'Действия',
-            icon: const Icon(Icons.more_vert, size: 20),
+            icon: Icons.more_vert,
             onPressed: () =>
                 showTrackMenu(context, track, rootNavigator: true),
           ),
-          const SizedBox(width: 4),
-          IconButton.filledTonal(
+          const SizedBox(width: 10),
+          _PlayerActionButton(
             tooltip: liked ? 'Убрать из «Мне нравится»' : 'Нравится',
-            icon: Icon(
-              liked ? Icons.favorite : Icons.favorite_border,
-              size: 20,
-              color: liked ? scheme.primary : null,
-            ),
+            icon: liked ? Icons.favorite : Icons.favorite_border,
+            selected: liked,
+            accent: true,
             onPressed: signedIn ? () => _like(context, ref) : null,
           ),
         ],
@@ -431,6 +438,61 @@ class _InfoRow extends ConsumerWidget {
         ),
       );
     }
+  }
+}
+
+/// Действие в строке с названием — квадрат 44 с радиусом 14, как `Surface`
+/// в `PlayerTopActions` (ArchiveTune, стиль V4).
+///
+/// Фон: 0.12 в покое и 0.2 во включённом виде (для лайка — `error` с 0.25);
+/// иконка 22, выбранная — цветом акцента.
+class _PlayerActionButton extends StatelessWidget {
+  const _PlayerActionButton({
+    required this.tooltip,
+    required this.icon,
+    required this.onPressed,
+    this.selected = false,
+    this.accent = false,
+  });
+
+  final String tooltip;
+  final IconData icon;
+  final VoidCallback? onPressed;
+  final bool selected;
+
+  /// Лайк подсвечивается не акцентом, а цветом ошибки — как в V4.
+  final bool accent;
+
+  @override
+  Widget build(BuildContext context) {
+    final ColorScheme scheme = Theme.of(context).colorScheme;
+    final Color background = selected
+        ? (accent
+            ? scheme.error.withValues(alpha: 0.25)
+            : scheme.onSurface.withValues(alpha: 0.2))
+        : scheme.onSurface.withValues(alpha: 0.12);
+    final Color foreground = selected
+        ? (accent ? scheme.error : scheme.primary)
+        : scheme.onSurface;
+    final BorderRadius shape = BorderRadius.circular(14);
+
+    return Tooltip(
+      message: tooltip,
+      child: Material(
+        color: background,
+        borderRadius: shape,
+        clipBehavior: Clip.antiAlias,
+        child: InkWell(
+          borderRadius: shape,
+          onTap: onPressed,
+          child: SizedBox(
+            width: 44,
+            height: 44,
+            child: Center(child: Icon(icon, size: 22, color: foreground)),
+          ),
+        ),
+      ),
+    );
   }
 }
 

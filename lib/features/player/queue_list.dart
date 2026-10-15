@@ -2,8 +2,13 @@ import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 
 import '../../core/theme/layout.dart';
+import '../../core/utils/artwork_urls.dart';
+import '../../core/utils/format.dart';
 import '../../data/models/models.dart';
+import '../../state/auth_controller.dart';
+import '../../state/library_providers.dart';
 import '../../state/player_controller.dart';
+import '../../widgets/artwork.dart';
 import '../../widgets/empty_state.dart';
 import '../../widgets/track_menu.dart';
 import '../../widgets/track_tile.dart';
@@ -12,11 +17,29 @@ import '../../widgets/track_tile.dart';
 ///
 /// Один виджет на все поверхности: в панели плеера на десктопе и в нижнем
 /// листе на телефоне. Раньше это было продублировано.
+///
+/// Оформление шапки и строк перенесено из ArchiveTune (`ui/player/Queue.kt`,
+/// `ui/player/QueueComponents.kt` — `CurrentSongHeader`, `ui/component/Items.kt`
+/// — `ListItem`): обложка 64 с радиусом 12, отступ между колонками 14,
+/// панель действий со скруглением 24, переключатели 48 с соединёнными
+/// углами, разделитель с альфой 0.08.
 class QueueList extends ConsumerWidget {
-  const QueueList({super.key, this.scrollController, this.padding});
+  const QueueList({
+    super.key,
+    this.scrollController,
+    this.padding,
+    this.showHeader = true,
+  });
 
   final ScrollController? scrollController;
   final EdgeInsets? padding;
+
+  /// Показывать шапку с текущим треком.
+  ///
+  /// На полном экране в широкой раскладке очередь стоит рядом с блоком
+  /// управления, где название и действия уже есть, — там шапку выключаем,
+  /// чтобы не дублировать. В островке и панели плеера она остаётся.
+  final bool showHeader;
 
   @override
   Widget build(BuildContext context, WidgetRef ref) {
@@ -54,37 +77,10 @@ class QueueList extends ConsumerWidget {
     return CustomScrollView(
       controller: scrollController,
       slivers: <Widget>[
-        SliverToBoxAdapter(
-          child: Padding(
-            padding: const EdgeInsets.fromLTRB(
-              AppLayout.gutter,
-              8,
-              AppLayout.gutter,
-              4,
-            ),
-            child: Row(
-              children: <Widget>[
-                Expanded(
-                  child: Text(
-                    'Очередь',
-                    style: Theme.of(context)
-                        .textTheme
-                        .titleMedium
-                        ?.copyWith(fontWeight: FontWeight.w700),
-                  ),
-                ),
-                IconButton(
-                  tooltip: 'Очистить',
-                  icon: const Icon(Icons.clear_all),
-                  onPressed: controller.clearQueue,
-                ),
-              ],
-            ),
-          ),
-        ),
+        // Шапка с текущим треком — как `CurrentSongHeader` в ArchiveTune.
+        if (showHeader) const SliverToBoxAdapter(child: _QueueHeader()),
 
         if (current != null) ...<Widget>[
-          const SliverToBoxAdapter(child: _GroupLabel('Сейчас играет')),
           SliverToBoxAdapter(
             child: TrackTile(
               track: current,
@@ -149,6 +145,275 @@ class QueueList extends ConsumerWidget {
   }
 }
 
+/// Шапка очереди с текущим треком.
+///
+/// Перенесена из `CurrentSongHeader` (ArchiveTune, `ui/player/QueueComponents.kt`):
+/// обложка 64 с радиусом 12, название `titleLarge` жирным, исполнитель
+/// `bodyMedium` с альфой 0.6, лайк 44 с иконкой 26; ниже — панель действий
+/// (`RoundedCornerShape(24)`, фон с альфой 0.06, отступы 6/4) со счётчиком
+/// треков и общей длительностью, и ряд переключателей 48 высотой.
+class _QueueHeader extends ConsumerWidget {
+  const _QueueHeader();
+
+  @override
+  Widget build(BuildContext context, WidgetRef ref) {
+    final Track? current = ref.watch(
+      playerControllerProvider.select((PlayerUiState s) => s.current),
+    );
+    if (current == null) return const SizedBox.shrink();
+
+    final ColorScheme scheme = Theme.of(context).colorScheme;
+    final TextTheme text = Theme.of(context).textTheme;
+    final PlayerController controller =
+        ref.read(playerControllerProvider.notifier);
+
+    final bool liked = ref.watch(
+      likedIdsProvider.select((Set<String> ids) => ids.contains(current.id)),
+    );
+    final bool signedIn = ref.watch(
+      authControllerProvider.select((AuthState s) => s.isSignedIn),
+    );
+    final (List<Track> queue, bool shuffle, PlayerRepeatMode repeat) =
+        ref.watch(
+      playerControllerProvider.select(
+        (PlayerUiState s) => (s.queue, s.shuffle, s.repeat),
+      ),
+    );
+
+    final Duration total = queue.fold(
+      Duration.zero,
+      (Duration acc, Track track) => acc + track.duration,
+    );
+    final List<String> variants = current.artworkFallbacks(kArtworkLarge);
+
+    // Соединённые углы переключателей — как `connectedLeading/TrailingButtonShapes`
+    // в ArchiveTune: крупное скругление с внешней стороны, малое с внутренней.
+    const Radius big = Radius.circular(24);
+    const Radius small = Radius.circular(6);
+    const BorderRadius leadingShape = BorderRadius.only(
+      topLeft: big,
+      bottomLeft: big,
+      topRight: small,
+      bottomRight: small,
+    );
+    const BorderRadius trailingShape = BorderRadius.only(
+      topLeft: small,
+      bottomLeft: small,
+      topRight: big,
+      bottomRight: big,
+    );
+
+    return Padding(
+      // Отступы шапки: по бокам 16, сверху 20, снизу 8.
+      padding: const EdgeInsets.fromLTRB(16, 20, 16, 8),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.stretch,
+        children: <Widget>[
+          Row(
+            children: <Widget>[
+              ClipRRect(
+                borderRadius: BorderRadius.circular(12),
+                child: Container(
+                  width: 64,
+                  height: 64,
+                  color: scheme.onSurface.withValues(alpha: 0.06),
+                  child: Artwork(
+                    url: variants.isEmpty ? null : variants.first,
+                    fallbacks: variants.length > 1
+                        ? variants.sublist(1)
+                        : const <String>[],
+                    radius: BorderRadius.circular(12),
+                  ),
+                ),
+              ),
+              const SizedBox(width: 14),
+              Expanded(
+                child: Column(
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  children: <Widget>[
+                    Text(
+                      current.title,
+                      maxLines: 1,
+                      overflow: TextOverflow.ellipsis,
+                      style: text.titleLarge?.copyWith(
+                        fontWeight: FontWeight.bold,
+                        color: scheme.onSurface,
+                      ),
+                    ),
+                    Text(
+                      current.artistLine,
+                      maxLines: 1,
+                      overflow: TextOverflow.ellipsis,
+                      style: text.bodyMedium?.copyWith(
+                        color: scheme.onSurface.withValues(alpha: 0.6),
+                      ),
+                    ),
+                  ],
+                ),
+              ),
+              IconButton(
+                tooltip: liked ? 'Убрать из «Мне нравится»' : 'Нравится',
+                iconSize: 26,
+                constraints: const BoxConstraints.tightFor(width: 44, height: 44),
+                padding: EdgeInsets.zero,
+                icon: Icon(
+                  liked ? Icons.favorite : Icons.favorite_border,
+                  color: liked ? scheme.primary : scheme.onSurface,
+                ),
+                onPressed: signedIn
+                    ? () => _toggleLike(context, ref, current)
+                    : null,
+              ),
+            ],
+          ),
+          const SizedBox(height: 14),
+          Container(
+            padding: const EdgeInsets.symmetric(horizontal: 6, vertical: 4),
+            decoration: BoxDecoration(
+              color: scheme.onSurface.withValues(alpha: 0.06),
+              borderRadius: BorderRadius.circular(24),
+            ),
+            child: Row(
+              children: <Widget>[
+                IconButton(
+                  tooltip: 'Действия',
+                  iconSize: 20,
+                  constraints:
+                      const BoxConstraints.tightFor(width: 40, height: 40),
+                  padding: EdgeInsets.zero,
+                  color: scheme.onSurface.withValues(alpha: 0.7),
+                  icon: const Icon(Icons.more_vert),
+                  onPressed: () => showTrackMenu(context, current),
+                ),
+                IconButton(
+                  tooltip: 'Очистить',
+                  iconSize: 20,
+                  constraints:
+                      const BoxConstraints.tightFor(width: 40, height: 40),
+                  padding: EdgeInsets.zero,
+                  color: scheme.error,
+                  icon: const Icon(Icons.delete_outline),
+                  onPressed: controller.clearQueue,
+                ),
+                const Spacer(),
+                Padding(
+                  padding: const EdgeInsets.only(right: 14),
+                  child: Text(
+                    '${trackCountLabel(queue.length)}  •  '
+                    '${formatDurationClock(total)}',
+                    style: text.labelMedium?.copyWith(
+                      color: scheme.onSurface.withValues(alpha: 0.55),
+                    ),
+                  ),
+                ),
+              ],
+            ),
+          ),
+          const SizedBox(height: 14),
+          Row(
+            children: <Widget>[
+              Expanded(
+                child: _HeaderToggle(
+                  tooltip: shuffle ? 'Перемешивание включено' : 'Перемешать',
+                  icon: Icons.shuffle,
+                  selected: shuffle,
+                  shape: leadingShape,
+                  onTap: controller.toggleShuffle,
+                ),
+              ),
+              Expanded(
+                child: _HeaderToggle(
+                  tooltip: repeat.label,
+                  icon: repeat == PlayerRepeatMode.one
+                      ? Icons.repeat_one
+                      : Icons.repeat,
+                  selected: repeat != PlayerRepeatMode.off,
+                  shape: trailingShape,
+                  onTap: controller.cycleRepeat,
+                ),
+              ),
+            ],
+          ),
+          const SizedBox(height: 14),
+          Divider(
+            height: 1,
+            thickness: 1,
+            color: scheme.onSurface.withValues(alpha: 0.08),
+          ),
+        ],
+      ),
+    );
+  }
+
+  Future<void> _toggleLike(
+    BuildContext context,
+    WidgetRef ref,
+    Track track,
+  ) async {
+    final ScaffoldMessengerState messenger = ScaffoldMessenger.of(context);
+    final bool wasLiked = ref.read(likedIdsProvider).contains(track.id);
+    try {
+      await ref.read(likedIdsProvider.notifier).toggle(track.id);
+      messenger.showSnackBar(
+        SnackBar(
+          content: Text(wasLiked
+              ? 'Убрано из «Мне нравится»'
+              : 'Добавлено в «Мне нравится»'),
+        ),
+      );
+    } on Object {
+      messenger.showSnackBar(
+        const SnackBar(
+          content: Text('Не удалось поставить лайк. Проверьте вход в аккаунт.'),
+        ),
+      );
+    }
+  }
+}
+
+/// Переключатель шапки очереди — `ToggleButton` высотой 48 из ArchiveTune.
+///
+/// Заливка: 0.12 в покое и 0.22 во включённом виде, иконка 22 — точные
+/// значения `CurrentSongHeader`.
+class _HeaderToggle extends StatelessWidget {
+  const _HeaderToggle({
+    required this.tooltip,
+    required this.icon,
+    required this.selected,
+    required this.shape,
+    required this.onTap,
+  });
+
+  final String tooltip;
+  final IconData icon;
+  final bool selected;
+  final BorderRadius shape;
+  final VoidCallback onTap;
+
+  @override
+  Widget build(BuildContext context) {
+    final ColorScheme scheme = Theme.of(context).colorScheme;
+    return Tooltip(
+      message: tooltip,
+      child: Material(
+        color: scheme.onSurface.withValues(alpha: selected ? 0.22 : 0.12),
+        borderRadius: shape,
+        clipBehavior: Clip.antiAlias,
+        child: InkWell(
+          borderRadius: shape,
+          onTap: onTap,
+          child: SizedBox(
+            height: 48,
+            child: Center(
+              child: Icon(icon, size: 22, color: scheme.onSurface),
+            ),
+          ),
+        ),
+      ),
+    );
+  }
+}
+
 class _GroupLabel extends StatelessWidget {
   const _GroupLabel(this.label);
 
@@ -207,7 +472,7 @@ class _ReorderableTile extends StatelessWidget {
               children: <Widget>[
                 IconButton(
                   tooltip: 'Действия',
-                  iconSize: 20,
+                  iconSize: 22,
                   icon: const Icon(Icons.more_vert),
                   onPressed: () => showTrackMenu(context, track),
                 ),

@@ -109,7 +109,9 @@ class _LyricsToolbar extends ConsumerWidget {
     final String label = actualSource ?? selected.label;
 
     return Padding(
-      padding: const EdgeInsets.fromLTRB(12, 6, 4, 0),
+      // Отступ шапки текста — как у экрана текста в ArchiveTune
+      // (`LyricsScreen`, горизонталь 24, вертикаль 8).
+      padding: const EdgeInsets.fromLTRB(24, 8, 4, 0),
       child: Row(
         children: <Widget>[
           Icon(Icons.lyrics_outlined, size: 16, color: scheme.onSurfaceVariant),
@@ -276,9 +278,10 @@ class _SyncedLyricsState extends ConsumerState<_SyncedLyrics> {
         itemCount: widget.lines.length,
         itemBuilder: (BuildContext context, int index) {
           final bool active = index == _activeIndex;
-          // Как в ArchiveTune: активная строка выделяется цветом акцента,
-          // жирностью и чуть большим размером, без подложки-плашки. Плавно
-          // перетекает между строками по мере воспроизведения.
+          // Как в `LyricsV2` (ArchiveTune): активная строка — полной
+          // непрозрачности и веса ExtraBold, остальные — с альфой 0.52 и
+          // SemiBold; размер строки не меняется, чтобы текст не «прыгал».
+          // Плавно перетекает между строками по мере воспроизведения.
           return Padding(
             key: _keys[index],
             padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 6),
@@ -287,11 +290,11 @@ class _SyncedLyricsState extends ConsumerState<_SyncedLyrics> {
               curve: Curves.easeOutCubic,
               style: (theme.titleLarge ?? const TextStyle()).copyWith(
                 height: 1.45,
-                fontSize: baseSize * scale * (active ? 1.12 : 1.0),
-                fontWeight: active ? FontWeight.w700 : FontWeight.w500,
+                fontSize: baseSize * scale,
+                fontWeight: active ? FontWeight.w800 : FontWeight.w600,
                 color: active
-                    ? scheme.primary
-                    : scheme.onSurfaceVariant.withValues(alpha: 0.5),
+                    ? scheme.onSurface
+                    : scheme.onSurface.withValues(alpha: 0.52),
               ),
               child: _lineText(context, index, active, scheme),
             ),
@@ -319,9 +322,11 @@ class _SyncedLyricsState extends ConsumerState<_SyncedLyrics> {
         TextSpan(
           text: '${word.text} ',
           style: TextStyle(
+            // Спетые слова — акцентом (как подсветка в ArchiveTune),
+            // оставшиеся — приглушённым текстом с альфой 0.52.
             color: sung
                 ? scheme.primary
-                : scheme.onSurfaceVariant.withValues(alpha: 0.5),
+                : scheme.onSurface.withValues(alpha: 0.52),
           ),
         ),
       );

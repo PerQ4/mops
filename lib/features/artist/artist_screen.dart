@@ -25,7 +25,7 @@ class ArtistScreen extends ConsumerWidget {
     return Scaffold(
       body: artist.when(
         data: (Artist data) => _ArtistBody(artist: data),
-        loading: () => const Center(child: CircularProgressIndicator()),
+        loading: () => const MediaDetailSkeleton(rows: 5),
         error: (Object error, StackTrace _) => Scaffold(
           appBar: AppBar(),
           body: ErrorState(
@@ -65,11 +65,24 @@ class _ArtistBody extends ConsumerWidget {
         SliverToBoxAdapter(
           child: MediaHero(
             title: artist.name,
-            subtitle: artist.subscribers,
+            // Подписчики — это «аудитория» из ArchiveTune (ArtistScreen.kt:465-479):
+            // строка метаданных `labelMedium` α0.62, а не подпись.
+            meta: artist.subscribers,
             description: artist.description,
             imageUrl: artist.thumbnails.sized(600),
             fallbackIcon: Icons.person_outline,
+            // Порядок действий как в ArchiveTune: перемешать, слушать, добавить.
             actions: <Widget>[
+              HeroCircleButton(
+                icon: Icons.shuffle,
+                tooltip: 'Перемешать',
+                size: 52,
+                onPressed: hasTracks
+                    ? () => ref
+                        .read(playerControllerProvider.notifier)
+                        .playQueue(top, shuffle: true)
+                    : null,
+              ),
               HeroPlayButton(
                 label: isCurrentArtist && playing ? 'Пауза' : 'Слушать',
                 icon: isCurrentArtist && playing
@@ -86,16 +99,6 @@ class _ArtistBody extends ConsumerWidget {
                           controller.playQueue(top);
                         }
                       },
-              ),
-              HeroCircleButton(
-                icon: Icons.shuffle,
-                tooltip: 'Перемешать',
-                size: 52,
-                onPressed: hasTracks
-                    ? () => ref
-                        .read(playerControllerProvider.notifier)
-                        .playQueue(top, shuffle: true)
-                    : null,
               ),
               HeroCircleButton(
                 icon: Icons.playlist_add,
@@ -164,19 +167,18 @@ class _SectionTitle extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
+    // Заголовок секции в стиле `NavigationTitle`: отступы 12/12 и цвет
+    // `primary` (NavigationTitle.kt:43-76).
     return Padding(
-      padding: const EdgeInsets.fromLTRB(
-        AppLayout.gutter,
-        16,
-        AppLayout.gutter,
-        8,
-      ),
+      padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 12),
       child: Text(
         title,
-        style: Theme.of(context)
-            .textTheme
-            .titleLarge
-            ?.copyWith(fontWeight: FontWeight.w700),
+        maxLines: 1,
+        overflow: TextOverflow.ellipsis,
+        style: Theme.of(context).textTheme.titleLarge?.copyWith(
+              fontWeight: FontWeight.w700,
+              color: Theme.of(context).colorScheme.primary,
+            ),
       ),
     );
   }
@@ -199,7 +201,8 @@ class _CardRow extends StatelessWidget {
           height: AppLayout.cardHeight + 8,
           child: ListView.separated(
             scrollDirection: Axis.horizontal,
-            padding: const EdgeInsets.symmetric(horizontal: AppLayout.gutter),
+            // Отступ ленты — 12, как у заголовка секции (ArtistScreen.kt:759-761).
+            padding: const EdgeInsets.symmetric(horizontal: 12),
             itemCount: albums.length,
             separatorBuilder: (BuildContext context, int _) =>
                 const SizedBox(width: 12),
@@ -237,7 +240,8 @@ class _ArtistRow extends StatelessWidget {
           height: AppLayout.artistAvatar + 90,
           child: ListView.separated(
             scrollDirection: Axis.horizontal,
-            padding: const EdgeInsets.symmetric(horizontal: AppLayout.gutter),
+            // Отступ ленты — 12, как у заголовка секции.
+            padding: const EdgeInsets.symmetric(horizontal: 12),
             itemCount: artists.length,
             separatorBuilder: (BuildContext context, int _) =>
                 const SizedBox(width: 12),

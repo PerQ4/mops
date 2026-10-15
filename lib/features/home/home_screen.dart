@@ -84,11 +84,17 @@ class HomeScreen extends ConsumerWidget {
                     // остаётся своей высоты, а лента не прилипает к ней.
                     padding: const EdgeInsets.only(top: 16),
                     header: const _MoodRow(),
-                    emptyPlaceholder: const EmptyState(
-                      icon: Icons.explore_off_outlined,
+                    emptyPlaceholder: EmptyState(
+                      icon: Icons.music_note_outlined,
                       title: 'Подборки недоступны',
                       subtitle: 'YouTube Music не вернул ни одной секции. '
                           'Попробуйте обновить или сменить регион в настройках.',
+                      // В оригинале пустое состояние показывает кнопку повтора;
+                      // тем же действием, что и ошибка, — перезапросить ленту.
+                      action: FilledButton.tonal(
+                        onPressed: () => ref.invalidate(homeSectionsProvider),
+                        child: const Text('Повторить'),
+                      ),
                     ),
                   ),
                 ),
@@ -170,7 +176,8 @@ class _LoadingMoreIndicator extends StatelessWidget {
 /// Тональный градиент фона экрана из спецификации ArchiveTune.
 ///
 /// Высота 430, переход `primaryContainer` α0.30 → `secondaryContainer` α0.14 →
-/// прозрачный. Он задаёт «объём» шапки, не мешая читать содержимое.
+/// прозрачный. Промежуточная остановка — 0.42, как `Brush.verticalGradient`
+/// в `HomeContent`. Градиент задаёт «объём» шапки, не мешая читать содержимое.
 class _ToneGradient extends StatelessWidget {
   const _ToneGradient();
 
@@ -191,7 +198,7 @@ class _ToneGradient extends StatelessWidget {
                 scheme.secondaryContainer.withValues(alpha: 0.14),
                 Colors.transparent,
               ],
-              stops: const <double>[0.0, 0.55, 1.0],
+              stops: const <double>[0.0, 0.42, 1.0],
             ),
           ),
         ),
@@ -298,12 +305,12 @@ class _MoodRow extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     return SizedBox(
-      // Высота ряда чипов. В спецификации ≥68, но такие «плиты» выглядят
-      // раздутыми — берём 48: строка читается как ряд чипов, а не кнопок.
-      height: 48,
+      // Высота ряда как в `HomeCategoryChips`: `heightIn(min = 68.dp)`.
+      height: 68,
       child: ListView.separated(
         scrollDirection: Axis.horizontal,
-        padding: const EdgeInsets.symmetric(horizontal: 16),
+        // Отступы ряда — `padding(horizontal = 16.dp, vertical = 10.dp)`.
+        padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 10),
         itemCount: _moods.length,
         separatorBuilder: (BuildContext context, int _) =>
             const SizedBox(width: 8),
@@ -326,10 +333,15 @@ class _MoodRow extends StatelessWidget {
   }
 }
 
-/// Крупный чип настроения в стиле ArchiveTune.
+/// Чип настроения в стиле `HomeCategoryChips` из ArchiveTune.
 ///
-/// Не `ActionChip`: нужна фиксированная высота 68 и фон `surfaceContainerHigh`
-/// α0.78; стандартный чип так не растянуть без «прыжков» при смене темы.
+/// Это вид невыбранного `FilterChip` (`FilterChipDefaults.shapes()`): высота
+/// 32, фон `surfaceContainerHigh` α0.78, подпись и значок цветом
+/// `onSurfaceVariant`. Скругление 12 — это `UnselectedShape = CornerMedium`
+/// из токенов AndroidX (`ChipsTokens.kt`), а `SelectedShape = CornerFull`,
+/// поэтому выбранный чип — капсула. Выбранное состояние
+/// (`secondaryContainer` α0.94, `onSecondaryContainer`, галочка слева) здесь
+/// не показываем: чип не фильтрует ленту, а открывает поиск по запросу.
 class _MoodChip extends StatelessWidget {
   const _MoodChip({
     required this.label,
@@ -344,28 +356,31 @@ class _MoodChip extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     final ColorScheme scheme = Theme.of(context).colorScheme;
-    return Material(
-      color: scheme.surfaceContainerHigh.withValues(alpha: 0.78),
-      // Скругление-«капсула»: 48 / 2 = 24.
-      borderRadius: BorderRadius.circular(24),
-      clipBehavior: Clip.antiAlias,
-      child: InkWell(
-        onTap: onTap,
-        child: Padding(
-          padding: const EdgeInsets.symmetric(horizontal: 14),
-          child: Row(
-            mainAxisSize: MainAxisSize.min,
-            children: <Widget>[
-              Icon(icon, size: 18, color: scheme.onSurfaceVariant),
-              const SizedBox(width: 10),
-              Text(
-                label,
-                style: Theme.of(context)
-                    .textTheme
-                    .labelLarge
-                    ?.copyWith(fontWeight: FontWeight.w600),
-              ),
-            ],
+    return SizedBox(
+      // `FilterChipDefaults.Height` = 32.
+      height: 32,
+      child: Material(
+        color: scheme.surfaceContainerHigh.withValues(alpha: 0.78),
+        // UnselectedShape = CornerMedium = 12 (ChipsTokens.kt).
+        shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(12)),
+        clipBehavior: Clip.antiAlias,
+        child: InkWell(
+          onTap: onTap,
+          child: Padding(
+            padding: const EdgeInsets.symmetric(horizontal: 12),
+            child: Row(
+              mainAxisSize: MainAxisSize.min,
+              children: <Widget>[
+                Icon(icon, size: 18, color: scheme.onSurfaceVariant),
+                const SizedBox(width: 8),
+                Text(
+                  label,
+                  style: Theme.of(context).textTheme.labelLarge?.copyWith(
+                        color: scheme.onSurfaceVariant,
+                      ),
+                ),
+              ],
+            ),
           ),
         ),
       ),

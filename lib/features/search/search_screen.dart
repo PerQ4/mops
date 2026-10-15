@@ -152,10 +152,12 @@ class _DiscoverTabs extends StatelessWidget {
       length: 2,
       child: Column(
         children: <Widget>[
+          // Вкладки с иконками, как в `SearchDiscoveryTabs`
+          // (ui/screens/search/SearchScreen.kt:342-387).
           const TabBar(
             tabs: <Widget>[
-              Tab(text: 'Обзор'),
-              Tab(text: 'Подсказки'),
+              Tab(icon: Icon(Icons.explore_outlined), text: 'Обзор'),
+              Tab(icon: Icon(Icons.auto_awesome), text: 'Подсказки'),
             ],
           ),
           Expanded(
@@ -195,17 +197,19 @@ class _MoodsGrid extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
+    // Сетка «настроения и жанры» как в ArchiveTune: адаптивные ячейки не уже
+    // 180, высота 100, отступы по 12 вокруг (MoodAndGenresScreen.kt:91-142,
+    // `MoodAndGenresButtonHeight = 100.dp`).
     return GridView.builder(
       padding: const EdgeInsets.fromLTRB(
-        AppLayout.gutter,
-        16,
-        AppLayout.gutter,
+        12,
+        12,
+        12,
         AppLayout.floatingDockClearance,
       ),
       gridDelegate: const SliverGridDelegateWithMaxCrossAxisExtent(
-        // Ячейка не уже ~180, как в спецификации.
-        maxCrossAxisExtent: 200,
-        mainAxisExtent: 88,
+        maxCrossAxisExtent: 180,
+        mainAxisExtent: 100,
         crossAxisSpacing: 12,
         mainAxisSpacing: 12,
       ),
@@ -237,31 +241,76 @@ class _MoodTile extends StatelessWidget {
   Widget build(BuildContext context) {
     final ColorScheme scheme = Theme.of(context).colorScheme;
 
+    // Плитка из `MoodAndGenresButton` (MoodAndGenresScreen.kt:147-255):
+    // скругление 24, диагональный градиент, обложка 80×80 в правом верхнем углу
+    // со скруглением 16, горизонтальный скрим и название снизу слева.
     return Material(
-      color: scheme.surfaceContainerLow,
-      borderRadius: BorderRadius.circular(16),
+      borderRadius: BorderRadius.circular(24),
       clipBehavior: Clip.antiAlias,
+      color: Colors.transparent,
       child: InkWell(
         onTap: onTap,
-        child: Padding(
-          padding: const EdgeInsets.all(16),
-          child: Row(
-            children: <Widget>[
-              Icon(icon, color: scheme.primary),
-              const SizedBox(width: 12),
-              Expanded(
-                child: Text(
-                  label,
-                  maxLines: 2,
-                  overflow: TextOverflow.ellipsis,
-                  style: Theme.of(context)
-                      .textTheme
-                      .titleSmall
-                      ?.copyWith(fontWeight: FontWeight.w600),
+        child: Stack(
+          fit: StackFit.expand,
+          children: <Widget>[
+            DecoratedBox(
+              decoration: BoxDecoration(
+                gradient: LinearGradient(
+                  begin: Alignment.topLeft,
+                  end: Alignment.bottomRight,
+                  colors: <Color>[
+                    scheme.primaryContainer,
+                    scheme.surfaceContainerHighest,
+                  ],
                 ),
               ),
-            ],
-          ),
+            ),
+            Positioned(
+              top: 10,
+              right: 12,
+              child: Container(
+                width: 80,
+                height: 80,
+                decoration: BoxDecoration(
+                  borderRadius: BorderRadius.circular(16),
+                  gradient: LinearGradient(
+                    begin: Alignment.topLeft,
+                    end: Alignment.bottomRight,
+                    colors: <Color>[scheme.surface, scheme.scrim],
+                  ),
+                ),
+                child: Icon(icon, color: scheme.onSurfaceVariant),
+              ),
+            ),
+            DecoratedBox(
+              decoration: BoxDecoration(
+                gradient: LinearGradient(
+                  begin: Alignment.centerLeft,
+                  end: Alignment.centerRight,
+                  colors: <Color>[
+                    scheme.scrim.withValues(alpha: 0.38),
+                    scheme.scrim.withValues(alpha: 0.18),
+                    Colors.transparent,
+                  ],
+                ),
+              ),
+            ),
+            Positioned(
+              left: 16,
+              right: 92,
+              bottom: 16,
+              child: Text(
+                label,
+                maxLines: 1,
+                overflow: TextOverflow.ellipsis,
+                // Как в оригинале: текст поверх цветной подложки всегда белый.
+                style: Theme.of(context).textTheme.titleMedium?.copyWith(
+                      fontWeight: FontWeight.w900,
+                      color: Colors.white,
+                    ),
+              ),
+            ),
+          ],
         ),
       ),
     );
@@ -314,7 +363,8 @@ class _Suggestions extends ConsumerWidget {
             height: AppLayout.artistAvatar + 90,
             child: ListView.separated(
               scrollDirection: Axis.horizontal,
-              padding: const EdgeInsets.symmetric(horizontal: AppLayout.gutter),
+              // Отступ ленты — 12, как у заголовка секции.
+              padding: const EdgeInsets.symmetric(horizontal: 12),
               itemCount: artistList.length,
               separatorBuilder: (BuildContext context, int _) =>
                   const SizedBox(width: 12),
@@ -351,25 +401,29 @@ class _SearchSectionTitle extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
+    // Заголовок секции в стиле `NavigationTitle`: отступы 12/12 и цвет
+    // `primary` (NavigationTitle.kt:43-76).
     return Padding(
-      padding: const EdgeInsets.fromLTRB(
-        AppLayout.gutter,
-        20,
-        AppLayout.gutter,
-        8,
-      ),
+      padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 12),
       child: Text(
         title,
-        style: Theme.of(context)
-            .textTheme
-            .titleLarge
-            ?.copyWith(fontWeight: FontWeight.w600),
+        maxLines: 1,
+        overflow: TextOverflow.ellipsis,
+        style: Theme.of(context).textTheme.titleLarge?.copyWith(
+              fontWeight: FontWeight.w700,
+              color: Theme.of(context).colorScheme.primary,
+            ),
       ),
     );
   }
 }
 
 /// Полоса фильтров: «Всё», «Треки», «Альбомы»…
+///
+/// В ArchiveTune это `ChipsRow` (ui/component/ChipsRow.kt:44-88): прокрутка по
+/// горизонтали, отступ 12 слева, шаг 8 между чипами, вертикальный отступ 8.
+/// Чип — `FilterChip` со скруглением 16, фоном `surfaceContainer` и галочкой
+/// при выборе (иконка 18).
 class _FilterBar extends StatelessWidget {
   const _FilterBar({required this.selected, required this.onSelected});
 
@@ -378,25 +432,48 @@ class _FilterBar extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
+    final ColorScheme scheme = Theme.of(context).colorScheme;
+
     return SizedBox(
-      height: 56,
+      height: 48,
       child: ListView.separated(
         scrollDirection: Axis.horizontal,
-        padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 8),
+        padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 8),
         itemCount: SearchFilter.values.length,
         separatorBuilder: (BuildContext context, int _) => const SizedBox(width: 8),
         itemBuilder: (BuildContext context, int index) {
           final SearchFilter filter = SearchFilter.values[index];
+          final bool isSelected = filter == selected;
           return FilterChip(
             label: Text(filter.label),
-            selected: filter == selected,
+            selected: isSelected,
             showCheckmark: false,
+            avatar: Icon(
+              isSelected ? Icons.check : _filterIcon(filter),
+              size: 18,
+            ),
+            shape: RoundedRectangleBorder(
+              borderRadius: BorderRadius.circular(16),
+            ),
+            side: BorderSide.none,
+            backgroundColor: scheme.surfaceContainer,
+            selectedColor: scheme.secondaryContainer,
             onSelected: (bool _) => onSelected(filter),
           );
         },
       ),
     );
   }
+
+  /// Иконки фильтров — как в `OnlineSearchResult.kt:314-325`.
+  IconData _filterIcon(SearchFilter filter) => switch (filter) {
+        SearchFilter.all => Icons.search,
+        SearchFilter.songs => Icons.music_note_outlined,
+        SearchFilter.videos => Icons.slow_motion_video,
+        SearchFilter.albums => Icons.album_outlined,
+        SearchFilter.artists => Icons.person_outline,
+        SearchFilter.playlists => Icons.queue_music,
+      };
 }
 
 /// Результаты поиска в виде обычного списка треков.

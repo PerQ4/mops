@@ -139,41 +139,66 @@ class _Section extends ConsumerWidget {
   }
 }
 
-/// Заголовок секции в стиле ArchiveTune.
+/// Заголовок секции в стиле ArchiveTune — `HomeSectionHeader`.
 ///
-/// Высота ≥64, отступ по горизонтали 16, название `titleLarge` semibold.
-/// Кнопка «Слушать все» (40×≥88) показывается только там, где есть продолжение.
+/// Высота ≥64, отступ 16 по горизонтали и 8 по вертикали, строки в колонке
+/// прижаты к центру. Название — `titleLarge` semibold цвета `onSurface`,
+/// надпись-ярлык — `labelLarge` цвета `onSurfaceVariant`. Кнопка «Слушать все»
+/// (`OutlinedButton`, ≥40 в высоту и ≥88 в ширину) показывается только там,
+/// где есть продолжение.
 class _SectionTitle extends StatelessWidget {
-  const _SectionTitle({required this.title, this.onShowAll});
+  const _SectionTitle({required this.title, this.label, this.onShowAll});
 
   final String title;
+
+  /// Вторая, мелкая строка над названием (`section.label` в оригинале).
+  final String? label;
   final VoidCallback? onShowAll;
 
   @override
   Widget build(BuildContext context) {
+    final TextTheme text = Theme.of(context).textTheme;
+    final ColorScheme scheme = Theme.of(context).colorScheme;
     return ConstrainedBox(
       constraints: const BoxConstraints(minHeight: 64),
       child: Padding(
-        padding: const EdgeInsets.symmetric(horizontal: 16),
+        padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 8),
         child: Row(
           children: <Widget>[
             Expanded(
-              child: Text(
-                title,
-                maxLines: 1,
-                overflow: TextOverflow.ellipsis,
-                style: Theme.of(context).textTheme.titleLarge?.copyWith(
-                      fontWeight: FontWeight.w600,
+              child: Column(
+                mainAxisAlignment: MainAxisAlignment.center,
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: <Widget>[
+                  if (label != null && label!.isNotEmpty)
+                    Text(
+                      label!,
+                      maxLines: 1,
+                      overflow: TextOverflow.ellipsis,
+                      style: text.labelLarge?.copyWith(
+                        color: scheme.onSurfaceVariant,
+                      ),
                     ),
+                  Text(
+                    title,
+                    maxLines: 1,
+                    overflow: TextOverflow.ellipsis,
+                    style: text.titleLarge?.copyWith(
+                      fontWeight: FontWeight.w600,
+                      color: scheme.onSurface,
+                    ),
+                  ),
+                ],
               ),
             ),
             if (onShowAll != null) ...<Widget>[
               const SizedBox(width: 12),
-              TextButton(
+              // В оригинале это `OutlinedButton` с `heightIn(min = 40.dp)` и
+              // `widthIn(min = 88.dp)`.
+              OutlinedButton(
                 onPressed: onShowAll,
-                style: TextButton.styleFrom(
+                style: OutlinedButton.styleFrom(
                   minimumSize: const Size(88, 40),
-                  padding: const EdgeInsets.symmetric(horizontal: 16),
                 ),
                 child: const Text('Слушать все'),
               ),
@@ -210,6 +235,7 @@ class _TrackRows extends ConsumerWidget {
         if (showTitle && section.title.isNotEmpty)
           _SectionTitle(
             title: section.title,
+            label: section.subtitle,
             onShowAll: tracks.length > shown
                 ? () => ref
                     .read(playerControllerProvider.notifier)
@@ -243,17 +269,21 @@ class _CardCarousel extends ConsumerWidget {
     return Column(
       crossAxisAlignment: CrossAxisAlignment.start,
       children: <Widget>[
-        if (section.title.isNotEmpty) _SectionTitle(title: section.title),
+        if (section.title.isNotEmpty)
+          _SectionTitle(title: section.title, label: section.subtitle),
         SizedBox(
           // Высота зафиксирована константой — карусель не «прыгает»:
           // обложка + заголовок в одну строку + подпись до двух строк.
           height: cardWidth + 84,
           child: ListView.separated(
             scrollDirection: Axis.horizontal,
-            padding: const EdgeInsets.symmetric(horizontal: 16),
+            // Отступ края 12 и зазор 24 — это внешний `padding(12.dp)` у
+            // каждого `GridItem` в оригинале (12 слева + 12 справа между
+            // карточками). Заголовок секции при этом стоит на 16.
+            padding: const EdgeInsets.symmetric(horizontal: 12),
             itemCount: section.items.length,
             separatorBuilder: (BuildContext context, int _) =>
-                const SizedBox(width: 12),
+                const SizedBox(width: 24),
             itemBuilder: (BuildContext context, int index) {
               final BrowseItem item = section.items[index];
               final Widget card = BrowseItemCard(
