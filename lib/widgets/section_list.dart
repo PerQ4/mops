@@ -71,17 +71,11 @@ void openBrowseItem(
 ) {
   switch (item) {
     case TrackItem(:final Track track):
-      // У трека своей страницы нет, поэтому ведём к альбому — это его
-      // ближайшая страница. К исполнителю отправляем только тогда, когда
-      // альбома нет: имя исполнителя и так ссылка, дублировать её незачем.
-      final String? albumId = track.album?.id;
-      final String? artistId =
-          track.artists.isEmpty ? null : track.artists.first.id;
-      if (albumId != null && albumId.isNotEmpty) {
-        AppRoutes.album(context, albumId);
-      } else if (artistId != null && artistId.isNotEmpty) {
-        AppRoutes.artist(context, artistId);
-      }
+      // У трека своей страницы нет — как и в ArchiveTune, нажатие на карточку
+      // трека его ЗАПУСКАЕТ. Раньше подпись уводила к исполнителю: это было и
+      // неожиданно, и неверно — имени исполнителя достаточно быть ссылкой.
+      // Альбом и исполнитель доступны из меню «…» на карточке.
+      ref.read(playerControllerProvider.notifier).playTrack(track);
     case AlbumItem(:final Album album):
       AppRoutes.album(context, album.id);
     case ArtistItem(:final Artist artist):
@@ -330,12 +324,16 @@ class _CardCarousel extends ConsumerWidget {
             final Widget card = BrowseItemCard(
               item: item,
               width: cardWidth,
-              onPlay: (BrowseItem value) => playBrowseItem(
-                context,
-                ref,
-                value,
-                playContext: tracksOf(section),
-              ),
+              // У исполнителя обложка открывает его страницу, а не играет:
+              // в ArchiveTune карточка исполнителя — это ссылка, а не запуск.
+              onPlay: item is ArtistItem
+                  ? null
+                  : (BrowseItem value) => playBrowseItem(
+                        context,
+                        ref,
+                        value,
+                        playContext: tracksOf(section),
+                      ),
               onTap: (BrowseItem value) => openBrowseItem(context, ref, value),
             );
             // У карточек треков долгое нажатие открывает то же меню, что и

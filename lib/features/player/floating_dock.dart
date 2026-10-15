@@ -723,14 +723,27 @@ class _PanelHeader extends ConsumerWidget {
             icon: const Icon(Icons.queue_music, size: 20),
             selectedIcon:
                 Icon(Icons.queue_music, size: 20, color: scheme.primary),
-            onPressed: () => controller.toggle(PlayerPanelMode.queue),
+            onPressed: () {
+              controller.toggle(PlayerPanelMode.queue);
+              // Очередь и текст — одно состояние на всё приложение, поэтому
+              // переключение здесь видно и в правой панели, и на полном экране.
+              ref
+                  .read(settingsControllerProvider.notifier)
+                  .setShowLyrics(false);
+            },
           ),
           IconButton(
             tooltip: 'Текст песни',
             isSelected: mode == PlayerPanelMode.lyrics,
             icon: const Icon(Icons.lyrics_outlined, size: 20),
             selectedIcon: Icon(Icons.lyrics, size: 20, color: scheme.primary),
-            onPressed: () => controller.toggle(PlayerPanelMode.lyrics),
+            onPressed: () {
+              final bool showing = mode == PlayerPanelMode.lyrics;
+              controller.toggle(PlayerPanelMode.lyrics);
+              ref
+                  .read(settingsControllerProvider.notifier)
+                  .setShowLyrics(!showing);
+            },
           ),
           // Смена источника текста прямо из островка: раньше из меню
           // островка этого нельзя было сделать вовсе.
@@ -739,7 +752,12 @@ class _PanelHeader extends ConsumerWidget {
             // Когда открыт текст, пункт «скрыть» закрывает ящик целиком —
             // другого «показать/скрыть» у островка нет.
             onToggleVisibility: mode == PlayerPanelMode.lyrics
-                ? controller.close
+                ? () {
+                    controller.close();
+                    ref
+                        .read(settingsControllerProvider.notifier)
+                        .setShowLyrics(false);
+                  }
                 : null,
             lyricsVisible: mode == PlayerPanelMode.lyrics,
           ),

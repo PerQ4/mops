@@ -215,6 +215,9 @@ class BrowseParser {
         id: videoId,
         title: title,
         artists: _artistsFromByline(subtitleRuns, subtitle),
+        // Альбом из подписи: без него нажатие на подпись карточки уводило к
+        // исполнителю, хотя рядом лежит ссылка на альбом этого трека.
+        album: _albumFromRuns(subtitleRuns),
         thumbnails: thumbnails,
         duration: _durationFromSubtitle(subtitle) ?? Duration.zero,
       ));
@@ -878,10 +881,14 @@ class BrowseParser {
     'ep',
   };
 
-  static AlbumRef? _albumFromColumns(List<dynamic> columns) {
-    final List<dynamic> runs = _runsOfColumn(columns, 1);
-    if (runs.isEmpty) return null;
+  static AlbumRef? _albumFromColumns(List<dynamic> columns) =>
+      _albumFromRuns(_runsOfColumn(columns, 1));
 
+  /// Альбом из набора runs: ищем ссылку на страницу альбома.
+  ///
+  /// Альбомы YouTube Music имеют префикс `MPRE`, по нему и отличаем ссылку на
+  /// альбом от ссылки на исполнителя или плейлист.
+  static AlbumRef? _albumFromRuns(List<dynamic> runs) {
     for (final dynamic run in runs) {
       if (run is! Map) continue;
       final String? browseId = traverseString(run, <String>[
@@ -890,7 +897,7 @@ class BrowseParser {
         'browseId',
       ]);
       if (browseId == null) continue;
-      if (!browseId.startsWith('MPRE')) continue; // альбомы имеют префикс MPRE
+      if (!browseId.startsWith('MPRE')) continue;
       final String? name = textOf(run);
       if (name == null) continue;
       return AlbumRef(name: name.trim(), id: browseId);

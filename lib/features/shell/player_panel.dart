@@ -12,6 +12,7 @@ import '../../state/player_controller.dart';
 import '../../widgets/artist_line.dart';
 import '../../widgets/artwork.dart';
 import '../../widgets/track_menu.dart';
+import '../../widgets/track_tile.dart';
 import '../player/lyrics_view.dart';
 import '../player/player_controls.dart';
 import '../player/queue_list.dart';
@@ -136,9 +137,6 @@ class PlayerRightPanel extends ConsumerStatefulWidget {
 }
 
 class _PlayerRightPanelState extends ConsumerState<PlayerRightPanel> {
-  /// Показывать текст вместо очереди — как кнопка «текст» на полном экране.
-  bool _showLyrics = false;
-
   @override
   Widget build(BuildContext context) {
     final PlayerUiState player = ref.watch(playerControllerProvider);
@@ -159,16 +157,28 @@ class _PlayerRightPanelState extends ConsumerState<PlayerRightPanel> {
       ),
     );
 
-    // В режиме плеера очередь почти не видна: показываем только следующий
-    // трек — чтобы было понятно, что будет дальше.
-    final Track? next = player.index + 1 < player.queue.length
-        ? player.queue[player.index + 1]
-        : null;
+    // Показ текста — общая настройка для всех экранов (панель, полный экран,
+    // островок). Своего состояния у панели больше нет.
+    final bool showLyrics = ref.watch(
+      settingsControllerProvider.select(
+        (AppSettings s) => s.showLyricsInPlayer,
+      ),
+    );
+
+    // В режиме плеера очередь не помещается целиком, но и один трек мало:
+    // показываем все, что идут следом, списком с прокруткой.
+    final List<Track> upcoming = player.index + 1 < player.queue.length
+        ? player.queue.sublist(player.index + 1)
+        : const <Track>[];
 
     return Material(
       color: scheme.surfaceContainer,
-      child: Builder(
-        builder: (BuildContext context) {
+      child: LayoutBuilder(
+        builder: (BuildContext context, BoxConstraints constraints) {
+          // Обложка — от доступной высоты, а не фиксированная: на низком окне
+          // фиксированные 260 не влезали и панель переполнялась снизу.
+          final double artSide =
+              (constraints.maxHeight * 0.30).clamp(96.0, 260.0);
           return Column(
             crossAxisAlignment: CrossAxisAlignment.stretch,
             children: <Widget>[
@@ -176,9 +186,13 @@ class _PlayerRightPanelState extends ConsumerState<PlayerRightPanel> {
                 track: track,
                 player: player,
                 mode: mode,
-                showLyrics: _showLyrics,
-                onToggleLyrics: () =>
-                    setState(() => _showLyrics = !_showLyrics),
+                // В режиме плеера крупная обложка стоит ниже, и маленькая
+                // в строке дублировала бы её.
+                showArtwork: mode != RightPanelMode.player,
+                showLyrics: showLyrics,
+                onToggleLyrics: () => ref
+                    .read(settingsControllerProvider.notifier)
+                    .setShowLyrics(!showLyrics),
                 onToggleMode: () => ref
                     .read(settingsControllerProvider.notifier)
                     .setRightPanelMode(mode == RightPanelMode.player
@@ -190,7 +204,7 @@ class _PlayerRightPanelState extends ConsumerState<PlayerRightPanel> {
               // В режиме плеера — крупная обложка; в режиме очереди её нет,
               // всё место отдано списку.
               if (mode == RightPanelMode.player)
-                _PanelArtwork(track: track, side: 260),
+                _PanelArtwork(track: track, side: artSide),
               PlayerSeekBar(player: player, compact: true),
               Padding(
                 padding: const EdgeInsets.symmetric(horizontal: 8),
@@ -206,13 +220,13 @@ class _PlayerRightPanelState extends ConsumerState<PlayerRightPanel> {
               ),
               const SizedBox(height: 2),
               Expanded(
-                child: _showLyrics
+                child: showLyrics
                     ? LyricsView(
                         key: ValueKey<String>('panel-lyrics-${track.id}'),
                         videoId: track.id,
                       )
                     : mode == RightPanelMode.player
-                        ? _NextTrack(track: next)
+                        ? _NextTracks(tracks: upcoming)
                         : const QueueList(),
               ),
             ],
@@ -252,81 +266,45 @@ class _PanelArtwork extends StatelessWidget {
   }
 }
 
-/// Следующий трек — в режиме «Плеер» очередь показывать негде, но знать, что
-/// будет дальше, нужно. Нажатие запускает его.
-class _NextTrack extends ConsumerWidget {
-  const _NextTrack({required this.track});
+/// Что играет дальше — в режиме «Плеер» очередь не помещается целиком, но
+/// один трек показывать мало: нужен весь список с прокруткой.
+class _NextTracks extends ConsumerWidget {
+  const _NextTracks({required this.tracks});
 
-  final Track? track;
+  final List<Track> tracks;
 
   @override
   Widget build(BuildContext context, WidgetRef ref) {
+    if (tracks.isEmpty) return const SizedBox.shrink();
     final TextTheme text = Theme.of(context).textTheme;
     final ColorScheme scheme = Theme.of(context).colorScheme;
-    final Track? next = track;
-    if (next == null) return const SizedBox.shrink();
 
-    final List<String> variants = next.artworkFallbacks(kArtworkLarge);
-
-    return Padding(
-      padding: const EdgeInsets.fromLTRB(16, 8, 16, 0),
-      child: Column(
-        crossAxisAlignment: CrossAxisAlignment.start,
-        children: <Widget>[
-          Text(
-            'Далее',
+    return Column(
+      crossAxisAlignment: CrossAxisAlignment.stretch,
+      children: <Widget>[
+        Padding(
+          padding: const EdgeInsets.fromLTRB(16, 10, 16, 2),
+          child: Text(
+            'Далее — ${tracks.length}',
             style: text.labelLarge?.copyWith(color: scheme.onSurfaceVariant),
           ),
-          const SizedBox(height: 8),
-          InkWell(
-            onTap: () => ref
-                .read(playerControllerProvider.notifier)
-                .playTrack(next, context: ref.read(playerControllerProvider).queue),
-            borderRadius: BorderRadius.circular(12),
-            child: Padding(
-              padding: const EdgeInsets.symmetric(vertical: 4),
-              child: Row(
-                children: <Widget>[
-                  ClipRRect(
-                    borderRadius: BorderRadius.circular(8),
-                    child: SizedBox(
-                      width: 48,
-                      height: 48,
-                      child: Artwork(
-                        url: variants.isEmpty ? null : variants.first,
-                        fallbacks: variants.length > 1
-                            ? variants.sublist(1)
-                            : const <String>[],
-                        radius: BorderRadius.circular(8),
-                      ),
-                    ),
-                  ),
-                  const SizedBox(width: 12),
-                  Expanded(
-                    child: Column(
-                      crossAxisAlignment: CrossAxisAlignment.start,
-                      children: <Widget>[
-                        Text(
-                          next.title,
-                          maxLines: 1,
-                          overflow: TextOverflow.ellipsis,
-                          style: text.bodyLarge
-                              ?.copyWith(fontWeight: FontWeight.w600),
-                        ),
-                        ArtistLine(
-                          artists: next.artists,
-                          style: text.bodySmall
-                              ?.copyWith(color: scheme.onSurfaceVariant),
-                        ),
-                      ],
-                    ),
-                  ),
-                ],
-              ),
-            ),
+        ),
+        Expanded(
+          child: ListView.builder(
+            padding: const EdgeInsets.only(bottom: 8),
+            itemCount: tracks.length,
+            itemBuilder: (BuildContext context, int index) {
+              final Track track = tracks[index];
+              return TrackTile(
+                track: track,
+                onTap: () => ref
+                    .read(playerControllerProvider.notifier)
+                    .playTrack(track, context: tracks),
+              );
+            },
           ),
-        ],
-      ),
+        ),
+      ],
     );
   }
 }
@@ -345,6 +323,7 @@ class _PanelTrackRow extends ConsumerWidget {
     required this.track,
     required this.player,
     required this.mode,
+    required this.showArtwork,
     required this.showLyrics,
     required this.onToggleLyrics,
     required this.onToggleMode,
@@ -354,6 +333,9 @@ class _PanelTrackRow extends ConsumerWidget {
   final Track track;
   final PlayerUiState player;
   final RightPanelMode mode;
+
+  /// Показывать миниатюру в строке. В режиме плеера она не нужна.
+  final bool showArtwork;
   final bool showLyrics;
   final VoidCallback onToggleLyrics;
   final VoidCallback onToggleMode;
@@ -409,21 +391,23 @@ class _PanelTrackRow extends ConsumerWidget {
         height: 72,
         child: Row(
           children: <Widget>[
-            ClipRRect(
-              borderRadius: BorderRadius.circular(10),
-              child: SizedBox(
-                width: 56,
-                height: 56,
-                child: Artwork(
-                  url: variants.isEmpty ? null : variants.first,
-                  fallbacks: variants.length > 1
-                      ? variants.sublist(1)
-                      : const <String>[],
-                  radius: BorderRadius.circular(10),
+            if (showArtwork) ...<Widget>[
+              ClipRRect(
+                borderRadius: BorderRadius.circular(10),
+                child: SizedBox(
+                  width: 56,
+                  height: 56,
+                  child: Artwork(
+                    url: variants.isEmpty ? null : variants.first,
+                    fallbacks: variants.length > 1
+                        ? variants.sublist(1)
+                        : const <String>[],
+                    radius: BorderRadius.circular(10),
+                  ),
                 ),
               ),
-            ),
-            const SizedBox(width: 12),
+              const SizedBox(width: 12),
+            ],
             Expanded(
               child: Column(
                 mainAxisAlignment: MainAxisAlignment.center,

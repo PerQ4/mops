@@ -6,11 +6,13 @@ import 'package:flutter_riverpod/flutter_riverpod.dart';
 import '../../core/theme/layout.dart';
 import '../../core/utils/artwork_urls.dart';
 import '../../core/utils/format.dart';
+import '../../data/local/app_settings.dart';
 import '../../data/models/models.dart';
 import '../../state/auth_controller.dart';
 import '../../state/catalog_providers.dart';
 import '../../state/library_providers.dart';
 import '../../state/player_controller.dart';
+import '../../state/providers.dart';
 import '../../widgets/artist_line.dart';
 import '../../widgets/artwork.dart';
 import '../../widgets/track_menu.dart';
@@ -33,11 +35,16 @@ class NowPlayingScreen extends ConsumerStatefulWidget {
 }
 
 class _NowPlayingScreenState extends ConsumerState<NowPlayingScreen> {
-  bool _showLyrics = false;
-
   @override
   Widget build(BuildContext context) {
     final PlayerUiState player = ref.watch(playerControllerProvider);
+    // Показ текста — ОБЩАЯ настройка для всех экранов, а не своё состояние
+    // этого экрана: переключил здесь — текст показан и в панели, и в островке.
+    final bool showLyrics = ref.watch(
+      settingsControllerProvider.select(
+        (AppSettings s) => s.showLyricsInPlayer,
+      ),
+    );
     final Track? track = player.current;
     final ColorScheme scheme = Theme.of(context).colorScheme;
 
@@ -54,9 +61,10 @@ class _NowPlayingScreenState extends ConsumerState<NowPlayingScreen> {
                     children: <Widget>[
                       _TopBar(
                         track: track,
-                        showLyrics: _showLyrics,
-                        onToggleLyrics: () =>
-                            setState(() => _showLyrics = !_showLyrics),
+                        showLyrics: showLyrics,
+                        onToggleLyrics: () => ref
+                            .read(settingsControllerProvider.notifier)
+                            .setShowLyrics(!showLyrics),
                       ),
                       // На широком экране раскладка двухколоночная: обложка
                       // слева, управление справа. Вертикальная «телефонная»
@@ -69,7 +77,7 @@ class _NowPlayingScreenState extends ConsumerState<NowPlayingScreen> {
                                   Expanded(
                                     flex: 5,
                                     child: _Stage(
-                                      showLyrics: _showLyrics,
+                                      showLyrics: showLyrics,
                                       track: track,
                                     ),
                                   ),
@@ -98,7 +106,7 @@ class _NowPlayingScreenState extends ConsumerState<NowPlayingScreen> {
                                 children: <Widget>[
                                   Expanded(
                                     child: _Stage(
-                                      showLyrics: _showLyrics,
+                                      showLyrics: showLyrics,
                                       track: track,
                                     ),
                                   ),
