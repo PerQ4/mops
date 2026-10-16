@@ -37,7 +37,7 @@ import 'queue_list.dart';
 ///
 /// Над группой раскрывается панель с очередью или текстом: она растёт вверх
 /// и ничего не сдвигает.
-class FloatingDock extends ConsumerWidget {
+class FloatingDock extends ConsumerStatefulWidget {
   const FloatingDock({super.key});
 
   /// Высота островка навигации. ArchiveTune: 78.
@@ -72,7 +72,25 @@ class FloatingDock extends ConsumerWidget {
   static const double panelMaxHeight = 420;
 
   @override
-  Widget build(BuildContext context, WidgetRef ref) {
+  ConsumerState<FloatingDock> createState() => _FloatingDockState();
+}
+
+class _FloatingDockState extends ConsumerState<FloatingDock> {
+  /// Прогресс жеста по островку плеера: по горизонтали −1…1, по вертикали 0…1.
+  ///
+  /// Держим в состоянии дока, а не внутри островка: на жест должен отзываться
+  /// и соседний островок навигации — они читаются одной фигурой, поэтому
+  /// двигаются вместе.
+  final ValueNotifier<Offset> _swipe = ValueNotifier<Offset>(Offset.zero);
+
+  @override
+  void dispose() {
+    _swipe.dispose();
+    super.dispose();
+  }
+
+  @override
+  Widget build(BuildContext context) {
     // Островок плеера виден всегда, пока в очереди есть трек, — в том числе
     // на паузе. Прятать его при паузе не нужно: он же показывает состояние.
     final bool hasTrack = ref.watch(
@@ -107,14 +125,14 @@ class FloatingDock extends ConsumerWidget {
       duration: const Duration(milliseconds: 260),
       curve: Curves.easeOutCubic,
       alignment: Alignment.centerLeft,
-      child: showPlayerIsland ? const _PlayerIsland() : const SizedBox.shrink(),
+      child: showPlayerIsland ? _PlayerIsland(swipe: _swipe) : const SizedBox.shrink(),
     );
 
     // Навигация — слева, плеер — справа. Если места не хватает, док не
     // переносится в столбик, а уменьшается целиком (`scaleDown`): форма и
     // стык сохраняются, переполнения нет. Так же поступает ArchiveTune:
     // мини-плеер и навигация остаются единой фигурой.
-    final Widget islands = FittedBox(
+    final Widget row = FittedBox(
       fit: BoxFit.scaleDown,
       alignment: Alignment.bottomCenter,
       child: Row(
@@ -125,14 +143,28 @@ class FloatingDock extends ConsumerWidget {
             joinedOnRight: showPlayerIsland,
             sidebarVisible: sidebarVisible,
           ),
-          if (showPlayerIsland) const SizedBox(width: gap),
+          if (showPlayerIsland) const SizedBox(width: FloatingDock.gap),
           playerIsland,
         ],
       ),
     );
 
+    // Весь ряд чуть подаётся за пальцем: островок плеера двигается сильнее
+    // (он под рукой), навигация — слабее. Вместе это читается как одна
+    // упругая фигура, а не как два независимых блока.
+    final Widget islands = ValueListenableBuilder<Offset>(
+      valueListenable: _swipe,
+      builder: (BuildContext context, Offset swipe, Widget? child) {
+        return Transform.translate(
+          offset: Offset(swipe.dx * 12, swipe.dy * 8),
+          child: child,
+        );
+      },
+      child: row,
+    );
+
     return Padding(
-      padding: const EdgeInsets.fromLTRB(margin, 0, margin, margin),
+      padding: const EdgeInsets.fromLTRB(FloatingDock.margin, 0, FloatingDock.margin, FloatingDock.margin),
       child: Column(
         mainAxisSize: MainAxisSize.min,
         children: <Widget>[
@@ -302,22 +334,60 @@ class _NavButton extends StatelessWidget {
 /// --------------------------------------------------------- островок плеера
 
 class _PlayerIsland extends ConsumerStatefulWidget {
-  const _PlayerIsland();
+  const _PlayerIsland({required this.swipe});
+
+  /// Признак жеста для соседнего островка: пишем сюда, читает док.
+  final ValueNotifier<Offset> swipe;
 
   @override
   ConsumerState<_PlayerIsland> createState() => _PlayerIslandState();
 }
 
 class _PlayerIslandState extends ConsumerState<_PlayerIsland> {
-  /// Накопленное смещение горизонтального свайпа. Порог считаем в конце
-  /// жеста, поэтому промежуточное значение нужно держать между вызовами.
+  /// Накопленное смещение свайпа. Порог считаем в конце жеста, поэтому
+  /// промежуточное значение нужно держать между вызовами.
   double _dragDx = 0;
+  double _dragDy = 0;
+
+  /// Идёт ли жест прямо сейчас: пока идёт — островок следует за пальцем без
+  /// анимации, после отпускания — возвращается пружиной.
+  bool _dragging = false;
+
+  /// Эталонная ширина для прогресса жеста: островок меняет ширину от подписи,
+  /// поэтому берём постоянную величину, а не текущую.
+  static const double _referenceWidth = 260;
+
+  /// Прогресс жеста, −1…1 по горизонтали.
+  double get _progress => (_dragDx / _referenceWidth).clamp(-1.0, 1.0);
+
+  /// Прогресс свайпа вниз, 0…1.
+  double get _downProgress => (_dragDy / 120).clamp(0.0, 1.0);
+
+  void _publishSwipe() {
+    widget.swipe.value = Offset(_progress, _downProgress);
+  }
+
+  /// Возвращает островок на место и гасит отклик соседнего островка.
+  void _resetDrag() {
+    setState(() {
+      _dragDx = 0;
+      _dragDy = 0;
+      _dragging = false;
+    });
+    _publishSwipe();
+  }
 
   @override
   Widget build(BuildContext context) {
     final PlayerUiState player = ref.watch(playerControllerProvider);
     final Track track = player.current!;
     final bool wide = context.isExpandedLayout;
+
+    final ColorScheme scheme = Theme.of(context).colorScheme;
+    // Насколько жест набран: подмешиваем акцент к поверхности островка, чтобы
+    // свайп было видно. Раньше островок на движение не отвечал никак.
+    final double tint =
+        (_progress.abs() * 0.7 + _downProgress * 0.5).clamp(0.0, 1.0);
 
     final Widget island = _DockSurface(
         // Слева всегда стоит остров навигации, поэтому левые углы почти
@@ -329,6 +399,7 @@ class _PlayerIslandState extends ConsumerState<_PlayerIsland> {
           bottomRight: Radius.circular(FloatingDock.playerRadius),
         ),
         elevation: 0,
+        tint: tint,
         child: SizedBox(
           height: FloatingDock.playerIslandHeight,
           child: Row(
@@ -350,27 +421,81 @@ class _PlayerIslandState extends ConsumerState<_PlayerIsland> {
         ),
       );
 
+    // Подсветка стыка с островком навигации: пока идёт жест, на стыке
+    // проступает акцентная черта — два островка читаются одной фигурой,
+    // которая сейчас «натянута».
+    final Widget islandWithJoint = Stack(
+      alignment: Alignment.centerLeft,
+      children: <Widget>[
+        island,
+        AnimatedOpacity(
+          duration: const Duration(milliseconds: 160),
+          curve: Curves.easeOut,
+          opacity: _progress.abs().clamp(0.0, 1.0),
+          child: Container(
+            width: 3,
+            height: 34,
+            margin: const EdgeInsets.only(left: 3),
+            decoration: BoxDecoration(
+              color: scheme.primary,
+              borderRadius: BorderRadius.circular(2),
+            ),
+          ),
+        ),
+      ],
+    );
+
     // Жесты островка: свайп влево/вправо — следующий/предыдущий трек, тап по
     // свободному месту — полноэкранный плеер. Кнопки управления лежат внутри
     // и перехватывают нажатия сами, поэтому тап по ним этот жест не ломает.
     // `opaque` — чтобы ловить и промежутки между элементами строки.
     return GestureDetector(
       behavior: HitTestBehavior.opaque,
-      onHorizontalDragUpdate: (DragUpdateDetails details) =>
-          _dragDx += details.delta.dx,
-      onHorizontalDragCancel: () => _dragDx = 0,
+      onHorizontalDragUpdate: (DragUpdateDetails details) {
+        setState(() {
+          _dragging = true;
+          _dragDx += details.delta.dx;
+        });
+        _publishSwipe();
+      },
+      onHorizontalDragCancel: _resetDrag,
       onHorizontalDragEnd: _onSwipeEnd,
+      onVerticalDragUpdate: (DragUpdateDetails details) {
+        setState(() {
+          _dragging = true;
+          // Вниз — уборка очереди: тянем только вниз, вверх не заводим.
+          _dragDy = (_dragDy + details.delta.dy).clamp(0.0, 240.0);
+        });
+        _publishSwipe();
+      },
+      onVerticalDragCancel: _resetDrag,
       // Смахивание вниз убирает очередь целиком: островок плеера при этом
       // исчезает, потому что играть больше нечего.
       onVerticalDragEnd: (DragEndDetails details) {
-        if ((details.primaryVelocity ?? 0) > 250) {
+        final bool clear = (details.primaryVelocity ?? 0) > 250 ||
+            _downProgress >= 0.6;
+        _resetDrag();
+        if (clear) {
           unawaited(
             ref.read(playerControllerProvider.notifier).clearQueue(),
           );
         }
       },
       onTap: () => AppRoutes.nowPlaying(context),
-      child: island,
+      child: AnimatedContainer(
+        // Пока ведём пальцем — следуем за ним без задержки; после отпускания
+        // островок возвращается на место пружиной (`easeOutBack` даёт лёгкий
+        // «перелёт», как у выразительных компонентов Material 3).
+        duration:
+            _dragging ? Duration.zero : const Duration(milliseconds: 280),
+        curve: Curves.easeOutBack,
+        transform: Matrix4.translationValues(
+          _dragDx * 0.30,
+          _dragDy * 0.30,
+          0,
+        )..rotateZ(_progress * 0.035),
+        child: islandWithJoint,
+      ),
     );
   }
 
@@ -388,7 +513,7 @@ class _PlayerIslandState extends ConsumerState<_PlayerIsland> {
     final double threshold = width * sensitivity.thresholdFraction;
     final double velocity = details.primaryVelocity ?? 0;
     final double dx = _dragDx;
-    _dragDx = 0;
+    _resetDrag();
 
     final PlayerController controller =
         ref.read(playerControllerProvider.notifier);
@@ -784,18 +909,27 @@ class _DockSurface extends StatelessWidget {
     required this.child,
     required this.radius,
     this.elevation = 8,
+    this.tint = 0,
   });
 
   final Widget child;
   final BorderRadius radius;
   final double elevation;
 
+  /// Насколько подмешать цвет акцента: 0 — покой, 1 — жест набран целиком.
+  /// Нужен как отклик на свайп: раньше островок на жест не отвечал вовсе.
+  final double tint;
+
   @override
   Widget build(BuildContext context) {
     final ColorScheme scheme = Theme.of(context).colorScheme;
     return DecoratedBox(
       decoration: BoxDecoration(
-        color: scheme.surfaceContainerHigh,
+        color: Color.lerp(
+          scheme.surfaceContainerHigh,
+          scheme.primaryContainer,
+          tint * 0.5,
+        ),
         borderRadius: radius,
         // Тени нет: островок отделяется от фона только тональным цветом
         // поверхности, как в ArchiveTune.

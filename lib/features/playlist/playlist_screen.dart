@@ -10,7 +10,6 @@ import '../../state/library_providers.dart';
 import '../../state/player_controller.dart';
 import '../../widgets/async_views.dart';
 import '../../widgets/track_tile.dart';
-import '../../widgets/empty_state.dart';
 import '../album/media_hero.dart';
 
 
@@ -37,9 +36,12 @@ class PlaylistScreen extends ConsumerWidget {
         loading: () => const MediaDetailSkeleton(),
         error: (Object error, StackTrace _) => Scaffold(
           appBar: AppBar(),
-          body: ErrorState(
-            message: describeError(error),
-            onRetry: () => ref.invalidate(
+          body: MediaDetailStatePanel(
+            icon: Icons.cloud_off_outlined,
+            title: 'Не удалось загрузить',
+            description: describeError(error),
+            actionLabel: 'Повторить',
+            onAction: () => ref.invalidate(
               liked ? likedSongsPlaylistProvider : playlistProvider(playlistId),
             ),
           ),
@@ -125,12 +127,16 @@ class _PlaylistBody extends ConsumerWidget {
           ),
         ),
         if (playlist.tracks.isEmpty)
-          const SliverFillRemaining(
-            hasScrollBody: false,
-            child: EmptyState(
-              icon: Icons.music_off_outlined,
-              title: 'Плейлист пуст',
-              subtitle: 'В нём пока нет доступных треков.',
+          // Пустой плейлист — как `MediaDetailStatePanel` в `OnlinePlaylistScreen.kt`
+          // (`fillMaxWidth().padding(horizontal = 24.dp, vertical = 32.dp)`).
+          const SliverToBoxAdapter(
+            child: Padding(
+              padding: EdgeInsets.symmetric(horizontal: 24, vertical: 32),
+              child: MediaDetailStatePanel(
+                icon: Icons.queue_music,
+                title: 'Плейлист пуст',
+                description: 'В нём пока нет доступных треков.',
+              ),
             ),
           )
         else

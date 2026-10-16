@@ -12,11 +12,11 @@ import '../../state/library_providers.dart';
 import '../../state/player_controller.dart';
 import '../../widgets/horizontal_list.dart';
 import '../../widgets/async_views.dart';
-import '../../widgets/empty_state.dart';
 import '../../widgets/media_card.dart';
 import '../../widgets/section_list.dart';
 import '../../widgets/track_tile.dart';
 import '../common/navigation.dart';
+import 'search_states.dart';
 
 /// Поиск по YouTube Music.
 ///
@@ -92,7 +92,13 @@ class _SearchScreenState extends ConsumerState<SearchScreen> {
                     onPressed: _clear,
                   ),
             filled: true,
-            contentPadding: const EdgeInsets.symmetric(vertical: 4),
+            // Поле поиска — как `SearchBar` в ArchiveTune: высота 56 и
+            // «капсульная» форма (радиус 28 из темы). Отступ 16 по горизонтали
+            // и 16 по вертикали даёт ровно 56 при строке `bodyLarge` 24.
+            contentPadding: const EdgeInsets.symmetric(
+              horizontal: 16,
+              vertical: 16,
+            ),
           ),
         ),
       ),
@@ -113,24 +119,24 @@ class _SearchScreenState extends ConsumerState<SearchScreen> {
 
   Widget _body() {
     final SearchQuery key = SearchQuery(_query, _filter);
-    final AsyncValue<List<BrowseSection>> results =
-        ref.watch(searchResultsProvider(key));
+    final AsyncValue<List<BrowseSection>> results = ref.watch(
+      searchResultsProvider(key),
+    );
 
     return results.when(
       data: (List<BrowseSection> sections) {
         if (sections.isEmpty) {
-          return const EmptyState(
-            icon: Icons.search_off,
-            title: 'Ничего не найдено',
-            subtitle: 'Попробуйте другой запрос или снимите фильтр.',
-          );
+          return const SearchStateMessage(message: 'Ничего не найдено');
         }
         return SectionListView(sections: sections);
       },
-      loading: () => const SectionSkeleton(rows: 3),
-      error: (Object error, StackTrace _) => ErrorState(
+      loading: () => const SearchResultsSkeleton(),
+      error: (Object error, StackTrace _) => SearchStateMessage(
         message: describeError(error),
-        onRetry: () => ref.invalidate(searchResultsProvider(key)),
+        action: FilledButton(
+          onPressed: () => ref.invalidate(searchResultsProvider(key)),
+          child: const Text('Повторить'),
+        ),
       ),
     );
   }
@@ -164,7 +170,14 @@ class _DiscoverTabs extends StatelessWidget {
           Expanded(
             child: TabBarView(
               children: <Widget>[
-                const _MoodsGrid(),
+                // В оригинале над сеткой «настроений и жанров» стоит заголовок
+                // `NavigationTitle` — в mOps это `_SearchSectionTitle`.
+                Column(
+                  children: const <Widget>[
+                    _SearchSectionTitle('Настроения и жанры'),
+                    Expanded(child: _MoodsGrid()),
+                  ],
+                ),
                 _Suggestions(onPick: onPick),
               ],
             ),
@@ -306,9 +319,9 @@ class _MoodTile extends StatelessWidget {
                 overflow: TextOverflow.ellipsis,
                 // Как в оригинале: текст поверх цветной подложки всегда белый.
                 style: Theme.of(context).textTheme.titleMedium?.copyWith(
-                      fontWeight: FontWeight.w900,
-                      color: Colors.white,
-                    ),
+                  fontWeight: FontWeight.w900,
+                  color: Colors.white,
+                ),
               ),
             ),
           ],
@@ -354,7 +367,10 @@ class _Suggestions extends ConsumerWidget {
         const _SearchSectionTitle('Тренды'),
         for (final (String label, IconData icon) in _trends)
           ListTile(
-            leading: Icon(icon, color: Theme.of(context).colorScheme.onSurfaceVariant),
+            leading: Icon(
+              icon,
+              color: Theme.of(context).colorScheme.onSurfaceVariant,
+            ),
             title: Text(label),
             onTap: () => onPick(label),
           ),
@@ -407,9 +423,9 @@ class _SearchSectionTitle extends StatelessWidget {
         maxLines: 1,
         overflow: TextOverflow.ellipsis,
         style: Theme.of(context).textTheme.titleLarge?.copyWith(
-              fontWeight: FontWeight.w700,
-              color: Theme.of(context).colorScheme.primary,
-            ),
+          fontWeight: FontWeight.w700,
+          color: Theme.of(context).colorScheme.primary,
+        ),
       ),
     );
   }
@@ -438,42 +454,43 @@ class _FilterBar extends StatelessWidget {
       separator: 8,
       itemCount: SearchFilter.values.length,
       itemBuilder: (BuildContext context, int index) {
-          final SearchFilter filter = SearchFilter.values[index];
-          final bool isSelected = filter == selected;
-          return FilterChip(
-            label: Text(filter.label),
-            selected: isSelected,
-            showCheckmark: false,
-            avatar: Icon(
-              isSelected ? Icons.check : _filterIcon(filter),
-              size: 18,
-            ),
-            shape: RoundedRectangleBorder(
-              borderRadius: BorderRadius.circular(16),
-            ),
-            side: BorderSide.none,
-            backgroundColor: scheme.surfaceContainer,
-            selectedColor: scheme.secondaryContainer,
-            onSelected: (bool _) => onSelected(filter),
-          );
-        },
+        final SearchFilter filter = SearchFilter.values[index];
+        final bool isSelected = filter == selected;
+        return FilterChip(
+          label: Text(filter.label),
+          selected: isSelected,
+          showCheckmark: false,
+          avatar: Icon(
+            isSelected ? Icons.check : _filterIcon(filter),
+            size: 18,
+          ),
+          shape: RoundedRectangleBorder(
+            borderRadius: BorderRadius.circular(16),
+          ),
+          side: BorderSide.none,
+          backgroundColor: scheme.surfaceContainer,
+          selectedColor: scheme.secondaryContainer,
+          onSelected: (bool _) => onSelected(filter),
+        );
+      },
     );
   }
 
-  /// Иконки фильтров — как в `OnlineSearchResult.kt:314-325`.
+  /// Иконки фильтров — как в `OnlineSearchResult.kt:323-330`: залитые
+  /// `search`, `music_note`, `slow_motion_video`, `album`, `person`,
+  /// `queue_music`.
   IconData _filterIcon(SearchFilter filter) => switch (filter) {
-        SearchFilter.all => Icons.search,
-        SearchFilter.songs => Icons.music_note_outlined,
-        SearchFilter.videos => Icons.slow_motion_video,
-        SearchFilter.albums => Icons.album_outlined,
-        SearchFilter.artists => Icons.person_outline,
-        SearchFilter.playlists => Icons.queue_music,
-      };
+    SearchFilter.all => Icons.search,
+    SearchFilter.songs => Icons.music_note,
+    SearchFilter.videos => Icons.slow_motion_video,
+    SearchFilter.albums => Icons.album,
+    SearchFilter.artists => Icons.person,
+    SearchFilter.playlists => Icons.queue_music,
+  };
 }
 
 /// Результаты поиска в виде обычного списка треков.
 ///
 /// Используется страницами, которым нужен именно список, а не карусели.
-List<Track> tracksFromSections(List<BrowseSection> sections) => sections
-    .expand((BrowseSection section) => tracksOf(section))
-    .toList();
+List<Track> tracksFromSections(List<BrowseSection> sections) =>
+    sections.expand((BrowseSection section) => tracksOf(section)).toList();

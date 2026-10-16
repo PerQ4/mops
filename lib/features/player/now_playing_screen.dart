@@ -4,6 +4,8 @@ import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 
 import '../../core/theme/layout.dart';
+import '../common/navigation.dart';
+import '../shell/content_navigator.dart';
 import '../../core/utils/artwork_urls.dart';
 import '../../core/utils/format.dart';
 import '../../data/local/app_settings.dart';
@@ -83,35 +85,28 @@ class _NowPlayingScreenState extends ConsumerState<NowPlayingScreen> {
                                   ),
                                   Expanded(
                                     flex: 4,
-                                    child: Column(
-                                      children: <Widget>[
-                                        // Свободное место над полосой трека
-                                        // занимает очередь: на широком экране
-                                        // она иначе оставалась пустой. Шапку
-                                        // очереди скрываем — название и действия
-                                        // уже есть в блоке управления ниже.
-                                        const Expanded(
-                                          child: QueueList(showHeader: false),
-                                        ),
-                                        _Controls(
-                                          track: track,
-                                          player: player,
-                                        ),
-                                      ],
+                                    // Очередь сверху — своя прокручиваемая
+                                    // область; шапку скрываем, название и
+                                    // действия уже есть в блоке управления.
+                                    child: _StackedControls(
+                                      reserve: _kQueueMinHeight,
+                                      track: track,
+                                      player: player,
+                                      flexible: const QueueList(
+                                        showHeader: false,
+                                      ),
                                     ),
                                   ),
                                 ],
                               )
-                            : Column(
-                                children: <Widget>[
-                                  Expanded(
-                                    child: _Stage(
-                                      showLyrics: showLyrics,
-                                      track: track,
-                                    ),
-                                  ),
-                                  _Controls(track: track, player: player),
-                                ],
+                            : _StackedControls(
+                                reserve: _kStageMinHeight,
+                                track: track,
+                                player: player,
+                                flexible: _Stage(
+                                  showLyrics: showLyrics,
+                                  track: track,
+                                ),
                               ),
                       ),
                     ],
@@ -122,6 +117,18 @@ class _NowPlayingScreenState extends ConsumerState<NowPlayingScreen> {
     );
   }
 }
+
+/// Минимальная высота очереди в широкой раскладке.
+///
+/// Текущий трек (72) + подпись «Далее — N» (~40) + хотя бы одна строка
+/// «далее» (72): меньше — и очередь вырождается в обрезанную полоску под
+/// блоком управления (именно это и было на снимке).
+const double _kQueueMinHeight = 184;
+
+/// Минимальная высота верхней части в телефонной раскладке (обложка или
+/// текст). Ниже неё управление начинает прокручиваться, но колонка не
+/// переполняется на коротком окне (например, повёрнутый телефон).
+const double _kStageMinHeight = 160;
 
 /// Обложка или текст песни — то, что занимает основную площадь.
 class _Stage extends StatelessWidget {
@@ -140,6 +147,67 @@ class _Stage extends StatelessWidget {
               videoId: track.id,
             )
           : _ArtworkStage(track: track),
+    );
+  }
+}
+
+/// Прокручиваемая область сверху и блок управления снизу.
+///
+/// Раньше обе части были прямыми детьми [Column]: очередь стояла в
+/// `Expanded`, а управление — негибким соседом. Блок управления имеет
+/// собственную высоту (название + полоса перемотки + транспорт 88 +
+/// громкость) и на коротком окне занимал почти всю колонку: `Expanded`
+/// сжимал очередь до нескольких пикселей, её строки резались по краю
+/// блока, а при ещё меньшей высоте колонка просто переполнялась снизу.
+///
+/// Здесь верхней части ([flexible]) гарантируется [reserve], управление
+/// получает остаток высоты и при нехватке места прокручивается. Так очередь
+/// сохраняет собственную прокрутку и не перекрывается управлением при любой
+/// высоте окна; на телефонной раскладке так же защищена обложка/текст.
+class _StackedControls extends StatelessWidget {
+  const _StackedControls({
+    required this.flexible,
+    required this.reserve,
+    required this.track,
+    required this.player,
+  });
+
+  /// Верхняя часть: очередь (широкий экран) либо обложка/текст (телефон).
+  final Widget flexible;
+
+  /// Сколько высоты оставляем [flexible] в любом случае.
+  final double reserve;
+
+  final Track track;
+  final PlayerUiState player;
+
+  @override
+  Widget build(BuildContext context) {
+    return LayoutBuilder(
+      builder: (BuildContext context, BoxConstraints constraints) {
+        // Управлению — всё, что осталось после минимума верхней части.
+        // На сверхнизком окне лимит доходит до нуля, но колонка не выходит
+        // за границы: очередь всё равно получает свой минимум.
+        final double controlsMax =
+            (constraints.maxHeight - reserve).clamp(0.0, double.infinity);
+        return Column(
+          children: <Widget>[
+            Expanded(child: flexible),
+            // Управление остаётся отдельным блоком внизу и не наезжает на
+            // очередь; если места мало — прокручивается, а не выдавливает
+            // соседа и не переполняет колонку.
+            ConstrainedBox(
+              constraints: BoxConstraints(maxHeight: controlsMax),
+              child: SingleChildScrollView(
+                // `primary: false` — иначе на телефоне это прокручивание
+                // делило бы `PrimaryScrollController` с очередью.
+                primary: false,
+                child: _Controls(track: track, player: player),
+              ),
+            ),
+          ],
+        );
+      },
     );
   }
 }
@@ -383,6 +451,13 @@ class _InfoRow extends ConsumerWidget {
                               style: text.titleMedium?.copyWith(
                                 color: scheme.onSurfaceVariant,
                               ),
+                              // Сначала сворачиваем плеер, потом открываем
+                              // исполнителя: иначе страница уходит под плеер,
+                              // и он остаётся на экране.
+                              onArtistTap: (ArtistRef artist) {
+                                rootNavigatorKey.currentState?.maybePop();
+                                AppRoutes.artist(context, artist.id!);
+                              },
                             ),
                     ),
                     const SizedBox(width: 8),

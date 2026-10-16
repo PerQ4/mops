@@ -77,6 +77,11 @@ class QueueList extends ConsumerWidget {
 
     return CustomScrollView(
       controller: scrollController,
+      // Очередь всегда владеет своей прокруткой и не претендует на роль
+      // «главного» скролла: на полном экране рядом стоит блок управления
+      // со своим `SingleChildScrollView`, и общий `PrimaryScrollController`
+      // на телефоне тянул бы обе прокрутки одновременно.
+      primary: false,
       slivers: <Widget>[
         // Шапка с текущим треком — как `CurrentSongHeader` в ArchiveTune.
         if (showHeader) const SliverToBoxAdapter(child: _QueueHeader()),

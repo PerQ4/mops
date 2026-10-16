@@ -1,3 +1,5 @@
+import 'dart:math' as math;
+
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 
@@ -12,6 +14,7 @@ import '../../widgets/empty_state.dart';
 import '../../widgets/section_list.dart';
 import '../../widgets/track_tile.dart';
 import '../common/navigation.dart';
+import 'library_empty_state.dart';
 import 'library_spotlight_tile.dart';
 
 /// Личная коллекция: чипы-фильтры и содержимое выбранного раздела.
@@ -92,14 +95,19 @@ class _LibraryScreenState extends ConsumerState<LibraryScreen> {
 /// «Мне нравится» — отдельный чип, хотя раньше лайкнутые треки прятались под
 /// «Треками»: YouTube Music различает их (лайкнутая музыка и сохранённые
 /// треки), и без своего раздела лайкнутый плейлист было не найти.
+///
+/// Значки — как в `LibraryScreen.kt:358-367`: у корневого раздела
+/// `graphic_eq`, у остальных — залитые `music_note`, `person`, `album`,
+/// `queue_music`. У «Подписок» и «Мне нравится» в оригинале отдельных чипов
+/// нет, поэтому значки подобраны в том же залитом стиле.
 enum LibraryFilter {
-  all('Библиотека', Icons.library_music_outlined),
-  liked('Мне нравится', Icons.favorite_outline),
+  all('Библиотека', Icons.graphic_eq),
+  liked('Мне нравится', Icons.favorite),
   playlists('Плейлисты', Icons.queue_music),
-  songs('Треки', Icons.music_note_outlined),
-  artists('Исполнители', Icons.person_outline),
-  albums('Альбомы', Icons.album_outlined),
-  subscriptions('Подписки', Icons.subscriptions_outlined);
+  songs('Треки', Icons.music_note),
+  artists('Исполнители', Icons.person),
+  albums('Альбомы', Icons.album),
+  subscriptions('Подписки', Icons.subscriptions);
 
   const LibraryFilter(this.label, this.icon);
 
@@ -167,8 +175,9 @@ class _FilterCapsuleState extends State<_FilterCapsule> {
     final Color background = widget.selected
         ? scheme.primary
         : scheme.surfaceContainerHighest.withValues(alpha: 0.5);
-    final Color foreground =
-        widget.selected ? scheme.onPrimary : scheme.onSurfaceVariant;
+    final Color foreground = widget.selected
+        ? scheme.onPrimary
+        : scheme.onSurfaceVariant;
     final double scale = _pressed ? 0.92 : (widget.selected ? 1.05 : 1.0);
 
     return AnimatedScale(
@@ -193,10 +202,10 @@ class _FilterCapsuleState extends State<_FilterCapsule> {
                 Text(
                   widget.filter.label,
                   style: Theme.of(context).textTheme.labelLarge?.copyWith(
-                        fontWeight: FontWeight.w600,
-                        fontSize: 15,
-                        color: foreground,
-                      ),
+                    fontWeight: FontWeight.w600,
+                    fontSize: 15,
+                    color: foreground,
+                  ),
                 ),
               ],
             ),
@@ -213,7 +222,9 @@ class _LibraryOverview extends ConsumerWidget {
 
   @override
   Widget build(BuildContext context, WidgetRef ref) {
-    final AsyncValue<List<Playlist>> playlists = ref.watch(likedPlaylistsProvider);
+    final AsyncValue<List<Playlist>> playlists = ref.watch(
+      likedPlaylistsProvider,
+    );
     final AsyncValue<List<Artist>> artists = ref.watch(libraryArtistsProvider);
     final AsyncValue<List<Artist>> subs = ref.watch(subscriptionsProvider);
     final AsyncValue<List<Track>> songs = ref.watch(likedSongsProvider);
@@ -230,17 +241,21 @@ class _LibraryOverview extends ConsumerWidget {
         .toList();
     final List<Track> songItems = songs.value ?? const <Track>[];
 
-    final bool nothingYet = playlistItems.isEmpty &&
+    final bool nothingYet =
+        playlistItems.isEmpty &&
         artistItems.isEmpty &&
         subItems.isEmpty &&
         songItems.isEmpty;
     final bool anyLoading =
-        playlists.isLoading || artists.isLoading || subs.isLoading || songs.isLoading;
+        playlists.isLoading ||
+        artists.isLoading ||
+        subs.isLoading ||
+        songs.isLoading;
     final Object? error =
         playlists.error ?? artists.error ?? subs.error ?? songs.error;
 
     if (anyLoading && nothingYet) {
-      return const Center(child: CircularProgressIndicator());
+      return const _LibraryGridSkeleton();
     }
     if (error != null && nothingYet) {
       return ErrorState(
@@ -257,36 +272,59 @@ class _LibraryOverview extends ConsumerWidget {
       return const EmptyState(
         icon: Icons.library_music_outlined,
         title: 'Коллекция пуста',
-        subtitle: 'Сохраняйте треки и плейлисты в YouTube Music — они появятся '
+        subtitle:
+            'Сохраняйте треки и плейлисты в YouTube Music — они появятся '
             'здесь.',
       );
     }
 
-    return CustomScrollView(
-      slivers: <Widget>[
-        if (songItems.isNotEmpty) ...<Widget>[
-          const SliverToBoxAdapter(child: _GridHeader('Мне нравится')),
-          SliverList.builder(
-            itemCount: songItems.length > 5 ? 5 : songItems.length,
-            itemBuilder: (BuildContext context, int index) {
-              final Track track = songItems[index];
-              return TrackTile(
-                track: track,
-                onTap: () => ref
-                    .read(playerControllerProvider.notifier)
-                    .playTrack(track, context: songItems),
-              );
-            },
-          ),
-          const SliverToBoxAdapter(child: SizedBox(height: 8)),
-        ],
-        ..._gridSection(context, title: 'Плейлисты', items: playlistItems),
-        ..._gridSection(context, title: 'Исполнители', items: artistItems),
-        ..._gridSection(context, title: 'Подписки', items: subItems),
-        const SliverToBoxAdapter(
-          child: SizedBox(height: AppLayout.floatingDockClearance),
-        ),
-      ],
+    return LayoutBuilder(
+      builder: (BuildContext context, BoxConstraints constraints) {
+        final SliverGridDelegate delegate = _libraryGridDelegate(
+          constraints.maxWidth,
+        );
+        return CustomScrollView(
+          slivers: <Widget>[
+            if (songItems.isNotEmpty) ...<Widget>[
+              const SliverToBoxAdapter(child: _GridHeader('Мне нравится')),
+              SliverList.builder(
+                itemCount: songItems.length > 5 ? 5 : songItems.length,
+                itemBuilder: (BuildContext context, int index) {
+                  final Track track = songItems[index];
+                  return TrackTile(
+                    track: track,
+                    onTap: () => ref
+                        .read(playerControllerProvider.notifier)
+                        .playTrack(track, context: songItems),
+                  );
+                },
+              ),
+              const SliverToBoxAdapter(child: SizedBox(height: 8)),
+            ],
+            ..._gridSection(
+              context,
+              title: 'Плейлисты',
+              items: playlistItems,
+              delegate: delegate,
+            ),
+            ..._gridSection(
+              context,
+              title: 'Исполнители',
+              items: artistItems,
+              delegate: delegate,
+            ),
+            ..._gridSection(
+              context,
+              title: 'Подписки',
+              items: subItems,
+              delegate: delegate,
+            ),
+            const SliverToBoxAdapter(
+              child: SizedBox(height: AppLayout.floatingDockClearance),
+            ),
+          ],
+        );
+      },
     );
   }
 }
@@ -296,17 +334,17 @@ class _PlaylistsGrid extends ConsumerWidget {
 
   @override
   Widget build(BuildContext context, WidgetRef ref) {
-    final AsyncValue<List<Playlist>> playlists =
-        ref.watch(likedPlaylistsProvider);
+    final AsyncValue<List<Playlist>> playlists = ref.watch(
+      likedPlaylistsProvider,
+    );
 
     return playlists.when(
       data: (List<Playlist> data) => _TileGrid(
         items: data.map<BrowseItem>(PlaylistItem.new).toList(),
-        emptyIcon: Icons.queue_music,
+        emptyIcon: Icons.playlist_add,
         emptyTitle: 'Плейлистов нет',
-        emptySubtitle: 'Создайте плейлист в YouTube Music — он появится здесь.',
       ),
-      loading: () => const Center(child: CircularProgressIndicator()),
+      loading: () => const _LibraryGridSkeleton(),
       error: (Object error, StackTrace _) => ErrorState(
         message: describeError(error),
         onRetry: () => ref.invalidate(likedPlaylistsProvider),
@@ -325,11 +363,10 @@ class _ArtistsGrid extends ConsumerWidget {
     return artists.when(
       data: (List<Artist> data) => _TileGrid(
         items: data.map<BrowseItem>(ArtistItem.new).toList(),
-        emptyIcon: Icons.person_outline,
+        emptyIcon: Icons.person,
         emptyTitle: 'Исполнителей нет',
-        emptySubtitle: 'Подпишитесь на исполнителей в YouTube Music.',
       ),
-      loading: () => const Center(child: CircularProgressIndicator()),
+      loading: () => const _LibraryGridSkeleton(),
       error: (Object error, StackTrace _) => ErrorState(
         message: describeError(error),
         onRetry: () => ref.invalidate(libraryArtistsProvider),
@@ -348,11 +385,10 @@ class _SubscriptionsGrid extends ConsumerWidget {
     return subs.when(
       data: (List<Artist> data) => _TileGrid(
         items: data.map<BrowseItem>(ArtistItem.new).toList(),
-        emptyIcon: Icons.person_outline,
+        emptyIcon: Icons.person,
         emptyTitle: 'Подписок нет',
-        emptySubtitle: 'Подпишитесь на исполнителей в YouTube Music.',
       ),
-      loading: () => const Center(child: CircularProgressIndicator()),
+      loading: () => const _LibraryGridSkeleton(),
       error: (Object error, StackTrace _) => ErrorState(
         message: describeError(error),
         onRetry: () => ref.invalidate(subscriptionsProvider),
@@ -371,11 +407,10 @@ class _AlbumsGrid extends ConsumerWidget {
     return albums.when(
       data: (List<Album> data) => _TileGrid(
         items: data.map<BrowseItem>(AlbumItem.new).toList(),
-        emptyIcon: Icons.album_outlined,
+        emptyIcon: Icons.album,
         emptyTitle: 'Альбомов нет',
-        emptySubtitle: 'Альбомы собираются из сохранённых треков.',
       ),
-      loading: () => const Center(child: CircularProgressIndicator()),
+      loading: () => const _LibraryGridSkeleton(),
       error: (Object error, StackTrace _) => ErrorState(
         message: describeError(error),
         onRetry: () => ref.invalidate(_libraryAlbumsProvider),
@@ -391,27 +426,27 @@ class _AlbumsGrid extends ConsumerWidget {
 /// «Альбомы» показывает реально сохранённое, без нового запроса и без выдумки.
 final FutureProvider<List<Album>> _libraryAlbumsProvider =
     FutureProvider<List<Album>>((ref) async {
-  final List<Track> tracks = await ref.watch(librarySongsProvider.future);
+      final List<Track> tracks = await ref.watch(librarySongsProvider.future);
 
-  final Map<String, List<Track>> grouped = <String, List<Track>>{};
-  for (final Track track in tracks) {
-    final String? id = track.album?.id;
-    if (id == null || id.isEmpty) continue;
-    grouped.putIfAbsent(id, () => <Track>[]).add(track);
-  }
+      final Map<String, List<Track>> grouped = <String, List<Track>>{};
+      for (final Track track in tracks) {
+        final String? id = track.album?.id;
+        if (id == null || id.isEmpty) continue;
+        grouped.putIfAbsent(id, () => <Track>[]).add(track);
+      }
 
-  return grouped.entries.map((MapEntry<String, List<Track>> entry) {
-    final Track first = entry.value.first;
-    return Album(
-      id: entry.key,
-      title: first.album?.name ?? first.title,
-      artists: first.artists,
-      thumbnails: first.thumbnails,
-      tracks: entry.value,
-      trackCount: entry.value.length,
-    );
-  }).toList();
-});
+      return grouped.entries.map((MapEntry<String, List<Track>> entry) {
+        final Track first = entry.value.first;
+        return Album(
+          id: entry.key,
+          title: first.album?.name ?? first.title,
+          artists: first.artists,
+          thumbnails: first.thumbnails,
+          tracks: entry.value,
+          trackCount: entry.value.length,
+        );
+      }).toList();
+    });
 
 class _SongsTab extends ConsumerWidget {
   const _SongsTab();
@@ -423,10 +458,9 @@ class _SongsTab extends ConsumerWidget {
     return songs.when(
       data: (List<Track> data) {
         if (data.isEmpty) {
-          return const EmptyState(
-            icon: Icons.favorite_border,
+          return const _LibraryEmptyPane(
+            icon: Icons.favorite,
             title: 'Лайков нет',
-            subtitle: 'Отмечайте треки лайком — они соберутся здесь.',
           );
         }
         return TrackListView(
@@ -434,7 +468,7 @@ class _SongsTab extends ConsumerWidget {
           header: _PlayAllHeader(tracks: data, title: 'Мне нравится'),
         );
       },
-      loading: () => const Center(child: CircularProgressIndicator()),
+      loading: () => const _LibraryListSkeleton(),
       error: (Object error, StackTrace _) => ErrorState(
         message: describeError(error),
         onRetry: () => ref.invalidate(likedSongsProvider),
@@ -458,11 +492,9 @@ class _LibrarySongsTab extends ConsumerWidget {
     return songs.when(
       data: (List<Track> data) {
         if (data.isEmpty) {
-          return const EmptyState(
-            icon: Icons.music_note_outlined,
+          return const _LibraryEmptyPane(
+            icon: Icons.music_note,
             title: 'Сохранённых треков нет',
-            subtitle: 'Добавляйте треки в библиотеку YouTube Music — они '
-                'появятся здесь.',
           );
         }
         return TrackListView(
@@ -470,7 +502,7 @@ class _LibrarySongsTab extends ConsumerWidget {
           header: _PlayAllHeader(tracks: data, title: 'Треки'),
         );
       },
-      loading: () => const Center(child: CircularProgressIndicator()),
+      loading: () => const _LibraryListSkeleton(),
       error: (Object error, StackTrace _) => ErrorState(
         message: describeError(error),
         onRetry: () => ref.invalidate(librarySongsProvider),
@@ -486,12 +518,181 @@ class _SignInPrompt extends StatelessWidget {
     return EmptyState(
       icon: Icons.library_music_outlined,
       title: 'Коллекция пуста',
-      subtitle: 'Войдите в аккаунт YouTube Music, чтобы видеть свои плейлисты, '
+      subtitle:
+          'Войдите в аккаунт YouTube Music, чтобы видеть свои плейлисты, '
           'лайки и подписки.',
       action: FilledButton.icon(
         onPressed: () => AppRoutes.account(context),
         icon: const Icon(Icons.login),
         label: const Text('Войти'),
+      ),
+    );
+  }
+}
+
+/// Пустая вкладка библиотеки: карточка `LibraryEmptyState` с боковыми
+/// отступами 24 — как пустой список в ArchiveTune, где карточка встроена
+/// прямо в прокручиваемое содержимое раздела.
+class _LibraryEmptyPane extends StatelessWidget {
+  const _LibraryEmptyPane({required this.title, required this.icon});
+
+  final String title;
+  final IconData icon;
+
+  @override
+  Widget build(BuildContext context) {
+    return ListView(
+      padding: const EdgeInsets.fromLTRB(
+        24,
+        16,
+        24,
+        AppLayout.floatingDockClearance,
+      ),
+      children: <Widget>[LibraryEmptyState(title: title, icon: icon)],
+    );
+  }
+}
+
+/// Скелетон сетки библиотеки: карточки-заглушки того же размера, что и
+/// настоящие плитки, поэтому при загрузке сетка не «прыгает».
+///
+/// Форма плитки — `GridItemPlaceHolder` (shimmer/GridItemPlaceholder.kt):
+/// отступ 12, квадратная обложка, затем подписи. Сетка — общий делегат
+/// [_libraryGridDelegate], чтобы заглушка совпадала с содержимым.
+/// Цвет — как у остальных скелетонов приложения: `surfaceContainerHighest`,
+/// без анимации «шиммера» (media_hero.dart:270-274).
+class _LibraryGridSkeleton extends StatelessWidget {
+  const _LibraryGridSkeleton();
+
+  /// Сколько плиток-заглушек показать — примерно столько помещается на
+  /// первом экране desktop-раскладки.
+  static const int tiles = 8;
+
+  @override
+  Widget build(BuildContext context) {
+    final ColorScheme scheme = Theme.of(context).colorScheme;
+
+    return LayoutBuilder(
+      builder: (BuildContext context, BoxConstraints constraints) {
+        return GridView.builder(
+          padding: const EdgeInsets.fromLTRB(
+            24,
+            16,
+            24,
+            AppLayout.floatingDockClearance,
+          ),
+          gridDelegate: _libraryGridDelegate(constraints.maxWidth),
+          itemCount: tiles,
+          itemBuilder: (BuildContext context, int index) => Container(
+            decoration: BoxDecoration(
+              color: scheme.surfaceContainerLow,
+              borderRadius: BorderRadius.circular(32),
+            ),
+            padding: const EdgeInsets.all(12),
+            child: Column(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: <Widget>[
+                AspectRatio(
+                  aspectRatio: 1,
+                  child: DecoratedBox(
+                    decoration: BoxDecoration(
+                      color: scheme.surfaceContainerHighest,
+                      borderRadius: BorderRadius.circular(8),
+                    ),
+                  ),
+                ),
+                const SizedBox(height: 8),
+                const _SkeletonBar(widthFactor: 0.7, height: 16),
+                const SizedBox(height: 2),
+                const _SkeletonBar(widthFactor: 0.45, height: 12),
+              ],
+            ),
+          ),
+        );
+      },
+    );
+  }
+}
+
+/// Скелетон списка треков библиотеки — форма `ListItemPlaceHolder`
+/// (shimmer/ListItemPlaceholder.kt): строка 72, обложка 56 радиус 10 и две
+/// строки-заглушки.
+class _LibraryListSkeleton extends StatelessWidget {
+  const _LibraryListSkeleton();
+
+  /// Сколько строк-заглушек показать.
+  static const int rows = 8;
+
+  @override
+  Widget build(BuildContext context) {
+    final ColorScheme scheme = Theme.of(context).colorScheme;
+
+    return ListView.builder(
+      padding: const EdgeInsets.fromLTRB(
+        8,
+        8,
+        8,
+        AppLayout.floatingDockClearance,
+      ),
+      itemCount: rows,
+      itemBuilder: (BuildContext context, int index) => SizedBox(
+        height: AppLayout.trackRowHeight,
+        child: Row(
+          children: <Widget>[
+            Padding(
+              padding: const EdgeInsets.all(8),
+              child: DecoratedBox(
+                decoration: BoxDecoration(
+                  color: scheme.surfaceContainerHighest,
+                  borderRadius: BorderRadius.circular(
+                    AppLayout.thumbnailRadius,
+                  ),
+                ),
+                child: const SizedBox(
+                  width: AppLayout.trackArtwork,
+                  height: AppLayout.trackArtwork,
+                ),
+              ),
+            ),
+            Expanded(
+              child: Padding(
+                padding: const EdgeInsets.symmetric(horizontal: 6),
+                child: Column(
+                  mainAxisAlignment: MainAxisAlignment.center,
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  children: const <Widget>[
+                    _SkeletonBar(widthFactor: 0.6, height: 16),
+                    SizedBox(height: 8),
+                    _SkeletonBar(widthFactor: 0.35, height: 12),
+                  ],
+                ),
+              ),
+            ),
+          ],
+        ),
+      ),
+    );
+  }
+}
+
+/// Одна полоса-заглушка скелетона.
+class _SkeletonBar extends StatelessWidget {
+  const _SkeletonBar({required this.widthFactor, required this.height});
+
+  final double widthFactor;
+  final double height;
+
+  @override
+  Widget build(BuildContext context) {
+    return FractionallySizedBox(
+      alignment: Alignment.centerLeft,
+      widthFactor: widthFactor,
+      child: Container(
+        height: height,
+        decoration: BoxDecoration(
+          color: Theme.of(context).colorScheme.surfaceContainerHighest,
+          borderRadius: BorderRadius.circular(6),
+        ),
       ),
     );
   }
@@ -503,65 +704,92 @@ class _TileGrid extends StatelessWidget {
     required this.items,
     required this.emptyTitle,
     this.emptyIcon = Icons.inbox_outlined,
-    this.emptySubtitle,
   });
 
   final List<BrowseItem> items;
   final IconData emptyIcon;
   final String emptyTitle;
-  final String? emptySubtitle;
 
   @override
   Widget build(BuildContext context) {
     if (items.isEmpty) {
-      return EmptyState(
-        icon: emptyIcon,
-        title: emptyTitle,
-        subtitle: emptySubtitle,
-      );
+      // Пустая коллекция — карточка `LibraryEmptyState`, как в ArchiveTune
+      // (`LibraryPlaylistsScreen.kt:468-479`), а не заглушка на всю страницу.
+      return _LibraryEmptyPane(icon: emptyIcon, title: emptyTitle);
     }
 
-    return CustomScrollView(
-      slivers: <Widget>[
-        SliverPadding(
-          // Отступ сетки — 24 по краям, как в ArchiveTune (LibraryPlaylistsScreen.kt:463-465).
-          padding: const EdgeInsets.fromLTRB(24, 16, 24, 0),
-          sliver: SliverGrid(
-            gridDelegate: _libraryGridDelegate,
-            delegate: SliverChildBuilderDelegate(
-              (BuildContext context, int index) => LibrarySpotlightTile(
-                item: items[index],
-                onTap: () => _openItem(context, items[index]),
+    return LayoutBuilder(
+      builder: (BuildContext context, BoxConstraints constraints) {
+        return CustomScrollView(
+          slivers: <Widget>[
+            SliverPadding(
+              // Отступ сетки — 24 по краям, как в ArchiveTune
+              // (LibraryPlaylistsScreen.kt:463-465).
+              padding: const EdgeInsets.fromLTRB(24, 16, 24, 0),
+              sliver: SliverGrid(
+                gridDelegate: _libraryGridDelegate(constraints.maxWidth),
+                delegate: SliverChildBuilderDelegate(
+                  (BuildContext context, int index) => LibrarySpotlightTile(
+                    item: items[index],
+                    onTap: () => _openItem(context, items[index]),
+                  ),
+                  childCount: items.length,
+                ),
               ),
-              childCount: items.length,
             ),
-          ),
-        ),
-        const SliverToBoxAdapter(
-          child: SizedBox(height: AppLayout.floatingDockClearance),
-        ),
-      ],
+            const SliverToBoxAdapter(
+              child: SizedBox(height: AppLayout.floatingDockClearance),
+            ),
+          ],
+        );
+      },
     );
   }
 }
 
 /// Сетка библиотеки: колонок становится больше с ростом ширины окна.
 ///
-/// `mainAxisExtent` задан явно: высота плитки не зависит от ширины колонки,
-/// поэтому сетка не «дёргается».
-const SliverGridDelegateWithMaxCrossAxisExtent _libraryGridDelegate =
-    SliverGridDelegateWithMaxCrossAxisExtent(
-  maxCrossAxisExtent: 200,
-  mainAxisExtent: 200,
-  crossAxisSpacing: 16,
-  mainAxisSpacing: 16,
-);
+/// Высота ячейки вычисляется из её ширины, а не задана константой: обложка
+/// внутри плитки квадратная (`aspectRatio(1f)` в `PlaylistGridCard`,
+/// `LibraryPlaylistsScreen.kt:863-868`). Фиксированный `mainAxisExtent`
+/// обрезал бы обложку на широкой ячейке или оставлял пустоту на узкой.
+/// Значение зависит только от ширины окна, поэтому при прокрутке сетка не
+/// «дёргается».
+const double _libraryGridSpacing = 16;
+const double _libraryGridPadding = 24;
+const double _libraryMinTileWidth = 200;
+
+/// Высота «хвоста» плитки: отступы 12 сверху и снизу, зазор 8, заголовок
+/// `labelLarge` (строка 20) и подпись `bodySmall` (16) с зазором 2, плюс
+/// небольшой запас (2) — округление метрик строки в Flutter может дать
+/// доли пикселя, и без запаса сетка показала бы полосу переполнения.
+const double _libraryTileChrome = 12 + 8 + 20 + 2 + 16 + 12 + 2;
+
+SliverGridDelegate _libraryGridDelegate(double availableWidth) {
+  final double gridWidth = availableWidth - _libraryGridPadding * 2;
+  final int columns = gridWidth <= 0
+      ? 1
+      : math.max(
+          1,
+          (gridWidth / (_libraryMinTileWidth + _libraryGridSpacing)).ceil(),
+        );
+  final double tileWidth = gridWidth <= 0
+      ? _libraryMinTileWidth
+      : (gridWidth - _libraryGridSpacing * (columns - 1)) / columns;
+  return SliverGridDelegateWithFixedCrossAxisCount(
+    crossAxisCount: columns,
+    crossAxisSpacing: _libraryGridSpacing,
+    mainAxisSpacing: _libraryGridSpacing,
+    mainAxisExtent: tileWidth + _libraryTileChrome,
+  );
+}
 
 /// Секция сводного раздела: заголовок и сетка плиток.
 List<Widget> _gridSection(
   BuildContext context, {
   required String title,
   required List<BrowseItem> items,
+  required SliverGridDelegate delegate,
 }) {
   if (items.isEmpty) return const <Widget>[];
   return <Widget>[
@@ -569,7 +797,7 @@ List<Widget> _gridSection(
     SliverPadding(
       padding: const EdgeInsets.symmetric(horizontal: 24),
       sliver: SliverGrid(
-        gridDelegate: _libraryGridDelegate,
+        gridDelegate: delegate,
         delegate: SliverChildBuilderDelegate(
           (BuildContext context, int index) => LibrarySpotlightTile(
             item: items[index],
@@ -600,9 +828,9 @@ class _GridHeader extends StatelessWidget {
         maxLines: 1,
         overflow: TextOverflow.ellipsis,
         style: Theme.of(context).textTheme.titleMedium?.copyWith(
-              fontWeight: FontWeight.w700,
-              color: Theme.of(context).colorScheme.onSurface,
-            ),
+          fontWeight: FontWeight.w700,
+          color: Theme.of(context).colorScheme.onSurface,
+        ),
       ),
     );
   }
@@ -645,9 +873,9 @@ class _PlayAllHeader extends ConsumerWidget {
               maxLines: 1,
               overflow: TextOverflow.ellipsis,
               style: Theme.of(context).textTheme.titleMedium?.copyWith(
-                    fontWeight: FontWeight.w700,
-                    color: scheme.onSurface,
-                  ),
+                fontWeight: FontWeight.w700,
+                color: scheme.onSurface,
+              ),
             ),
           ),
           // Кнопка «слушать всё» — как в ArchiveTune: заливка `primary`,
@@ -663,10 +891,7 @@ class _PlayAllHeader extends ConsumerWidget {
             icon: const Icon(Icons.shuffle, size: 16),
             label: const Text(
               'Слушать',
-              style: TextStyle(
-                fontWeight: FontWeight.w700,
-                fontSize: 12,
-              ),
+              style: TextStyle(fontWeight: FontWeight.w700, fontSize: 12),
             ),
           ),
         ],

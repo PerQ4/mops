@@ -6,8 +6,8 @@ import '../../data/models/models.dart';
 import '../../data/sources/catalog_source.dart';
 import '../../state/catalog_providers.dart';
 import '../../widgets/async_views.dart';
-import '../../widgets/empty_state.dart';
 import '../../widgets/section_list.dart';
+import 'search_states.dart';
 
 /// Результаты поиска по уже заданному запросу.
 ///
@@ -32,22 +32,21 @@ class SearchResultsScreen extends ConsumerWidget {
       body: results.when(
         data: (List<BrowseSection> sections) {
           if (sections.isEmpty) {
-            return const EmptyState(
-              icon: Icons.search_off,
-              title: 'Ничего не найдено',
-              subtitle: 'Попробуйте другой запрос.',
-            );
+            return const SearchStateMessage(message: 'Ничего не найдено');
           }
           return SectionListView(
             sections: sections,
             padding: const EdgeInsets.only(bottom: AppLayout.gutter),
           );
         },
-        loading: () => const SectionSkeleton(rows: 3),
-        error: (Object error, StackTrace _) => ErrorState(
+        loading: () => const SearchResultsSkeleton(),
+        error: (Object error, StackTrace _) => SearchStateMessage(
           message: describeError(error),
-          onRetry: () => ref.invalidate(
-            searchResultsProvider(SearchQuery(query, SearchFilter.all)),
+          action: FilledButton(
+            onPressed: () => ref.invalidate(
+              searchResultsProvider(SearchQuery(query, SearchFilter.all)),
+            ),
+            child: const Text('Повторить'),
           ),
         ),
       ),

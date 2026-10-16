@@ -8,6 +8,19 @@ import '../../widgets/async_views.dart';
 import '../../widgets/section_list.dart';
 import '../../widgets/empty_state.dart';
 
+/// Иконка вкладки раздела «Обзор».
+///
+/// ArchiveTune рисует вкладки обзора как `SearchDiscoveryTabs`
+/// (ui/screens/search/SearchScreen.kt:342-387): значок плюс подпись. Набор
+/// разделов в mOps свой, поэтому значки подобраны по смыслу раздела, как
+/// `explore_outlined`/`auto_awesome` в оригинале.
+IconData _exploreIcon(ExploreSection section) => switch (section) {
+  ExploreSection.newReleases => Icons.new_releases_outlined,
+  ExploreSection.charts => Icons.trending_up,
+  ExploreSection.moods => Icons.explore_outlined,
+  ExploreSection.podcasts => Icons.podcasts,
+};
+
 /// Раздел «Обзор»: новые релизы, чарты, настроения и жанры.
 ///
 /// Вместо одной длинной страницы — вкладки, как в YouTube Music.
@@ -40,9 +53,12 @@ class _ExploreScreenState extends ConsumerState<ExploreScreen>
           controller: _tabs,
           isScrollable: true,
           tabAlignment: TabAlignment.start,
+          // Вкладки с иконками и подписью, как `SearchDiscoveryTabs`
+          // (SearchScreen.kt:342-387): контейнер прозрачный, индикатор
+          // `primary` — это задаёт тема (`app_theme.dart:242-253`).
           tabs: <Widget>[
             for (final ExploreSection section in ExploreSection.values)
-              Tab(text: section.label),
+              Tab(icon: Icon(_exploreIcon(section)), text: section.label),
           ],
         ),
       ),
@@ -64,8 +80,9 @@ class _ExploreTab extends ConsumerWidget {
 
   @override
   Widget build(BuildContext context, WidgetRef ref) {
-    final AsyncValue<List<BrowseSection>> sections =
-        ref.watch(browseSectionProvider(browseId));
+    final AsyncValue<List<BrowseSection>> sections = ref.watch(
+      browseSectionProvider(browseId),
+    );
 
     return sections.when(
       data: (List<BrowseSection> data) {
@@ -86,7 +103,7 @@ class _ExploreTab extends ConsumerWidget {
       },
       loading: () => const SectionSkeleton(),
       error: (Object error, StackTrace _) => ErrorState(
-          message: describeError(error),
+        message: describeError(error),
         onRetry: () => ref.invalidate(browseSectionProvider(browseId)),
       ),
     );

@@ -24,6 +24,8 @@ class ArtistLine extends StatefulWidget {
     this.fallback = 'Неизвестный исполнитель',
     this.suffix,
     this.overflow = TextOverflow.ellipsis,
+    this.textAlign,
+    this.onArtistTap,
   });
 
   final List<ArtistRef> artists;
@@ -38,6 +40,17 @@ class ArtistLine extends StatefulWidget {
   final List<String>? suffix;
 
   final TextOverflow overflow;
+
+  /// Свой обработчик нажатия на имя.
+  ///
+  /// Нужен полному плееру: перед переходом к исполнителю он должен СВЕРНУТЬСЯ,
+  /// иначе страница открывается под плеером, а плеер остаётся на экране.
+  final void Function(ArtistRef artist)? onArtistTap;
+
+  /// Выравнивание строки. В «герое» страницы подпись идёт по центру
+  /// (`TextAlign.Center` в `MediaDetailHero.kt`), поэтому выравнивание
+  /// вынесено параметром, а не задано жёстко.
+  final TextAlign? textAlign;
 
   @override
   State<ArtistLine> createState() => _ArtistLineState();
@@ -76,7 +89,9 @@ class _ArtistLineState extends State<ArtistLine> {
         final String name = cleanArtistName(artist.name);
         if (artist.isNavigable) {
           final TapGestureRecognizer recognizer = TapGestureRecognizer()
-            ..onTap = () => AppRoutes.artist(context, artist.id!);
+            ..onTap = () => widget.onArtistTap != null
+                ? widget.onArtistTap!(artist)
+                : AppRoutes.artist(context, artist.id!);
           _recognizers.add(recognizer);
           spans.add(TextSpan(text: name, recognizer: recognizer));
         } else {
@@ -94,6 +109,7 @@ class _ArtistLineState extends State<ArtistLine> {
       TextSpan(children: spans),
       maxLines: widget.maxLines,
       overflow: widget.overflow,
+      textAlign: widget.textAlign,
       style: widget.style,
     );
   }

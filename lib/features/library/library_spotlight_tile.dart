@@ -7,10 +7,10 @@ import '../../widgets/artwork.dart';
 /// Плитка-подборка библиотеки.
 ///
 /// Форма из ArchiveTune: фон `surfaceContainerLow`, крупное скругление 32,
-/// отступ 12, обложка со скруглением 26. Заголовок — `labelLarge` полужирный,
+/// отступ 12, обложка со скруглением 26 и **квадратная** (`aspectRatio(1f)`,
+/// `LibraryPlaylistsScreen.kt:863-868`). Заголовок — `labelLarge` полужирный,
 /// подпись — `bodySmall` приглушённая (PlaylistGridCard,
-/// `LibraryPlaylistsScreen.kt:823-945`; `GridItem`,
-/// `ui/component/Items.kt:312-346`).
+/// `LibraryPlaylistsScreen.kt:933-944`).
 class LibrarySpotlightTile extends StatelessWidget {
   const LibrarySpotlightTile({
     super.key,
@@ -31,18 +31,22 @@ class LibrarySpotlightTile extends StatelessWidget {
     final TextTheme text = Theme.of(context).textTheme;
 
     final (String? subtitle, bool circular, IconData icon) = switch (item) {
-      TrackItem(:final Track track) => (track.artistLine, false, Icons.music_note),
+      TrackItem(:final Track track) => (
+        track.artistLine,
+        false,
+        Icons.music_note,
+      ),
       AlbumItem(:final Album album) => (
-          album.year ?? album.artistLine,
-          false,
-          Icons.album_outlined,
-        ),
+        album.year ?? album.artistLine,
+        false,
+        Icons.album_outlined,
+      ),
       ArtistItem() => (null, true, Icons.person_outline),
       PlaylistItem(:final Playlist playlist) => (
-          playlist.author,
-          false,
-          Icons.queue_music,
-        ),
+        playlist.author,
+        false,
+        Icons.queue_music,
+      ),
     };
 
     return Container(
@@ -61,32 +65,42 @@ class LibrarySpotlightTile extends StatelessWidget {
             child: Column(
               crossAxisAlignment: CrossAxisAlignment.start,
               children: <Widget>[
-                SizedBox(
-                  height: AppLayout.gridThumbnailHeight,
-                  width: double.infinity,
-                  child: circular
-                      ? Align(
-                          alignment: Alignment.center,
+                // Обложка квадратная: в `PlaylistGridCard` это
+                // `Box(fillMaxWidth().aspectRatio(1f))` — так плитка совпадает
+                // по форме с обложкой и не превращается в прямоугольник на
+                // широкой ячейке.
+                LayoutBuilder(
+                  builder: (BuildContext context, BoxConstraints constraints) {
+                    final double side = constraints.maxWidth;
+                    if (circular) {
+                      // Круглый аватар ограничен размером сетки — иначе на
+                      // широком окне он раздувался бы вместе с ячейкой.
+                      final double avatar = side < AppLayout.gridThumbnailHeight
+                          ? side
+                          : AppLayout.gridThumbnailHeight;
+                      return SizedBox.square(
+                        dimension: side,
+                        child: Center(
                           child: SizedBox.square(
-                            dimension: AppLayout.gridThumbnailHeight,
+                            dimension: avatar,
                             child: Artwork(
-                              url: item.thumbnails.sized(
-                                (AppLayout.gridThumbnailHeight * 2).round(),
-                              ),
+                              url: item.thumbnails.sized((avatar * 2).round()),
                               icon: icon,
-                              radius: BorderRadius.circular(
-                                AppLayout.gridThumbnailHeight / 2,
-                              ),
+                              radius: BorderRadius.circular(avatar / 2),
                             ),
                           ),
-                        )
-                      : Artwork(
-                          url: item.thumbnails.sized(
-                            (AppLayout.gridThumbnailHeight * 2).round(),
-                          ),
-                          icon: icon,
-                          radius: BorderRadius.circular(thumbnailRadius),
                         ),
+                      );
+                    }
+                    return AspectRatio(
+                      aspectRatio: 1,
+                      child: Artwork(
+                        url: item.thumbnails.sized((side * 2).round()),
+                        icon: icon,
+                        radius: BorderRadius.circular(thumbnailRadius),
+                      ),
+                    );
+                  },
                 ),
                 const SizedBox(height: 8),
                 Text(

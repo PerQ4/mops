@@ -13,6 +13,8 @@ import 'core/net/fronting.dart';
 import 'core/net/local_proxy.dart';
 import 'data/local/app_settings.dart';
 import 'features/shell/app_shell.dart';
+import 'features/shell/content_navigator.dart';
+import 'widgets/back_gesture.dart';
 import 'state/providers.dart';
 import 'state/theme_providers.dart';
 import 'state/ui_scale.dart';
@@ -117,6 +119,7 @@ class _MopsAppState extends ConsumerState<MopsApp> {
     });
 
     return MaterialApp(
+      navigatorKey: rootNavigatorKey,
       title: 'mOps',
       debugShowCheckedModeBanner: false,
       theme: themes.light,
@@ -135,10 +138,14 @@ class _MopsAppState extends ConsumerState<MopsApp> {
         final double scale = resolveUiScale(context, ref);
 
         return _ScaleShortcuts(
-          child: UiScaler(
-            scale: scale,
-            child: _RenderScale(
-              child: _ClampedTextScale(child: content),
+          // Жест «назад» ставим внутри корневого навигатора: тогда к нему
+          // всплывают события и от подэкранов, и от полноэкранного плеера.
+          child: BackGesture(
+            child: UiScaler(
+              scale: scale,
+              child: _RenderScale(
+                child: _ClampedTextScale(child: content),
+              ),
             ),
           ),
         );
