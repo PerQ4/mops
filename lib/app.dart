@@ -13,6 +13,7 @@ import 'core/net/fronting.dart';
 import 'core/net/local_proxy.dart';
 import 'data/local/app_settings.dart';
 import 'features/shell/app_shell.dart';
+import 'features/shell/app_shortcuts.dart';
 import 'features/shell/content_navigator.dart';
 import 'widgets/back_gesture.dart';
 import 'state/providers.dart';
@@ -137,14 +138,19 @@ class _MopsAppState extends ConsumerState<MopsApp> {
         final Widget content = child ?? const SizedBox.shrink();
         final double scale = resolveUiScale(context, ref);
 
-        return _ScaleShortcuts(
-          // Жест «назад» ставим внутри корневого навигатора: тогда к нему
-          // всплывают события и от подэкранов, и от полноэкранного плеера.
-          child: BackGesture(
-            child: UiScaler(
-              scale: scale,
-              child: _RenderScale(
-                child: _ClampedTextScale(child: content),
+        // Глобальные горячие клавиши (пробел, стрелки, L, M, Esc, Ctrl+K)
+        // оборачивают всё содержимое: так они работают независимо от того,
+        // какой экран и какой фокус сейчас активны.
+        return AppShortcuts(
+          child: _ScaleShortcuts(
+            // Жест «назад» ставим внутри корневого навигатора: тогда к нему
+            // всплывают события и от подэкранов, и от полноэкранного плеера.
+            child: BackGesture(
+              child: UiScaler(
+                scale: scale,
+                child: _RenderScale(
+                  child: _ClampedTextScale(child: content),
+                ),
               ),
             ),
           ),
