@@ -91,11 +91,9 @@ class _WindowTitleBarState extends ConsumerState<WindowTitleBar> {
         color: matchBackground
             ? scheme.surfaceContainer
             : scheme.surfaceContainerLowest,
-        border: Border(
-          bottom: BorderSide(
-            color: scheme.outlineVariant.withValues(alpha: 0.25),
-          ),
-        ),
+        // Разделительной линии нет намеренно: цвет шапки и содержимого и так
+        // разный, а светлая полоска в один пиксель читалась как дефект
+        // отрисовки — под шапкой будто оставалась микро-тень.
       ),
       child: SizedBox(
         height: widget.height,
