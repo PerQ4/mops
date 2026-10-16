@@ -86,18 +86,16 @@ class _WindowTitleBarState extends ConsumerState<WindowTitleBar> {
     return DecoratedBox(
       decoration: BoxDecoration(
         // По умолчанию — самый тёмный тон палитры: шапка читается как рамка
-        // окна. Настройкой цвет возвращается к фону содержимого — тогда шапка
-        // сливается с приложением и границы не видно.
+        // окна. Настройкой цвет возвращается к фону боковых панелей: шапка
+        // становится их продолжением и вместе с ними образует рамку окна.
         color: matchBackground
-            ? scheme.surface
+            ? scheme.surfaceContainer
             : scheme.surfaceContainerLowest,
-        border: matchBackground
-            ? null
-            : Border(
-                bottom: BorderSide(
-                  color: scheme.outlineVariant.withValues(alpha: 0.25),
-                ),
-              ),
+        border: Border(
+          bottom: BorderSide(
+            color: scheme.outlineVariant.withValues(alpha: 0.25),
+          ),
+        ),
       ),
       child: SizedBox(
         height: widget.height,
