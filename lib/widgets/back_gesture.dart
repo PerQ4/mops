@@ -4,6 +4,13 @@ import 'package:flutter/services.dart';
 
 import '../features/shell/content_navigator.dart';
 
+/// Прогресс жеста «назад», 0…1.
+///
+/// Читают маршруты: пока жест идёт, верхний экран едет за пальцем и темнеет —
+/// как в системной анимации Android. Без этого жест срабатывал «молча»: экран
+/// просто исчезал в конце.
+final ValueNotifier<double> backGestureProgress = ValueNotifier<double>(0);
+
 /// Жест «назад», как в приложениях Android.
 ///
 /// Поддерживается три способа, потому что на десктопе нет одного общего:
@@ -29,9 +36,34 @@ class BackGesture extends StatefulWidget {
   State<BackGesture> createState() => _BackGestureState();
 }
 
-class _BackGestureState extends State<BackGesture> {
+class _BackGestureState extends State<BackGesture>
+    with SingleTickerProviderStateMixin {
   /// Накопленное смещение текущего жеста тачпада.
   double _panDx = 0;
+
+  /// Возврат экрана на место, если жест не добрал порога.
+  late final AnimationController _settle = AnimationController(
+    vsync: this,
+    duration: const Duration(milliseconds: 220),
+  );
+
+  @override
+  void initState() {
+    super.initState();
+    _settle.addListener(() {
+      backGestureProgress.value = _settle.value;
+    });
+    // Клавиатуру слушаем глобально, а не через `Shortcuts`: сочетание должно
+    // работать независимо от того, где сейчас фокус.
+    HardwareKeyboard.instance.addHandler(_onKey);
+  }
+
+  @override
+  void dispose() {
+    _settle.dispose();
+    HardwareKeyboard.instance.removeHandler(_onKey);
+    super.dispose();
+  }
 
   /// Закрывает верхний экран: сначала подэкран оболочки, потом полноэкранный
   /// плеер. Порядок важен — плеер открывается в корневом навигаторе поверх
@@ -58,21 +90,6 @@ class _BackGestureState extends State<BackGesture> {
     // Свайп вправо — назад. Влево не трогаем: там «вперёд» нет, а случайный
     // жест в обратную сторону не должен ничего закрывать.
     if (dx >= BackGesture.swipeThreshold) _goBack();
-  }
-
-  @override
-  void initState() {
-    super.initState();
-    // Клавиатуру слушаем глобально, а не через `Shortcuts`: сочетание должно
-    // работать независимо от того, где сейчас фокус — в списке, в поле поиска
-    // или на кнопке.
-    HardwareKeyboard.instance.addHandler(_onKey);
-  }
-
-  @override
-  void dispose() {
-    HardwareKeyboard.instance.removeHandler(_onKey);
-    super.dispose();
   }
 
   /// Alt + ← и кнопка «назад» на клавиатуре.
@@ -105,6 +122,53 @@ class _BackGestureState extends State<BackGesture> {
         if (event.buttons == kBackMouseButton) _goBack();
       },
       child: widget.child,
+    );
+  }
+}
+
+/// Верхний экран, который едет за пальцем во время жеста «назад».
+///
+/// Как в системной анимации Android: уходящий экран сдвигается вправо и
+/// темнеет, а из-под него показывается предыдущий. Нижние маршруты не
+/// трогаем — их всё равно не видно, а сдвиг открыл бы фон вместо страницы.
+class PredictiveBack extends StatelessWidget {
+  const PredictiveBack({super.key, required this.child});
+
+  final Widget child;
+
+  /// Насколько экран уходит в сторону на полном жесте.
+  static const double _shift = 0.28;
+
+  @override
+  Widget build(BuildContext context) {
+    final ModalRoute<dynamic>? route = ModalRoute.of(context);
+    // Сдвигаем только верхний маршрут: остальные лежат под ним.
+    if (route == null || !route.isCurrent) return child;
+
+    return ValueListenableBuilder<double>(
+      valueListenable: backGestureProgress,
+      builder: (BuildContext context, double progress, Widget? inner) {
+        if (progress <= 0.001) return inner!;
+        final double width = MediaQuery.sizeOf(context).width;
+        return Transform.translate(
+          offset: Offset(progress * width * _shift, 0),
+          child: Stack(
+            children: <Widget>[
+              inner!,
+              // Затемнение уходящего экрана — оно же гасит и «оторванный»
+              // край, чтобы сдвиг читался как уход в глубину.
+              Positioned.fill(
+                child: IgnorePointer(
+                  child: ColoredBox(
+                    color: Colors.black.withValues(alpha: 0.28 * progress),
+                  ),
+                ),
+              ),
+            ],
+          ),
+        );
+      },
+      child: child,
     );
   }
 }

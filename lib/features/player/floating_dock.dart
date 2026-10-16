@@ -132,19 +132,25 @@ class _FloatingDockState extends ConsumerState<FloatingDock> {
     // переносится в столбик, а уменьшается целиком (`scaleDown`): форма и
     // стык сохраняются, переполнения нет. Так же поступает ArchiveTune:
     // мини-плеер и навигация остаются единой фигурой.
+    // Порядок в списке задаёт порядок отрисовки: навигация идёт ПОСЛЕ плеера,
+    // то есть ложится поверх него. Благодаря этому капсула трека может
+    // уезжать под навигацию — стык при этом не двигается. `textDirection: rtl`
+    // разворачивает только порядок вдоль оси, текст внутри островков остаётся
+    // слева направо.
     final Widget row = FittedBox(
       fit: BoxFit.scaleDown,
       alignment: Alignment.bottomCenter,
       child: Row(
         mainAxisSize: MainAxisSize.min,
         crossAxisAlignment: CrossAxisAlignment.end,
+        textDirection: TextDirection.rtl,
         children: <Widget>[
+          playerIsland,
+          if (showPlayerIsland) const SizedBox(width: FloatingDock.gap),
           _NavIsland(
             joinedOnRight: showPlayerIsland,
             sidebarVisible: sidebarVisible,
           ),
-          if (showPlayerIsland) const SizedBox(width: FloatingDock.gap),
-          playerIsland,
         ],
       ),
     );
@@ -156,7 +162,7 @@ class _FloatingDockState extends ConsumerState<FloatingDock> {
       valueListenable: _swipe,
       builder: (BuildContext context, Offset swipe, Widget? child) {
         return Transform.translate(
-          offset: Offset(swipe.dx * 12, swipe.dy * 8),
+          offset: Offset(0, swipe.dy * 10),
           child: child,
         );
       },
@@ -383,21 +389,32 @@ class _PlayerIslandState extends ConsumerState<_PlayerIsland> {
     final Track track = player.current!;
     final bool wide = context.isExpandedLayout;
 
-    final ColorScheme scheme = Theme.of(context).colorScheme;
     // Насколько жест набран: подмешиваем акцент к поверхности островка, чтобы
     // свайп было видно. Раньше островок на движение не отвечал никак.
     final double tint =
         (_progress.abs() * 0.7 + _downProgress * 0.5).clamp(0.0, 1.0);
 
+    // Свайп от навигации (вправо) — островок отрывается от неё, и левый край
+    // становится таким же круглым, как правый.
+    final double awayNav = (_dragDx / 140).clamp(0.0, 1.0);
+
+    final BorderRadius radius = BorderRadius.only(
+      topLeft: Radius.circular(
+        FloatingDock.joinRadius +
+            (FloatingDock.playerRadius - FloatingDock.joinRadius) * awayNav,
+      ),
+      bottomLeft: Radius.circular(
+        FloatingDock.joinRadius +
+            (FloatingDock.playerRadius - FloatingDock.joinRadius) * awayNav,
+      ),
+      topRight: Radius.circular(FloatingDock.playerRadius),
+      bottomRight: Radius.circular(FloatingDock.playerRadius),
+    );
+
     final Widget island = _DockSurface(
         // Слева всегда стоит остров навигации, поэтому левые углы почти
         // прямые: вместе островки читаются одной фигурой.
-        radius: BorderRadius.only(
-          topLeft: const Radius.circular(FloatingDock.joinRadius),
-          bottomLeft: const Radius.circular(FloatingDock.joinRadius),
-          topRight: Radius.circular(FloatingDock.playerRadius),
-          bottomRight: Radius.circular(FloatingDock.playerRadius),
-        ),
+        radius: radius,
         elevation: 0,
         tint: tint,
         child: SizedBox(
@@ -421,29 +438,7 @@ class _PlayerIslandState extends ConsumerState<_PlayerIsland> {
         ),
       );
 
-    // Подсветка стыка с островком навигации: пока идёт жест, на стыке
-    // проступает акцентная черта — два островка читаются одной фигурой,
-    // которая сейчас «натянута».
-    final Widget islandWithJoint = Stack(
-      alignment: Alignment.centerLeft,
-      children: <Widget>[
-        island,
-        AnimatedOpacity(
-          duration: const Duration(milliseconds: 160),
-          curve: Curves.easeOut,
-          opacity: _progress.abs().clamp(0.0, 1.0),
-          child: Container(
-            width: 3,
-            height: 34,
-            margin: const EdgeInsets.only(left: 3),
-            decoration: BoxDecoration(
-              color: scheme.primary,
-              borderRadius: BorderRadius.circular(2),
-            ),
-          ),
-        ),
-      ],
-    );
+    final Widget islandWithJoint = island;
 
     // Жесты островка: свайп влево/вправо — следующий/предыдущий трек, тап по
     // свободному месту — полноэкранный плеер. Кнопки управления лежат внутри
@@ -490,10 +485,10 @@ class _PlayerIslandState extends ConsumerState<_PlayerIsland> {
             _dragging ? Duration.zero : const Duration(milliseconds: 280),
         curve: Curves.easeOutBack,
         transform: Matrix4.translationValues(
-          _dragDx * 0.30,
+          _dragDx * 0.32,
           _dragDy * 0.30,
           0,
-        )..rotateZ(_progress * 0.035),
+        ),
         child: islandWithJoint,
       ),
     );

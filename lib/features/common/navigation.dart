@@ -10,6 +10,7 @@ import '../settings/spotify_import_screen.dart';
 import '../settings/bypass_screen.dart';
 import '../settings/settings_screen.dart';
 import '../shell/content_navigator.dart';
+import '../../widgets/back_gesture.dart';
 
 /// Единая точка переходов.
 ///
@@ -66,7 +67,10 @@ abstract final class AppRoutes {
                 begin: const Offset(0, 0.02),
                 end: Offset.zero,
               ).animate(curved),
-              child: child,
+              // Пока идёт жест «назад», верхний экран едет за пальцем и
+              // темнеет — как в системной анимации Android. Без этого жест
+              // срабатывал «молча»: экран просто исчезал в конце.
+              child: PredictiveBack(child: child),
             ),
           );
         },
