@@ -63,13 +63,22 @@ class _MopsAppState extends ConsumerState<MopsApp> {
     try {
       AppSettings settings = ref.read(settingsControllerProvider);
 
-      // Шаг 1: не сломана ли подмена хоста.
-      if (settings.bypass.fronting.enabled &&
-          !settings.bypass.usesProxy &&
-          !await ConnectivityCheck.dataReachable(fronting: true)) {
-        if (await ConnectivityCheck.dataReachable(fronting: false)) {
+      // Шаг 1: если прямой доступ работает, свой обход не нужен и только
+      // мешает. Под VPN (Cloudflare WARP и подобными) подмена хоста ломает
+      // запросы, хотя напрямую всё грузится — именно поэтому у друга «ничего
+      // не грузилось». Выключаем обход целиком, когда прямой доступ есть.
+      if (!settings.bypass.usesProxy &&
+          await ConnectivityCheck.dataReachable(fronting: false)) {
+        if (settings.bypass.isEnabled) {
           await controller.setFrontingEnabled(false);
-          debugPrint('[Access] подмена хоста недоступна — выключена');
+          if (settings.bypass.fragments) {
+            await controller.setBypass(
+              settings.bypass.copyWith(
+                fragmentation: FragmentationLevel.off,
+              ),
+            );
+          }
+          debugPrint('[Access] прямой доступ есть — свой обход выключен');
         }
       }
 

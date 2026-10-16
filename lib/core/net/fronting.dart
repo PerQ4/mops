@@ -1,4 +1,5 @@
 import 'dart:async';
+import 'dart:convert';
 import 'dart:io';
 
 /// ---------------------------------------------------------------------------
@@ -389,8 +390,12 @@ abstract final class ConnectivityCheck {
       );
 
       final HttpClientResponse response = await request.close();
-      await response.drain<void>();
-      return response.statusCode > 0;
+      final String body = await response.transform(utf8.decoder).join();
+      // Важно: любой ответ (даже 403) — это НЕ работоспособность. Фронт-узел
+      // может отвечать, а API за ним не работать; из-за этого «сломанная»
+      // подмена хоста оставалась включённой, и не грузилось вообще ничего.
+      // Требуем настоящий 200 и признак ответа InnerTube.
+      return response.statusCode == 200 && body.contains('responseContext');
     } on Object {
       return false;
     } finally {
