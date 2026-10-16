@@ -116,10 +116,13 @@ class AppTheme {
       ),
       appBarTheme: AppBarTheme(
         backgroundColor: scheme.surface,
-        surfaceTintColor: scheme.surfaceTint,
+        // Панель экрана не подкрашивается при прокрутке: в M3 она получает
+        // тон `surfaceTint`, и под шапкой окна появлялась более светлая полоса,
+        // неотличимая от артефакта отрисовки.
+        surfaceTintColor: Colors.transparent,
         foregroundColor: scheme.onSurface,
         elevation: 0,
-        scrolledUnderElevation: 3,
+        scrolledUnderElevation: 0,
         centerTitle: false,
         // Заголовок экрана в ArchiveTune — titleLarge, bold, цветом primary:
         // он читается как акцент, а не как обычный текст.
