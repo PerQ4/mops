@@ -1,5 +1,6 @@
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
+import 'package:material_3_expressive/material_3_expressive.dart' as m3e;
 
 import '../../core/theme/layout.dart';
 import '../../core/utils/artwork_urls.dart';
@@ -11,8 +12,23 @@ import '../../state/player_controller.dart';
 import '../../widgets/artist_line.dart';
 import '../../widgets/artwork.dart';
 import '../../widgets/empty_state.dart';
+import '../../widgets/horizontal_list.dart';
 import '../../widgets/track_menu.dart';
 import '../../widgets/track_tile.dart';
+
+/// Сколько ближайших треков показывать в карусели.
+///
+/// Верхняя граница рабочего диапазона 5–7: больше — и лента начинает
+/// дублировать список «Далее»; меньше — и она теряет смысл как обзор.
+const int _kCarouselMaxItems = 6;
+
+/// Ниже этой высоты очереди карусель скрывается.
+///
+/// Блок «сейчас» (шапка ≈231 + строка текущего трека 72 ≈ 303) занимает верх
+/// очереди и до карусели виден всегда. Если после него остаётся меньше трети
+/// карточки, лента почти целиком уходит под сгиб — тогда она не обзор, а лишняя
+/// прокрутка, и её лучше спрятать (островок, низкое окно).
+const double _kCarouselMinHeight = 400;
 
 /// Очередь воспроизведения.
 ///
@@ -75,78 +91,114 @@ class QueueList extends ConsumerWidget {
 
     final int playedCount = played.length;
 
-    return CustomScrollView(
-      controller: scrollController,
-      // Очередь всегда владеет своей прокруткой и не претендует на роль
-      // «главного» скролла: на полном экране рядом стоит блок управления
-      // со своим `SingleChildScrollView`, и общий `PrimaryScrollController`
-      // на телефоне тянул бы обе прокрутки одновременно.
-      primary: false,
-      slivers: <Widget>[
-        // Шапка с текущим треком — как `CurrentSongHeader` в ArchiveTune.
-        if (showHeader) const SliverToBoxAdapter(child: _QueueHeader()),
+    // Карусель — только ближайшие треки: растянутая на всю очередь, она была
+    // бы дублем списка «Далее». Для одного трека лента не нужна — там хватает
+    // обычной строки списка.
+    final List<Track> featured = upNext.length >= 2
+        ? upNext.take(_kCarouselMaxItems).toList(growable: false)
+        : const <Track>[];
 
-        if (current != null) ...<Widget>[
-          SliverToBoxAdapter(
-            child: TrackTile(
-              track: current,
-              isCurrent: true,
-              isPlaying: isPlaying,
-              onTap: () {},
-              // В очереди свайп выключен: трек уже здесь, а горизонтальный
-              // жест мешал бы перетаскиванию строк.
-              enableSwipe: false,
-            ),
-          ),
-        ],
+    return LayoutBuilder(
+      builder: (BuildContext context, BoxConstraints constraints) {
+        // На коротком окне (островок, сжатая панель) карусель заняла бы почти
+        // весь видимый верх очереди и всё равно потребовала прокрутки — тогда
+        // показываем только список. Высота ограничена на всех трёх
+        // поверхностях (`Expanded`/`Flexible`), но проверяем безопасно: при
+        // бесконечном ограничении карусель не прячем.
+        final bool showCarousel = featured.isNotEmpty &&
+            (!constraints.hasBoundedHeight ||
+                constraints.maxHeight >= _kCarouselMinHeight);
 
-        if (upNext.isEmpty)
-          const SliverToBoxAdapter(
-            child: Padding(
-              padding: EdgeInsets.all(AppLayout.gutter),
-              child: Text('Дальше треков нет — включится радио по текущему.'),
-            ),
-          )
-        else ...<Widget>[
-          SliverToBoxAdapter(child: _GroupLabel('Далее — ${upNext.length}')),
-          SliverReorderableList(
-            itemCount: upNext.length,
-            // onReorderItem отдаёт уже скорректированный индекс.
-            onReorderItem: (int oldIndex, int newIndex) {
-              final int base = currentIndex + 1;
-              controller.reorderQueue(oldIndex + base, newIndex + base);
-            },
-            itemBuilder: (BuildContext context, int index) {
-              final Track track = upNext[index];
-              return _ReorderableTile(
-                key: ValueKey<String>('${track.id}-$index'),
-                index: index,
-                track: track,
-                onTap: () => controller.jumpTo(currentIndex + 1 + index),
-                onRemove: () =>
-                    controller.removeFromQueue(currentIndex + 1 + index),
-              );
-            },
-          ),
-        ],
+        return CustomScrollView(
+          controller: scrollController,
+          // Очередь всегда владеет своей прокруткой и не претендует на роль
+          // «главного» скролла: на полном экране рядом стоит блок управления
+          // со своим `SingleChildScrollView`, и общий `PrimaryScrollController`
+          // на телефоне тянул бы обе прокрутки одновременно.
+          primary: false,
+          slivers: <Widget>[
+            // Шапка с текущим треком — как `CurrentSongHeader` в ArchiveTune.
+            if (showHeader) const SliverToBoxAdapter(child: _QueueHeader()),
 
-        if (playedCount > 0) ...<Widget>[
-          SliverToBoxAdapter(child: _GroupLabel('Уже проиграно — $playedCount')),
-          SliverList.builder(
-            itemCount: playedCount,
-            itemBuilder: (BuildContext context, int index) {
-              return TrackTile(
-                track: played[index],
-                isDimmed: true,
-                onTap: () => controller.jumpTo(index),
-                enableSwipe: false,
-              );
-            },
-          ),
-        ],
+            if (current != null) ...<Widget>[
+              SliverToBoxAdapter(
+                child: TrackTile(
+                  track: current,
+                  isCurrent: true,
+                  isPlaying: isPlaying,
+                  onTap: () {},
+                  // В очереди свайп выключен: трек уже здесь, а горизонтальный
+                  // жест мешал бы перетаскиванию строк.
+                  enableSwipe: false,
+                ),
+              ),
+            ],
 
-        const SliverToBoxAdapter(child: SizedBox(height: 24)),
-      ],
+            // Карусель ближайших треков — сразу после блока «сейчас» (шапка и
+            // строка текущего трека) и перед списком «Далее». Список остаётся
+            // без изменений: строки, перетаскивание и группы на месте.
+            if (showCarousel)
+              SliverToBoxAdapter(
+                child: _UpNextCarousel(
+                  tracks: featured,
+                  onTap: (int index) =>
+                      controller.jumpTo(currentIndex + 1 + index),
+                ),
+              ),
+
+            if (upNext.isEmpty)
+              const SliverToBoxAdapter(
+                child: Padding(
+                  padding: EdgeInsets.all(AppLayout.gutter),
+                  child: Text('Дальше треков нет — включится радио по текущему.'),
+                ),
+              )
+            else ...<Widget>[
+              SliverToBoxAdapter(
+                child: _GroupLabel('Далее — ${upNext.length}'),
+              ),
+              SliverReorderableList(
+                itemCount: upNext.length,
+                // onReorderItem отдаёт уже скорректированный индекс.
+                onReorderItem: (int oldIndex, int newIndex) {
+                  final int base = currentIndex + 1;
+                  controller.reorderQueue(oldIndex + base, newIndex + base);
+                },
+                itemBuilder: (BuildContext context, int index) {
+                  final Track track = upNext[index];
+                  return _ReorderableTile(
+                    key: ValueKey<String>('${track.id}-$index'),
+                    index: index,
+                    track: track,
+                    onTap: () => controller.jumpTo(currentIndex + 1 + index),
+                    onRemove: () =>
+                        controller.removeFromQueue(currentIndex + 1 + index),
+                  );
+                },
+              ),
+            ],
+
+            if (playedCount > 0) ...<Widget>[
+              SliverToBoxAdapter(
+                child: _GroupLabel('Уже проиграно — $playedCount'),
+              ),
+              SliverList.builder(
+                itemCount: playedCount,
+                itemBuilder: (BuildContext context, int index) {
+                  return TrackTile(
+                    track: played[index],
+                    isDimmed: true,
+                    onTap: () => controller.jumpTo(index),
+                    enableSwipe: false,
+                  );
+                },
+              ),
+            ],
+
+            const SliverToBoxAdapter(child: SizedBox(height: 24)),
+          ],
+        );
+      },
     );
   }
 }
@@ -497,6 +549,150 @@ class _ReorderableTile extends StatelessWidget {
           ),
         ),
       ],
+    );
+  }
+}
+
+/// Горизонтальная карусель ближайших треков очереди.
+///
+/// Крупные карточки с обложкой, названием и исполнителем; нажатие переводит
+/// воспроизведение на этот трек. Прокрутка — через общий [HorizontalList]:
+/// он умеет то, чего нет у голого `ListView` на десктопе (колесо мыши,
+/// перетаскивание мышью, полоса прокрутки).
+///
+/// В `material_3_expressive` есть и готовый `M3ECarousel`, но он не подходит:
+/// у него своя физика прокрутки и собственный слой жестов, поэтому ленту
+/// нельзя отдать общему `HorizontalList` (а именно он требуется для колеса
+/// мыши); вдобавок он рассчитан на широкий контейнер и требует ограниченной
+/// высоты. Экспрессивную форму берём у пакета точечно — для обложки карточки.
+///
+/// Ширина карточки подстраивается под доступное место: в узкой правой панели
+/// (минимум 260) она компактнее, на широкой колонке полного экрана — крупнее.
+/// Поэтому лента не переполняется и остаётся читаемой на всех поверхностях.
+class _UpNextCarousel extends StatelessWidget {
+  const _UpNextCarousel({required this.tracks, required this.onTap});
+
+  final List<Track> tracks;
+
+  /// Нажатие на карточку: индекс в [tracks].
+  final ValueChanged<int> onTap;
+
+  @override
+  Widget build(BuildContext context) {
+    return LayoutBuilder(
+      builder: (BuildContext context, BoxConstraints constraints) {
+        // Подписи масштабируются вместе с системным шрифтом: высоту ленты
+        // считаем от масштаба, иначе при крупном тексте карточки обрезались
+        // бы (лента задаёт детям фиксированную высоту).
+        final double scale = MediaQuery.textScalerOf(context).scale(1.0);
+        final double available =
+            constraints.maxWidth.isFinite ? constraints.maxWidth : 360;
+        // 124 в узкой панели — заметно крупнее строки списка (56); 168 —
+        // предел, чтобы на широком экране карточка не «распухала».
+        final double cardWidth = (available * 0.46).clamp(124.0, 168.0);
+        // Квадратная обложка + две подписи по одной строке + запас.
+        final double height = cardWidth + 58 * scale + 16;
+
+        return Padding(
+          padding: const EdgeInsets.symmetric(vertical: 4),
+          child: HorizontalList(
+            height: height,
+            padding: const EdgeInsets.symmetric(horizontal: AppLayout.gutter),
+            separator: 12,
+            itemCount: tracks.length,
+            itemBuilder: (BuildContext context, int index) {
+              return _UpNextCarouselCard(
+                track: tracks[index],
+                width: cardWidth,
+                onTap: () => onTap(index),
+              );
+            },
+          ),
+        );
+      },
+    );
+  }
+}
+
+/// Карточка ближайшего трека в карусели.
+///
+/// Обложка — квадрат во всю ширину карточки, обрезанный экспрессивной формой
+/// из `material_3_expressive` (`M3EShapeContainer.square` — «круглый квадрат»
+/// из каталога форм M3). Название и исполнитель — по одной строке с
+/// многоточием: размер карточки фиксирован, поэтому лента не «дёргается» от
+/// разной длины подписей.
+class _UpNextCarouselCard extends StatelessWidget {
+  const _UpNextCarouselCard({
+    required this.track,
+    required this.width,
+    required this.onTap,
+  });
+
+  final Track track;
+  final double width;
+  final VoidCallback onTap;
+
+  @override
+  Widget build(BuildContext context) {
+    final ColorScheme scheme = Theme.of(context).colorScheme;
+    final TextTheme text = Theme.of(context).textTheme;
+    // Размер карточки — не 1024: обложка крупная по площади, но не по числу
+    // пикселей, иначе лента из десятков карточек тормозила бы отрисовку.
+    final List<String> variants = track.artworkFallbacks(kArtworkCard);
+
+    return SizedBox(
+      width: width,
+      // `Material` нужен `InkWell`-у: на островке поверхность — это
+      // `DecoratedBox`, а не `Material`, и без своей подложки нажатие упало
+      // бы с «No Material widget found».
+      child: Material(
+        color: Colors.transparent,
+        borderRadius: BorderRadius.circular(AppLayout.radiusM),
+        clipBehavior: Clip.antiAlias,
+        child: InkWell(
+          onTap: onTap,
+          borderRadius: BorderRadius.circular(AppLayout.radiusM),
+          // Долгое нажатие — то же меню трека, что у строки списка.
+          onLongPress: () => showTrackMenu(context, track),
+          child: Column(
+            crossAxisAlignment: CrossAxisAlignment.start,
+            mainAxisSize: MainAxisSize.min,
+            children: <Widget>[
+              m3e.M3EShapeContainer.square(
+                width: width,
+                height: width,
+                color: scheme.surfaceContainerHighest,
+                child: Artwork(
+                  url: variants.isEmpty ? null : variants.first,
+                  fallbacks: variants.length > 1
+                      ? variants.sublist(1)
+                      : const <String>[],
+                  size: width,
+                  // Форму задаёт внешний ClipPath, поэтому своё скругление у
+                  // картинки выключено — иначе по углам проступал бы фон.
+                  radius: BorderRadius.zero,
+                ),
+              ),
+              const SizedBox(height: 6),
+              Text(
+                track.title,
+                maxLines: 1,
+                overflow: TextOverflow.ellipsis,
+                style: text.bodyLarge?.copyWith(
+                  fontWeight: FontWeight.w700,
+                  color: scheme.onSurface,
+                ),
+              ),
+              Text(
+                track.artistLine,
+                maxLines: 1,
+                overflow: TextOverflow.ellipsis,
+                style: text.bodyMedium?.copyWith(color: scheme.onSurfaceVariant),
+              ),
+            ],
+          ),
+        ),
+      ),
     );
   }
 }

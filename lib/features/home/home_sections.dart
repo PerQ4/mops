@@ -4,10 +4,11 @@ import '../../data/models/models.dart';
 ///
 /// Зачем: YouTube Music отдаёт секции в разном порядке и под своими
 /// названиями («Рекомендуем», «В тренде», «Новые клипы»). Спецификация же
-/// задаёт свой порядок (чипы, «Слушать снова», плейлисты, «Продолжить
-/// слушать» и т. д.). Никаких новых данных здесь не появляется: функция
-/// только сортирует уже полученные секции и переименовывает те, чей смысл
-/// однозначно читается по заголовку. Незнакомые секции остаются как есть.
+/// задаёт свой порядок (чипы, «Быстрый выбор», «Продолжайте слушать», «Ваши
+/// плейлисты», «Давно не слушали», «Похоже на»). Никаких новых данных здесь не
+/// появляется: функция только сортирует уже полученные секции и переименовывает
+/// те, чей смысл однозначно читается по заголовку. Незнакомые секции остаются
+/// как есть.
 List<BrowseSection> curateHomeSections(List<BrowseSection> sections) {
   final List<({int index, BrowseSection section, String label, int rank})>
       ranked = <({int index, BrowseSection section, String label, int rank})>[];
@@ -58,10 +59,14 @@ BrowseSection _renamed(BrowseSection section, String label) {
 ///
 /// Порядок проверки важен: «Новые клипы» должно проверяться раньше
 /// «Новых релизов», иначе подстрока «нов» уведёт его не туда.
+/// Подписи взяты из `res/values-ru/strings.xml` ветки main ArchiveTune
+/// (`quick_picks`, `keep_listening`, `forgotten_favorites`, `similar_to`),
+/// чтобы заголовки секций совпадали с nightly-сборкой дословно.
 const List<(String label, List<String> markers)> _knownLabels =
     <(String, List<String>)>[
   (
-    'Слушать снова',
+    // ArchiveTune: `<string name="quick_picks">Быстрый выбор</string>`.
+    'Быстрый выбор',
     <String>[
       'слушать снова',
       'listen again',
@@ -94,15 +99,18 @@ const List<(String label, List<String> markers)> _knownLabels =
     ],
   ),
   (
-    'Продолжить слушать',
+    // ArchiveTune: `<string name="keep_listening">Продолжайте слушать</string>`.
+    'Продолжайте слушать',
     <String>['продолж', 'continue', 'недавн', 'recent', 'истори', 'history'],
   ),
   (
-    'Забытые любимые',
+    // ArchiveTune: `<string name="forgotten_favorites">Давно не слушали</string>`.
+    'Давно не слушали',
     <String>['забыт', 'forgotten'],
   ),
   (
-    'Похожие исполнители',
+    // ArchiveTune: `<string name="similar_to">Похоже на</string>`.
+    'Похоже на',
     <String>[
       'похож',
       'similar',
@@ -137,20 +145,21 @@ String _archiveLabel(String title) {
   return title;
 }
 
-/// Порядок секций из спецификации: «Слушать снова», плейлисты,
-/// «Продолжить слушать», «Забытые любимые», похожие, затем секции YouTube
-/// Music. Незнакомые уходят в конец, сохраняя относительный порядок.
+/// Порядок секций — как в `HomeContent` (HomeScreen.kt:350-635):
+/// быстрый выбор, «продолжайте слушать», плейлисты аккаунта, «давно не
+/// слушали», «похоже на», затем прочие секции YouTube Music. Незнакомые
+/// уходят в конец, сохраняя относительный порядок.
 int _rankOf(String label) {
   switch (label) {
-    case 'Слушать снова':
+    case 'Быстрый выбор':
       return 0;
-    case 'Плейлисты для вас':
+    case 'Продолжайте слушать':
       return 1;
-    case 'Продолжить слушать':
+    case 'Плейлисты для вас':
       return 2;
-    case 'Забытые любимые':
+    case 'Давно не слушали':
       return 3;
-    case 'Похожие исполнители':
+    case 'Похоже на':
       return 4;
     case 'Новые релизы':
       return 5;

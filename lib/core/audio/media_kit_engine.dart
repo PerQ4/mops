@@ -58,6 +58,11 @@ class MediaKitEngine implements AudioEngine {
   PlaybackState get state => _state;
 
   void _attach() {
+    // Уровень звука/спектр media_kit (libmpv) в Dart не отдаёт: `audio-params`
+    // и `audio-bitrate` — это формат и битрейт потока, а не мгновенная
+    // громкость, а визуализации у пакета нет. Поэтому «живую» волну интерфейс
+    // строит сам (`_liveWaveLevel` в `player_controls.dart`), и слушать здесь
+    // нечего.
     _subs.addAll(<StreamSubscription<dynamic>>[
       _player.stream.playing.listen(_onPlaying),
       _player.stream.completed.listen(_onCompleted),

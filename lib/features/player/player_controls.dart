@@ -1,3 +1,5 @@
+import 'dart:math' as math;
+
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 // Готовые компоненты Material 3 Expressive. Берём их ради слайдера: в нём
@@ -74,6 +76,22 @@ class _PlayerSeekBarState extends ConsumerState<PlayerSeekBar> {
 
     final ColorScheme scheme = Theme.of(context).colorScheme;
     final bool playing = player.isPlaying;
+    // «Живая» амплитуда волны. Движок уровень звука не отдаёт (см. пояснение
+    // у `_liveWaveLevel`), поэтому уровень условный — но построен на реально
+    // известных значениях: позиции (она идёт со скоростью воспроизведения, то
+    // есть учитывает темп) и громкости плеера. На паузе волна плоская.
+    final double waveLevel = playing
+        ? _liveWaveLevel(
+            position: player.playback.position,
+            volume: player.playback.volume,
+          )
+        : 0.0;
+    // Коэффициент амплитуды 0..1: в тихом месте волна почти ровная, в громком —
+    // выраженная. Даже у нижней границы оставляем лёгкую волнистость, чтобы
+    // дорожка не выглядела сломанной. На паузе волна полностью плоская — как
+    // было раньше (`amplitude = 0`).
+    final double waveAmplitude =
+        playing ? 0.08 + 0.92 * waveLevel : 0.0;
     // Стиль полосы перемотки — как пять `SliderStyle` в ArchiveTune.
     final ProgressBarStyle style = ref.watch(
       settingsControllerProvider.select(
@@ -101,7 +119,7 @@ class _PlayerSeekBarState extends ConsumerState<PlayerSeekBar> {
             _M3ESeekBar(
               style: style,
               value: value.clamp(0.0, 1.0),
-              playing: playing,
+              waveAmplitude: waveAmplitude,
               onChanged: seekable
                   ? (double v) => setState(() => _dragValue = v)
                   : null,
@@ -182,7 +200,9 @@ class _SeekBarPreviewState extends State<SeekBarPreview> {
       return _M3ESeekBar(
         style: widget.style,
         value: _value,
-        playing: true,
+        // В предпросмотре показываем волну на полной амплитуде — как раньше
+        // (живой уровень тут взять неоткуда: трек не играет).
+        waveAmplitude: 1.0,
         onChanged: (double v) => setState(() => _value = v),
       );
     }
@@ -200,6 +220,35 @@ class _SeekBarPreviewState extends State<SeekBarPreview> {
   }
 }
 
+/// Условный «уровень звука» для волны — от 0 до 1.
+///
+/// Движок (media_kit/libmpv) уровень громкости и спектр в Dart не отдаёт:
+/// `Player.stream.audioParams` (`AudioParams`) содержит только формат, частоту
+/// дискретизации и каналы, а `audio-bitrate` — постоянный для потока битрейт,
+/// а не мгновенная громкость; готовой «визуализации» у media_kit нет вовсе.
+/// Поэтому данные не выдумываются: уровень строится из того, что действительно
+/// известно интерфейсу, — позиции воспроизведения и громкости плеера.
+///
+/// Позиция идёт в реальном времени со скоростью воспроизведения, поэтому темп
+/// учитывается сам собой. Значение намеренно гладкое — сумма нескольких
+/// медленных синусов от позиции (периоды ~24, 11 и 6.5 с): волна «дышит», но
+/// не дёргается, и на кадр не приходится никаких тяжёлых пересчётов — функция
+/// вызывается только при обычном обновлении позиции (несколько раз в секунду).
+/// Множитель громкости — реальный параметр: тише значит ровнее.
+double _liveWaveLevel({
+  required Duration position,
+  required double volume,
+}) {
+  final double t = position.inMilliseconds / 1000.0;
+  final double a = math.sin(t * 0.26 + 0.7);
+  final double b = math.sin(t * 0.57 + 2.1) * 0.6;
+  final double c = math.sin(t * 0.97 + 4.4) * 0.35;
+  final double raw = (a + b + c) / 1.95; // примерно -1..1
+  final double breath = ((raw + 1) / 2).clamp(0.0, 1.0); // 0..1
+  final double volumeFactor = 0.35 + 0.65 * volume.clamp(0.0, 1.0);
+  return (breath * volumeFactor).clamp(0.0, 1.0);
+}
+
 /// Полоса перемотки на компоненте Material 3 Expressive.
 ///
 /// В ArchiveTune (`StyledPlaybackSlider`, ветка `main`) «обычный» стиль — это
@@ -214,7 +263,7 @@ class _M3ESeekBar extends StatelessWidget {
   const _M3ESeekBar({
     required this.style,
     required this.value,
-    required this.playing,
+    required this.waveAmplitude,
     this.onChanged,
     this.onChangeEnd,
   });
@@ -222,8 +271,13 @@ class _M3ESeekBar extends StatelessWidget {
   final ProgressBarStyle style;
   final double value;
 
-  /// Играет ли трек: у волны от этого зависит амплитуда.
-  final bool playing;
+  /// Амплитуда волны как множитель 0..1 (у «волнистого» стиля).
+  ///
+  /// В пакете `material_3_expressive` `amplitude` — это именно множитель к
+  /// `waveAmplitude` темы (3 dp), а не размер в пикселях: значение обрезается
+  /// до 0..1. Поэтому 0 — плоская дорожка, 1 — максимальная волна. Живой
+  /// уровень приходит от `_liveWaveLevel` в `_PlayerSeekBarState`.
+  final double waveAmplitude;
 
   final ValueChanged<double>? onChanged;
   final ValueChanged<double>? onChangeEnd;
@@ -231,15 +285,16 @@ class _M3ESeekBar extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     final bool wavy = style != ProgressBarStyle.standard;
-    // Параметры волны — из `SquigglySlider` (библиотека me.saket.squiggles):
-    // штрих 6, длина волны 36 (это `strokeWidth * 6`), амплитуда 2 в игре и
-    // 0 в паузе (`amplitude = if (isPlaying) 2.dp else 0.dp`).
+    // Параметры волны — из `WavySliderExpressive` (ArchiveTune): штрих 6,
+    // длина волны 36 (`strokeWidth * 6`), а волна заметна, только пока идёт
+    // воспроизведение (`waveAmplitudeWhenPlaying`). Живая амплитуда приходит
+    // параметром и меняется вместе с громкостью/позицией.
     final Widget slider = wavy
         ? m3e.M3ESlider.wavy(
             value: value,
             onChanged: onChanged,
             onChangeEnd: onChangeEnd,
-            amplitude: playing ? 2 : 0,
+            amplitude: waveAmplitude.clamp(0.0, 1.0),
             wavelength: 36,
             // Толщина волны — не как у обычной дорожки: у `SquigglySlider`
             // штрих 6 (`strokeWidth = 6.dp`), иначе волна выходит втрое

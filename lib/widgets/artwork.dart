@@ -4,6 +4,16 @@ import 'package:cached_network_image/cached_network_image.dart';
 import 'package:flutter/material.dart';
 
 
+/// Тег [Hero] для обложки плеера.
+///
+/// Связывает круглую миниатюру в островке с крупной обложкой полноэкранного
+/// плеера: при развороте и сворачивании картинка не «подменяется», а перелетает
+/// и вырастает. Тег один на приложение, но одновременно в дереве живёт ровно
+/// одна обложка с ним в каждом маршруте (островок и полный экран не видны
+/// в одном маршруте), поэтому конфликта нет.
+const String kPlayerArtworkHeroTag = 'player-artwork';
+
+
 /// Обложка с кэшем, заглушкой и запасными ссылками.
 ///
 /// Запасные ссылки важны: у части видео нет максимального превью
@@ -70,39 +80,92 @@ class _ArtworkState extends State<Artwork> {
     final List<String> variants = widget._variants;
     final bool hasImage = variants.isNotEmpty && _attempt < variants.length;
 
-    Widget image = ClipRRect(
-      borderRadius: shape,
-      child: hasImage
-          ? CachedNetworkImage(
-              imageUrl: variants[_attempt],
-              width: w,
-              height: h,
-              fit: widget.fit,
-              fadeInDuration: const Duration(milliseconds: 150),
-              placeholder: (BuildContext context, String _) =>
-                  _placeholder(scheme),
-              errorWidget: (BuildContext context, String url, Object error) {
-                // Переходим к следующему варианту, если он есть.
-                if (_attempt + 1 < variants.length) {
-                  WidgetsBinding.instance.addPostFrameCallback((_) {
-                    if (mounted) setState(() => _attempt++);
-                  });
-                }
-                // Все варианты исчерпаны — вот это уже «битая картинка».
-                return _placeholder(
-                  scheme,
-                  broken: _attempt + 1 >= variants.length,
-                );
-              },
-            )
-          // Ссылки нет вовсе — это не «битая картинка», а обычная заглушка.
-          : _placeholder(scheme),
-    );
+    // Содержимое обложки без скругления. Его же переиспользует перелёт
+    // [Hero]: тогда меняется только радиус, а картинка не пересобирается.
+    final Widget content = hasImage
+        ? CachedNetworkImage(
+            imageUrl: variants[_attempt],
+            width: w,
+            height: h,
+            fit: widget.fit,
+            fadeInDuration: const Duration(milliseconds: 150),
+            placeholder: (BuildContext context, String _) =>
+                _placeholder(scheme),
+            errorWidget: (BuildContext context, String url, Object error) {
+              // Переходим к следующему варианту, если он есть.
+              if (_attempt + 1 < variants.length) {
+                WidgetsBinding.instance.addPostFrameCallback((_) {
+                  if (mounted) setState(() => _attempt++);
+                });
+              }
+              // Все варианты исчерпаны — вот это уже «битая картинка».
+              return _placeholder(
+                scheme,
+                broken: _attempt + 1 >= variants.length,
+              );
+            },
+          )
+        // Ссылки нет вовсе — это не «битая картинка», а обычная заглушка.
+        : _placeholder(scheme);
+
+    Widget image = ClipRRect(borderRadius: shape, child: content);
 
     if (widget.heroTag != null) {
-      image = Hero(tag: widget.heroTag!, child: image);
+      image = Hero(
+        tag: widget.heroTag!,
+        // Перелёт обложки: изображение растягивается по промежуточному
+        // прямоугольнику (`fit`), а скругление плавно переходит от круглой
+        // миниатюры островка к квадрату полного экрана — и обратно.
+        flightShuttleBuilder: _flightShuttle,
+        child: image,
+      );
     }
     return image;
+  }
+
+  /// «Летящая» обложка: содержимое целевого `Hero` в скруглении,
+  /// промежуточном между миниатюрой плеера и полноэкранной картинкой.
+  Widget _flightShuttle(
+    BuildContext flightContext,
+    Animation<double> animation,
+    HeroFlightDirection flightDirection,
+    BuildContext fromHeroContext,
+    BuildContext toHeroContext,
+  ) {
+    final BorderRadius from = _heroRadius(fromHeroContext);
+    final BorderRadius to = _heroRadius(toHeroContext);
+    // Содержимое без скругления берём у целевого `Hero` (он летит), при
+    // отсутствии — у исходного.
+    final Widget? content =
+        _heroContent(toHeroContext) ?? _heroContent(fromHeroContext);
+    return AnimatedBuilder(
+      animation: animation,
+      child: content,
+      builder: (BuildContext context, Widget? child) => ClipRRect(
+        borderRadius: BorderRadius.lerp(from, to, animation.value)!,
+        child: child,
+      ),
+    );
+  }
+
+  /// Скругление, с которым обложка лежит в дереве указанного `Hero`.
+  static BorderRadius _heroRadius(BuildContext heroContext) {
+    final Widget hero = heroContext.widget;
+    if (hero is Hero && hero.child is ClipRRect) {
+      final BorderRadiusGeometry radius =
+          (hero.child as ClipRRect).borderRadius;
+      return radius.resolve(Directionality.of(heroContext));
+    }
+    return BorderRadius.circular(12);
+  }
+
+  /// Содержимое обложки без скругления — то, что лежит внутри `ClipRRect`.
+  static Widget? _heroContent(BuildContext heroContext) {
+    final Widget hero = heroContext.widget;
+    if (hero is Hero && hero.child is ClipRRect) {
+      return (hero.child as ClipRRect).child;
+    }
+    return null;
   }
 
   Widget _placeholder(ColorScheme scheme, {bool broken = false}) {

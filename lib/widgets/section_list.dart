@@ -107,6 +107,7 @@ class SectionListView extends ConsumerWidget {
     required this.sections,
     this.padding = const EdgeInsets.only(bottom: 24),
     this.header,
+    this.footer,
     this.emptyPlaceholder,
     this.trackPreviewLimit = 5,
   });
@@ -114,6 +115,11 @@ class SectionListView extends ConsumerWidget {
   final List<BrowseSection> sections;
   final EdgeInsets padding;
   final Widget? header;
+
+  /// Нижний элемент списка — например, индикатор догрузки. В оригинале
+  /// (`HomeScreen.kt:637-653`) он добавлен последним элементом ленты с
+  /// отступом 32, а не плавает поверх содержимого.
+  final Widget? footer;
   final Widget? emptyPlaceholder;
 
   /// Сколько треков показывать в секции до кнопки «Все».
@@ -136,12 +142,17 @@ class SectionListView extends ConsumerWidget {
       padding: padding.copyWith(
         bottom: padding.bottom + AppLayout.floatingDockClearance,
       ),
-      itemCount: sections.length + (header != null ? 1 : 0),
+      itemCount: sections.length +
+          (header != null ? 1 : 0) +
+          (footer != null ? 1 : 0),
       itemBuilder: (BuildContext context, int index) {
         if (header != null) {
           if (index == 0) return header!;
           index -= 1;
         }
+        // Нижний элемент идёт после всех секций.
+        if (footer != null && index == sections.length) return footer!;
+
         final BrowseSection section = sections[index];
         return flat
             ? _TrackRows(section: section, showTitle: false)
@@ -232,13 +243,13 @@ class _SectionTitle extends StatelessWidget {
             if (onShowAll != null) ...<Widget>[
               const SizedBox(width: 12),
               // В оригинале это `OutlinedButton` с `heightIn(min = 40.dp)` и
-              // `widthIn(min = 88.dp)`.
+              // `widthIn(min = 88.dp)` и текстом `play_all` = «Прослушать все».
               OutlinedButton(
                 onPressed: onShowAll,
                 style: OutlinedButton.styleFrom(
                   minimumSize: const Size(88, 40),
                 ),
-                child: const Text('Слушать все'),
+                child: const Text('Прослушать все'),
               ),
             ],
           ],
@@ -310,9 +321,12 @@ class _CardCarousel extends ConsumerWidget {
         if (section.title.isNotEmpty)
           _SectionTitle(title: section.title, label: section.subtitle),
         HorizontalList(
-          // Высота зафиксирована константой — карусель не «прыгает»:
-          // обложка + заголовок в одну строку + подпись до двух строк.
-          height: cardWidth + 84,
+          // Высота зафиксирована константой — карусель не «прыгает». Разбор
+          // высоты `GridItem` (Items.kt:274-310): внешний отступ 12 + обложка
+          // 128 + зазор 6 + заголовок `bodyLarge` (24) + зазор 2 + подпись
+          // `bodyMedium` в две строки (40) + внешний отступ 12 = 224, то есть
+          // `cardWidth + 96`.
+          height: cardWidth + 96,
           // Отступ края 12 и зазор 24 — это внешний `padding(12.dp)` у
           // каждого `GridItem` в оригинале (12 слева + 12 справа между
           // карточками). Заголовок секции при этом стоит на 16.

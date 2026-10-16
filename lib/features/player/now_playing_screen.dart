@@ -1,8 +1,7 @@
-import 'dart:ui';
-
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 
+import '../../core/theme/app_theme.dart';
 import '../../core/theme/layout.dart';
 import '../common/navigation.dart';
 import '../shell/content_navigator.dart';
@@ -246,55 +245,163 @@ class _Controls extends StatelessWidget {
   }
 }
 
-/// Фон: сама обложка во всю площадь, притемнённая к низу.
+/// Фон: мягкий градиент, собранный из палитры обложки.
 ///
-/// Без размытия — так дешевле для отрисовки и ближе к ArchiveTune, где
-/// виден настоящий рисунок, а не «стекло».
-class _ArtworkBackdrop extends StatelessWidget {
+/// Палитру извлекаем из картинки тем же способом, что и общую тему
+/// (`AppTheme.schemeFromArtwork` → `ColorScheme.fromImageProvider`): это уже
+/// есть в проекте, поэтому новых зависимостей не нужно. Берём не саму обложку,
+/// а её цвета-роли — фон остаётся «цветом обложки», но не спорит с текстом
+/// темы.
+///
+/// Композиция — как `PlayerBackgroundStyle.GRADIENT` в ArchiveTune
+/// (`ui/player/PlayerComponents.kt`): три точки 0.0 / 0.5 / 1.0 с альфами
+/// 0.92 / 0.75 / 0.65 и мягкая подложка 0.18. Размытия и «стекла» нет —
+/// только градиент.
+class _ArtworkBackdrop extends StatefulWidget {
   const _ArtworkBackdrop({required this.track});
 
   final Track track;
 
   @override
+  State<_ArtworkBackdrop> createState() => _ArtworkBackdropState();
+}
+
+class _ArtworkBackdropState extends State<_ArtworkBackdrop> {
+  /// Палитра текущей обложки; `null` — ещё не разобрана (рисуем ролями темы).
+  ColorScheme? _palette;
+
+  /// Ключ (адрес + яркость), для которого посчитана палитра.
+  String? _key;
+
+  /// Яркость, для которой посчитана палитра: при её смене старую палитру
+  /// показывать нельзя — контейнеры «чужой» яркости не подходят тексту темы.
+  Brightness? _brightness;
+
+  /// Номер запроса: устаревший ответ не должен перебить новый.
+  int _generation = 0;
+
+  @override
+  void didChangeDependencies() {
+    super.didChangeDependencies();
+    _syncPalette();
+  }
+
+  @override
+  void didUpdateWidget(covariant _ArtworkBackdrop oldWidget) {
+    super.didUpdateWidget(oldWidget);
+    if (oldWidget.track.id != widget.track.id) _syncPalette();
+  }
+
+  /// Пересчитывает палитру, если сменился трек или яркость темы.
+  void _syncPalette() {
+    final Brightness brightness = Theme.of(context).brightness;
+    final List<String> variants = widget.track.artworkFallbacks(kArtworkLarge);
+    final String url = variants.isEmpty ? '' : variants.first;
+    final String key = '$url|${brightness.name}';
+    final bool brightnessChanged = brightness != _brightness;
+    _brightness = brightness;
+    if (key == _key) return;
+    _key = key;
+    // Смена темы — сразу на роли темы; смена трека той же яркости — оставляем
+    // прошлую палитру, и градиент плавно переходит из цвета в цвет.
+    if (brightnessChanged) _palette = null;
+    if (url.isEmpty) {
+      _palette = null;
+      return;
+    }
+    final int generation = ++_generation;
+    _extractArtworkPalette(url, brightness).then((ColorScheme? palette) {
+      if (!mounted || generation != _generation) return;
+      setState(() => _palette = palette);
+    });
+  }
+
+  @override
   Widget build(BuildContext context) {
     final ColorScheme scheme = Theme.of(context).colorScheme;
-    final List<String> variants = track.artworkFallbacks(kArtworkLarge);
+    // Пока палитра не готова, рисуем фон ролями темы: тот же градиент, но без
+    // вклада обложки. Подмена незаметна — цвета близки по светлоте.
+    return _GradientBackdrop(
+      scheme: scheme,
+      palette: _palette ?? scheme,
+    );
+  }
+}
+
+/// Кэш палитр по адресу обложки и яркости: квантование цвета небыстрое, а
+/// треки повторяются.
+final Map<String, ColorScheme> _artworkPaletteCache = <String, ColorScheme>{};
+
+/// Считает палитру обложки общим механизмом темы (`fromImageProvider`).
+Future<ColorScheme?> _extractArtworkPalette(
+  String url,
+  Brightness brightness,
+) async {
+  final String key = '$url|${brightness.name}';
+  final ColorScheme? cached = _artworkPaletteCache[key];
+  if (cached != null) return cached;
+  try {
+    final ColorScheme palette = await AppTheme.schemeFromArtwork(
+      provider: artworkProvider(url),
+      brightness: brightness,
+    );
+    _artworkPaletteCache[key] = palette;
+    if (_artworkPaletteCache.length > 40) {
+      _artworkPaletteCache.remove(_artworkPaletteCache.keys.first);
+    }
+    return palette;
+  } on Object {
+    // Обложка не разобралась (нет сети, битый файл) — тихо откатываемся на
+    // роли темы: фон остаётся, просто без вклада картинки.
+    return null;
+  }
+}
+
+/// Сам градиент: три точки из ролей палитры и мягкая подложка.
+class _GradientBackdrop extends StatelessWidget {
+  const _GradientBackdrop({required this.scheme, required this.palette});
+
+  /// Схема темы — база и ориентир по яркости.
+  final ColorScheme scheme;
+
+  /// Палитра из обложки; совпадает с [scheme], пока обложка не разобрана.
+  final ColorScheme palette;
+
+  @override
+  Widget build(BuildContext context) {
+    // Берём контейнерные роли: у тёмной схемы они тёмные, у светлой — светлые,
+    // поэтому текст темы (`onSurface` / `onSurfaceVariant`) читается в обоих
+    // режимах. `primary`/`tertiary` как фон, наоборот, дали бы светлую заливку
+    // на тёмной теме и тёмную на светлой — и текст бы «поплыл».
+    final List<Color> colors = <Color>[
+      palette.primaryContainer.withValues(alpha: 0.92),
+      palette.secondaryContainer.withValues(alpha: 0.75),
+      palette.tertiaryContainer.withValues(alpha: 0.65),
+    ];
+    // Подложка поверх градиента — как чёрная 0.18 в ArchiveTune. На светлой
+    // теме чёрная затемнила бы светлые контейнеры и испортила контраст с
+    // тёмным текстом, поэтому там подложка того же назначения, но светлая.
+    final Color scrim = scheme.brightness == Brightness.dark
+        ? Colors.black
+        : scheme.surface;
 
     return Stack(
       fit: StackFit.expand,
       children: <Widget>[
-        if (variants.isNotEmpty)
-          // Размытие: резкая обложка на всю площадь отвлекала от управления,
-          // а размытая читается как фон.
-          ImageFiltered(
-            imageFilter: ImageFilter.blur(sigmaX: 28, sigmaY: 28),
-            child: Artwork(
-              url: variants.first,
-              fallbacks:
-                  variants.length > 1 ? variants.sublist(1) : const <String>[],
-              fit: BoxFit.cover,
-              radius: BorderRadius.zero,
-            ),
-          ),
-        // Градиент поверх размытой обложки — как `PlayerBackground` в
-        // ArchiveTune (стиль GRADIENT): три точки на 0.0 / 0.5 / 1.0 с
-        // альфами 0.92 / 0.75 / 0.65, плюс мягкая чёрная подложка 0.18.
-        // Цвета берём ролями схемы: извлечения палитры обложки у нас нет.
-        DecoratedBox(
+        // Плавно переводим градиент при смене трека или готовности палитры.
+        AnimatedContainer(
+          duration: const Duration(milliseconds: 900),
+          curve: Curves.easeOutCubic,
           decoration: BoxDecoration(
             gradient: LinearGradient(
               begin: Alignment.topCenter,
               end: Alignment.bottomCenter,
-              colors: <Color>[
-                scheme.surface.withValues(alpha: 0.92),
-                scheme.surface.withValues(alpha: 0.75),
-                scheme.surface.withValues(alpha: 0.65),
-              ],
+              colors: colors,
               stops: const <double>[0.0, 0.5, 1.0],
             ),
           ),
         ),
-        ColoredBox(color: Colors.black.withValues(alpha: 0.18)),
+        ColoredBox(color: scrim.withValues(alpha: 0.18)),
       ],
     );
   }
@@ -330,6 +437,9 @@ class _ArtworkStage extends StatelessWidget {
                 fallbacks: variants.length > 1
                     ? variants.sublist(1)
                     : const <String>[],
+                // Общий тег с миниатюрой островка: обложка перелетает и
+                // растёт из мини-плеера в полный экран (и обратно).
+                heroTag: kPlayerArtworkHeroTag,
                 // Радиус обложки плеера в ArchiveTune — 16.
                 radius: BorderRadius.circular(16),
               ),

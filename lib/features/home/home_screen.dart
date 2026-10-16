@@ -1,6 +1,7 @@
 import 'package:cached_network_image/cached_network_image.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
+import 'package:material_3_expressive/material_3_expressive.dart' as m3e;
 
 import '../../core/theme/layout.dart';
 import '../../data/models/models.dart';
@@ -85,13 +86,15 @@ class HomeScreen extends ConsumerWidget {
                     // остаётся своей высоты, а лента не прилипает к ней.
                     padding: const EdgeInsets.only(top: 16),
                     header: const _MoodRow(),
+                    // Индикатор догрузки — нижним элементом ленты, как
+                    // `home_loading_more` в `HomeContent` (HomeScreen.kt:637-653).
+                    footer: more.loadingMore ? const _LoadingMoreFooter() : null,
                     emptyPlaceholder: EmptyState(
                       icon: Icons.music_note_outlined,
-                      title: 'Подборки недоступны',
-                      subtitle: 'YouTube Music не вернул ни одной секции. '
-                          'Попробуйте обновить или сменить регион в настройках.',
-                      // В оригинале пустое состояние показывает кнопку повтора;
-                      // тем же действием, что и ошибка, — перезапросить ленту.
+                      // Как `HomeStatePane` (HomeScreen.kt:190-197): значок,
+                      // сообщение и кнопка повтора — отдельной строки-подписи
+                      // в оригинале нет.
+                      title: 'Не найдено результатов',
                       action: FilledButton.tonal(
                         onPressed: () => ref.invalidate(homeSectionsProvider),
                         child: const Text('Повторить'),
@@ -101,20 +104,12 @@ class HomeScreen extends ConsumerWidget {
                 ),
               );
             },
-            loading: () => const SectionSkeleton(),
+            loading: () => const _HomeLoadingPane(),
             error: (Object error, StackTrace _) => ErrorState(
               message: describeError(error),
               onRetry: () => ref.invalidate(homeSectionsProvider),
             ),
           ),
-          // Индикатор догрузки висит над плавающим островком.
-          if (more.loadingMore)
-            const Positioned(
-              left: 0,
-              right: 0,
-              bottom: AppLayout.floatingDockClearance + 12,
-              child: Center(child: _LoadingMoreIndicator()),
-            ),
         ],
       ),
     );
@@ -147,30 +142,35 @@ bool _loadMoreNearEnd(
   return false;
 }
 
-/// Индикатор догрузки главной.
+/// Индикатор догрузки главной — нижний элемент ленты.
 ///
-/// Показывается только пока идёт запрос следующей порции и не занимает места
-/// в раскладке: лежит поверх содержимого над плавающим островком.
-class _LoadingMoreIndicator extends StatelessWidget {
-  const _LoadingMoreIndicator();
+/// Как `home_loading_more` в `HomeContent` (`HomeScreen.kt:637-653`): блок на
+/// всю ширину с отступом 32 по кругу и центрированным `LoadingIndicator`.
+class _LoadingMoreFooter extends StatelessWidget {
+  const _LoadingMoreFooter();
 
   @override
   Widget build(BuildContext context) {
-    final ColorScheme scheme = Theme.of(context).colorScheme;
-    return DecoratedBox(
-      decoration: BoxDecoration(
-        color: scheme.surfaceContainerHigh.withValues(alpha: 0.94),
-        borderRadius: BorderRadius.circular(AppLayout.radiusXL),
-      ),
-      child: const Padding(
-        padding: EdgeInsets.symmetric(horizontal: 20, vertical: 14),
-        child: SizedBox(
-          width: 22,
-          height: 22,
-          child: CircularProgressIndicator(strokeWidth: 2.4),
-        ),
-      ),
+    return const Padding(
+      padding: EdgeInsets.all(32),
+      child: Center(child: m3e.M3ELoadingIndicator()),
     );
+  }
+}
+
+/// Заглушка загрузки главной — как `HomeStatePane` с `LoadingIndicator`
+/// (HomeScreen.kt:182-188, 248-249): экран целиком занят центрированным
+/// индикатором Material 3 Expressive.
+///
+/// Индикатор берём из уже подключённого пакета `material_3_expressive`
+/// (`M3ELoadingIndicator` — порт `androidx.compose.material3.LoadingIndicator`),
+/// поэтому форма и размеры (48) совпадают с оригиналом.
+class _HomeLoadingPane extends StatelessWidget {
+  const _HomeLoadingPane();
+
+  @override
+  Widget build(BuildContext context) {
+    return const Center(child: m3e.M3ELoadingIndicator());
   }
 }
 
@@ -294,13 +294,13 @@ class _MoodRow extends StatelessWidget {
   const _MoodRow();
 
   /// Подписи соответствуют тому, что реально ищется в YouTube Music.
-  static const List<(String, IconData)> _moods = <(String, IconData)>[
-    ('Хорошее настроение', Icons.sentiment_satisfied_outlined),
-    ('Спокойное', Icons.self_improvement_outlined),
-    ('Энергичное', Icons.bolt_outlined),
-    ('Для работы', Icons.work_outline),
-    ('Романтика', Icons.favorite_border),
-    ('Новинки', Icons.new_releases_outlined),
+  static const List<String> _moods = <String>[
+    'Хорошее настроение',
+    'Спокойное',
+    'Энергичное',
+    'Для работы',
+    'Романтика',
+    'Новинки',
   ];
 
   @override
@@ -314,11 +314,16 @@ class _MoodRow extends StatelessWidget {
       separator: 8,
       itemCount: _moods.length,
       itemBuilder: (BuildContext context, int index) {
-        final (String label, IconData icon) = _moods[index];
-        return _MoodChip(
-          label: label,
-          icon: icon,
-          onTap: () => _openMood(context, label),
+        final String label = _moods[index];
+        // `HomeCategoryChips` держит чип высотой 32 по центру ряда. В
+        // горизонтальном `ListView` ребёнок иначе растянулся бы на всю
+        // высоту, поэтому центрируем явно.
+        return Align(
+          alignment: Alignment.center,
+          child: _MoodChip(
+            label: label,
+            onTap: () => _openMood(context, label),
+          ),
         );
       },
     );
@@ -331,24 +336,22 @@ class _MoodRow extends StatelessWidget {
   }
 }
 
-/// Чип настроения в стиле `HomeCategoryChips` из ArchiveTune.
+/// Чип настроения — вид невыбранного `FilterChip` из `HomeCategoryChips`
+/// (HomeScreenComponents.kt:169-203).
 ///
-/// Это вид невыбранного `FilterChip` (`FilterChipDefaults.shapes()`): высота
-/// 32, фон `surfaceContainerHigh` α0.78, подпись и значок цветом
-/// `onSurfaceVariant`. Скругление 12 — это `UnselectedShape = CornerMedium`
-/// из токенов AndroidX (`ChipsTokens.kt`), а `SelectedShape = CornerFull`,
-/// поэтому выбранный чип — капсула. Выбранное состояние
-/// (`secondaryContainer` α0.94, `onSecondaryContainer`, галочка слева) здесь
-/// не показываем: чип не фильтрует ленту, а открывает поиск по запросу.
+/// Высота 32 (`FilterChipDefaults.Height`), фон `surfaceContainerHigh` α0.78,
+/// подпись `onSurfaceVariant`, скругление 12 — это `UnselectedShape =
+/// CornerMedium` из токенов AndroidX (`ChipsTokens.kt`). Ведущего значка у
+/// невыбранного чипа в оригинале нет: галочка `done` появляется только у
+/// выбранного, а чип главной ленты ничего не фильтрует — он открывает поиск.
+/// Поэтому значка здесь нет.
 class _MoodChip extends StatelessWidget {
   const _MoodChip({
     required this.label,
-    required this.icon,
     required this.onTap,
   });
 
   final String label;
-  final IconData icon;
   final VoidCallback onTap;
 
   @override
@@ -365,19 +368,18 @@ class _MoodChip extends StatelessWidget {
         child: InkWell(
           onTap: onTap,
           child: Padding(
-            padding: const EdgeInsets.symmetric(horizontal: 12),
-            child: Row(
-              mainAxisSize: MainAxisSize.min,
-              children: <Widget>[
-                Icon(icon, size: 18, color: scheme.onSurfaceVariant),
-                const SizedBox(width: 8),
-                Text(
-                  label,
-                  style: Theme.of(context).textTheme.labelLarge?.copyWith(
-                        color: scheme.onSurfaceVariant,
-                      ),
-                ),
-              ],
+            // Отступ подписи без ведущего значка: `FilterChipDefaults` держит
+            // по 8 с каждой стороны чипа, текст — ещё по 8.
+            padding: const EdgeInsets.symmetric(horizontal: 16),
+            child: Center(
+              child: Text(
+                label,
+                maxLines: 1,
+                overflow: TextOverflow.ellipsis,
+                style: Theme.of(context).textTheme.labelLarge?.copyWith(
+                      color: scheme.onSurfaceVariant,
+                    ),
+              ),
             ),
           ),
         ),
