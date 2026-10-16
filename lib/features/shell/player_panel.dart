@@ -227,7 +227,10 @@ class _PlayerRightPanelState extends ConsumerState<PlayerRightPanel> {
                       )
                     : mode == RightPanelMode.player
                         ? _NextTracks(tracks: upcoming)
-                        : const QueueList(),
+                        : const QueueList(
+                            showCurrent: false,
+                            showCarousel: false,
+                          ),
               ),
             ],
           );

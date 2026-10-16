@@ -46,6 +46,8 @@ class QueueList extends ConsumerWidget {
     this.scrollController,
     this.padding,
     this.showHeader = true,
+    this.showCurrent = true,
+    this.showCarousel = true,
   });
 
   final ScrollController? scrollController;
@@ -57,6 +59,18 @@ class QueueList extends ConsumerWidget {
   /// управления, где название и действия уже есть, — там шапку выключаем,
   /// чтобы не дублировать. В островке и панели плеера она остаётся.
   final bool showHeader;
+
+  /// Показывать строку текущего трека вверху очереди.
+  ///
+  /// Панель и полный экран уже показывают текущий трек отдельным блоком, и
+  /// строка в очереди давала лишние повторы. В островке строка остаётся.
+  final bool showCurrent;
+
+  /// Показывать горизонтальную карусель ближайших треков.
+  ///
+  /// В боковой панели она не нужна — там узкая колонка, и карусель только
+  /// дублировала список «Далее» да мешала прокрутке.
+  final bool showCarousel;
 
   @override
   Widget build(BuildContext context, WidgetRef ref) {
@@ -105,7 +119,8 @@ class QueueList extends ConsumerWidget {
         // показываем только список. Высота ограничена на всех трёх
         // поверхностях (`Expanded`/`Flexible`), но проверяем безопасно: при
         // бесконечном ограничении карусель не прячем.
-        final bool showCarousel = featured.isNotEmpty &&
+        final bool carouselVisible = showCarousel &&
+            featured.isNotEmpty &&
             (!constraints.hasBoundedHeight ||
                 constraints.maxHeight >= _kCarouselMinHeight);
 
@@ -120,7 +135,10 @@ class QueueList extends ConsumerWidget {
             // Шапка с текущим треком — как `CurrentSongHeader` в ArchiveTune.
             if (showHeader) const SliverToBoxAdapter(child: _QueueHeader()),
 
-            if (current != null) ...<Widget>[
+            // Строка текущего трека. На полном экране и в панели её скрываем:
+            // название и действия уже стоят отдельным блоком рядом, и трек
+            // показывался несколько раз.
+            if (showCurrent && current != null) ...<Widget>[
               SliverToBoxAdapter(
                 child: TrackTile(
                   track: current,
@@ -137,7 +155,7 @@ class QueueList extends ConsumerWidget {
             // Карусель ближайших треков — сразу после блока «сейчас» (шапка и
             // строка текущего трека) и перед списком «Далее». Список остаётся
             // без изменений: строки, перетаскивание и группы на месте.
-            if (showCarousel)
+            if (carouselVisible)
               SliverToBoxAdapter(
                 child: _UpNextCarousel(
                   tracks: featured,

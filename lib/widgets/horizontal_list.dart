@@ -55,56 +55,36 @@ class _HorizontalListState extends State<HorizontalList> {
     super.dispose();
   }
 
-  /// Прокручивает ленту по вертикальному колесу.
-  ///
-  /// Берём именно вертикальное смещение: горизонтальное колесо (или сдвиг
-  /// тачпадом вбок) приходит уже горизонтальным и работает само.
-  void _onPointerSignal(PointerSignalEvent event) {
-    if (event is! PointerScrollEvent) return;
-    if (!_controller.hasClients) return;
-
-    final double delta = event.scrollDelta.dy != 0
-        ? event.scrollDelta.dy
-        : event.scrollDelta.dx;
-    final ScrollPosition position = _controller.position;
-    final double target = (position.pixels + delta)
-        .clamp(position.minScrollExtent, position.maxScrollExtent);
-    if (target == position.pixels) return;
-
-    _controller.jumpTo(target);
-    // Событие обработано — гасим его, иначе колесо прокрутит ещё и страницу
-    // под лентой.
-    GestureBinding.instance.pointerSignalResolver.register(event, (_) {});
-  }
-
   @override
   Widget build(BuildContext context) {
     return SizedBox(
       height: widget.height,
-      child: Listener(
-        onPointerSignal: _onPointerSignal,
-        child: ScrollConfiguration(
-          // Мышь и стилус перетаскивают ленту наравне с пальцем.
-          behavior: ScrollConfiguration.of(context).copyWith(
-            dragDevices: <PointerDeviceKind>{
-              PointerDeviceKind.touch,
-              PointerDeviceKind.mouse,
-              PointerDeviceKind.trackpad,
-              PointerDeviceKind.stylus,
-            },
-          ),
-          child: Scrollbar(
+      child: ScrollConfiguration(
+        // Мышь и стилус перетаскивают ленту наравне с пальцем. Колесо мыши
+        // здесь НЕ перехватываем: раньше вертикальное колесо превращалось в
+        // горизонтальную прокрутку ленты и гасилось, из-за чего страница под
+        // ней «застревала». Теперь колесо всегда прокручивает страницу, а
+        // лента листается перетаскиванием (мышью/пальцем) или полосой
+        // прокрутки.
+        behavior: ScrollConfiguration.of(context).copyWith(
+          dragDevices: <PointerDeviceKind>{
+            PointerDeviceKind.touch,
+            PointerDeviceKind.mouse,
+            PointerDeviceKind.trackpad,
+            PointerDeviceKind.stylus,
+          },
+        ),
+        child: Scrollbar(
+          controller: _controller,
+          thumbVisibility: widget.showScrollbar,
+          child: ListView.separated(
             controller: _controller,
-            thumbVisibility: widget.showScrollbar,
-            child: ListView.separated(
-              controller: _controller,
-              scrollDirection: Axis.horizontal,
-              padding: widget.padding,
-              itemCount: widget.itemCount,
-              separatorBuilder: (BuildContext context, int _) =>
-                  SizedBox(width: widget.separator),
-              itemBuilder: widget.itemBuilder,
-            ),
+            scrollDirection: Axis.horizontal,
+            padding: widget.padding,
+            itemCount: widget.itemCount,
+            separatorBuilder: (BuildContext context, int _) =>
+                SizedBox(width: widget.separator),
+            itemBuilder: widget.itemBuilder,
           ),
         ),
       ),

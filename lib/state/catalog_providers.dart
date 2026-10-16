@@ -4,6 +4,7 @@ import 'dart:async';
 import 'package:flutter/foundation.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 
+import '../data/local/lyrics_cache.dart';
 import '../data/models/models.dart';
 import '../data/sources/better_lyrics_source.dart';
 import '../data/sources/catalog_source.dart';
@@ -12,7 +13,7 @@ import '../data/sources/kugou_source.dart';
 import '../data/sources/lrclib_source.dart';
 import '../data/sources/lyrics_match.dart';
 import '../data/sources/megalobiz_source.dart';
-import '../data/sources/musixmatch_source.dart';
+import '../data/sources/paxsenix_source.dart';
 import '../data/sources/simpmusic_source.dart';
 import '../data/sources/unison_source.dart';
 import '../data/sources/youly_plus_source.dart';
@@ -301,11 +302,19 @@ final unisonSourceProvider = Provider<UnisonSource>((ref) {
   return source;
 });
 
-final musixmatchSourceProvider = Provider<MusixmatchSource>((ref) {
-  final MusixmatchSource source = MusixmatchSource();
+/// Paxsenix: Apple Music (пословная разметка), Musixmatch и общий поиск —
+/// всё по одному ключу из настроек.
+final paxsenixSourceProvider = Provider<PaxsenixSource>((ref) {
+  final PaxsenixSource source = PaxsenixSource();
   ref.onDispose(source.dispose);
   return source;
 });
+
+/// Дисковый кэш найденных текстов.
+///
+/// Один на приложение: записи держатся в памяти экземпляра, поэтому повторное
+/// открытие трека не перечитывает файл заново.
+final lyricsCacheProvider = Provider<LyricsCache>((ref) => LyricsCache());
 
 /// Запрос текста: id трека плюс метаданные.
 ///
@@ -387,7 +396,43 @@ class LyricsCandidate {
     required this.lyrics,
     required this.score,
     this.reasons = const <String>[],
+    this.syncType = LyricsSyncType.unsynced,
+    this.isWordSynced = false,
+    this.isLineSynced = false,
+    this.lineCount = 0,
+    this.characterCount = 0,
+    this.preview = '',
   });
+
+  /// Собирает результат из текста: считает тип синхронизации, объём и превью —
+  /// как карточка результата в ArchiveTune.
+  factory LyricsCandidate.from({
+    required LyricsSource source,
+    required Lyrics lyrics,
+    required int score,
+    List<String> reasons = const <String>[],
+  }) {
+    final List<TimedLyric> timed = lyrics.timed ?? const <TimedLyric>[];
+    final bool wordSynced = timed.any((TimedLyric l) => l.hasWords);
+    final List<String> lines = timed.isNotEmpty
+        ? timed.map((TimedLyric l) => l.text).toList()
+        : (lyrics.plain ?? '').split('\n');
+    final List<String> nonEmpty =
+        lines.where((String l) => l.trim().isNotEmpty).toList();
+    return LyricsCandidate(
+      source: source,
+      lyrics: lyrics,
+      score: score,
+      reasons: reasons,
+      syncType: syncTypeOf(lyrics),
+      isWordSynced: wordSynced,
+      isLineSynced: timed.isNotEmpty && !wordSynced,
+      lineCount: nonEmpty.length,
+      characterCount: lyrics.plain?.length ??
+          lines.fold<int>(0, (int sum, String l) => sum + l.length),
+      preview: nonEmpty.take(2).join('\n'),
+    );
+  }
 
   final LyricsSource source;
   final Lyrics lyrics;
@@ -397,6 +442,25 @@ class LyricsCandidate {
 
   /// Человекочитаемые причины оценки — показываются в меню.
   final List<String> reasons;
+
+  /// Тип синхронизации — по нему «Авто» выбирает лучший текст
+  /// (см. [kLyricsSyncPriority]).
+  final LyricsSyncType syncType;
+
+  /// Пословная синхронизация (караоке).
+  final bool isWordSynced;
+
+  /// Строчная синхронизация (без слов).
+  final bool isLineSynced;
+
+  /// Число непустых строк.
+  final int lineCount;
+
+  /// Число символов текста.
+  final int characterCount;
+
+  /// Первые строки — превью в карточке результата.
+  final String preview;
 }
 
 /// Состояние поиска текста: найденные варианты и признак незавершённости.
@@ -415,6 +479,33 @@ class LyricsSearchState {
 
   LyricsCandidate? get best => candidates.isEmpty ? null : candidates.first;
 
+  /// Лучший текст по механизму приоритета — как `PROVIDER_CONFIGS` в
+  /// BetterLyrics: сначала сравнивается **тип синхронизации** (караоке важнее
+  /// построчного, построчный важнее текста без времён), и только внутри одного
+  /// типа — порядок источников из настроек.
+  ///
+  /// Так «Авто» не отдаёт чужой текст с верными временами только потому, что
+  /// он пришёл раньше: побеждает тот, у кого разметка подробнее.
+  LyricsCandidate? bestByOrder(List<LyricsSource> order) {
+    if (candidates.isEmpty) return null;
+
+    for (final LyricsSyncType tier in kLyricsSyncPriority) {
+      for (final LyricsSource source in order) {
+        for (final LyricsCandidate candidate in candidates) {
+          if (candidate.source == source && candidate.syncType == tier) {
+            return candidate;
+          }
+        }
+      }
+      // Источники вне списка (тексты и субтитры YouTube) — в конце своего
+      // типа: у них нет метаданных, поэтому внешняя база предпочтительнее.
+      for (final LyricsCandidate candidate in candidates) {
+        if (candidate.syncType == tier) return candidate;
+      }
+    }
+    return candidates.first;
+  }
+
   bool get isEmpty => candidates.isEmpty && !loading;
 
   LyricsCandidate? candidateFor(LyricsSource source) {
@@ -431,16 +522,33 @@ class LyricsSearchState {
 /// строчную синхронизацию, затем обычные базы. Тексты YouTube Music и субтитры
 /// добавляются последними — у них нет метаданных для оценки, поэтому внешняя
 /// база с той же синхронизацией всегда выигрывает.
-const List<LyricsSource> lyricsAutoOrder = <LyricsSource>[
-  LyricsSource.betterLyrics,
-  LyricsSource.youlyPlus,
-  LyricsSource.lrclib,
-  LyricsSource.kugou,
-  LyricsSource.megalobiz,
-  LyricsSource.simpmusic,
-  LyricsSource.unison,
-  LyricsSource.musixmatch,
-];
+const List<LyricsSource> lyricsAutoOrder = kDefaultLyricsOrder;
+
+/// Ручной поиск текста: пользователь вводит свои метаданные для трека.
+///
+/// Нужен, когда данные трека из YouTube врут (каверы, «Topic»-каналы, пустой
+/// исполнитель) — тогда поиск идёт по введённым названию/исполнителю/альбому.
+class ManualLyricsRequests extends Notifier<Map<String, LyricsRequest>> {
+  @override
+  Map<String, LyricsRequest> build() => const <String, LyricsRequest>{};
+
+  void set(String videoId, LyricsRequest? request) {
+    final Map<String, LyricsRequest> next =
+        Map<String, LyricsRequest>.of(state);
+    if (request == null) {
+      next.remove(videoId);
+    } else {
+      next[videoId] = request;
+    }
+    state = next;
+  }
+}
+
+final NotifierProvider<ManualLyricsRequests, Map<String, LyricsRequest>>
+    manualLyricsRequestsProvider =
+    NotifierProvider<ManualLyricsRequests, Map<String, LyricsRequest>>(
+  ManualLyricsRequests.new,
+);
 
 /// id треков, для которых текст уже найден.
 ///
@@ -461,6 +569,34 @@ final NotifierProvider<LyricsAvailability, Set<String>>
     lyricsAvailabilityProvider =
     NotifierProvider<LyricsAvailability, Set<String>>(LyricsAvailability.new);
 
+/// Бюджет одного источника: дольше ждать базу бессмысленно — она либо
+/// недоступна, либо не нашла текст, а пользователь всё это время видит
+/// «идёт поиск».
+const Duration _lyricsSourceBudget = Duration(seconds: 5);
+
+/// Дедлайн всего поиска: терминальное состояние выставляется не позже него,
+/// даже если какая-то база всё ещё молчит. Бюджет источника короче дедлайна,
+/// поэтому в норме сюда попадают уже все ответы.
+const Duration _lyricsSearchDeadline = Duration(seconds: 6);
+
+/// Читает кэш текстов, не задерживая поиск дольше ~300 мс.
+///
+/// Недоступный или медленный файл — это просто отсутствие кэша: поиск идёт
+/// дальше по сети, а не ждёт диск.
+Future<Map<LyricsSource, Lyrics>> _readCachedLyrics(
+  LyricsCache cache,
+  String videoId,
+) async {
+  try {
+    return await cache.read(videoId).timeout(const Duration(milliseconds: 300));
+  } on TimeoutException {
+    return const <LyricsSource, Lyrics>{};
+  } on Object catch (error) {
+    debugPrint('[Lyrics] кэш недоступен: $error');
+    return const <LyricsSource, Lyrics>{};
+  }
+}
+
 /// Текст песни: асинхронный параллельный поиск по всем источникам.
 ///
 /// Почему переписано: раньше источники опрашивались последовательно, поэтому
@@ -473,6 +609,10 @@ final NotifierProvider<LyricsAvailability, Set<String>>
 /// Выбранный вручную источник остаётся авторитетным: показываем ровно его
 /// результат, а пустота остаётся пустотой. Режим «Авто» показывает лучший по
 /// оценке [scoreLyrics].
+///
+/// Перед сетевыми запросами отдаются уже найденные тексты из дискового кэша
+/// ([lyricsCacheProvider]) — они видны сразу, а сеть лишь уточняет и пополняет
+/// кэш. Поиск завершается по дедлайну, а не по самой медленной базе.
 final lyricsProvider =
     StreamProvider.family<LyricsSearchState, LyricsRequest>((ref, request) {
   final StreamController<LyricsSearchState> controller =
@@ -494,7 +634,8 @@ final lyricsProvider =
   final MegalobizSource megalobiz = ref.watch(megalobizSourceProvider);
   final SimpMusicSource simpmusic = ref.watch(simpmusicSourceProvider);
   final UnisonSource unison = ref.watch(unisonSourceProvider);
-  final MusixmatchSource musixmatch = ref.watch(musixmatchSourceProvider);
+  final PaxsenixSource paxsenix = ref.watch(paxsenixSourceProvider);
+  final LyricsCache cache = ref.watch(lyricsCacheProvider);
   final String musixmatchKey = ref.watch(
     settingsControllerProvider.select((AppSettings s) => s.musixmatchApiKey),
   );
@@ -509,7 +650,7 @@ final lyricsProvider =
   // блокировками), не заставляем пользователя ждать её таймаут — вариант
   // просто не попадёт в список.
   Future<Lyrics> bounded(Future<Lyrics> future) =>
-      future.timeout(const Duration(seconds: 8), onTimeout: () => Lyrics.none);
+      future.timeout(_lyricsSourceBudget, onTimeout: () => Lyrics.none);
 
   Future<Lyrics> fetchSource(LyricsSource target) {
     switch (target) {
@@ -570,11 +711,11 @@ final lyricsProvider =
         if (!externalOk) return Future<Lyrics>.value(Lyrics.none);
         return bounded(megalobiz.fetch(title: title!, artist: artist!));
       case LyricsSource.musixmatch:
-        // Musixmatch идёт через Paxsenix и требует ключ; без ключа — пропуск.
+        // Paxsenix требует ключ; без ключа — пропуск.
         if (!externalOk || musixmatchKey.isEmpty) {
           return Future<Lyrics>.value(Lyrics.none);
         }
-        return bounded(musixmatch.fetch(
+        return bounded(paxsenix.fetch(
           title: title!,
           artist: artist!,
           apiKey: musixmatchKey,
@@ -587,11 +728,33 @@ final lyricsProvider =
 
   controller.add(const LyricsSearchState(loading: true));
 
+  // Порядок источников — из настроек (как в ArchiveTune): первый в списке
+  // приоритетнее. Влияет на тай-брейк при равном качестве текста.
+  final List<LyricsSource> order = ref.read(
+    settingsControllerProvider.select(
+      (AppSettings s) => s.lyricsProviderOrder,
+    ),
+  );
+
   unawaited(() async {
     final List<LyricsCandidate> found = <LyricsCandidate>[];
 
+    // Ранг источника в общем порядке: нужен и сетевым ответам, и закэшированным,
+    // чтобы тай-брейк совместимости (см. scoreLyrics) у них совпадал. Тексты
+    // YouTube — в самом низу: у них нет метаданных для оценки.
+    final Map<LyricsSource, int> ranks = <LyricsSource, int>{
+      for (int i = 0; i < order.length; i++) order[i]: i,
+      LyricsSource.subtitles: order.length,
+      LyricsSource.music: order.length + 1,
+    };
+    int rankOf(LyricsSource source) => ranks[source] ?? order.length + 2;
+
+    // Терминальное состояние выставляется один раз: ответы, пришедшие после
+    // дедлайна, не должны снова включать «идёт поиск».
+    bool terminal = false;
+
     void accept(LyricsSource source, int rank, Lyrics lyrics) {
-      if (disposed || lyrics.isEmpty) return;
+      if (disposed || terminal || lyrics.isEmpty) return;
       final LyricsScore score = scoreLyrics(
         lyrics: lyrics,
         rank: rank,
@@ -599,7 +762,10 @@ final lyricsProvider =
         requestArtist: artist,
         requestDuration: duration,
       );
-      found.add(LyricsCandidate(
+      // Один источник — один вариант: свежий сетевой ответ заменяет
+      // закэшированный, а не показывается рядом с ним.
+      found.removeWhere((LyricsCandidate c) => c.source == source);
+      found.add(LyricsCandidate.from(
         source: source,
         lyrics: lyrics,
         score: score.value,
@@ -623,10 +789,18 @@ final lyricsProvider =
 
     // Запуск источника: синхронная ошибка (маловероятна, но возможна) не
     // должна ронять весь поиск — просто пропускаем этот источник.
-    void spawn(LyricsSource source, int rank) {
+    void spawn(LyricsSource source) {
+      final int rank = rankOf(source);
       try {
         tasks.add(fetchSource(source).then<void>(
-          (Lyrics lyrics) => accept(source, rank, lyrics),
+          (Lyrics lyrics) {
+            // В кэш — только непустой ответ: пустым нельзя затирать уже
+            // найденный текст. Запись не ждём: на показ она не влияет.
+            if (!lyrics.isEmpty) {
+              unawaited(cache.write(request.videoId, source, lyrics));
+            }
+            accept(source, rank, lyrics);
+          },
           // Асинхронная ошибка одной базы тоже не роняет поиск.
           onError: (Object _, StackTrace _) {},
         ));
@@ -636,24 +810,39 @@ final lyricsProvider =
     }
 
     try {
-      for (int rank = 0; rank < lyricsAutoOrder.length; rank++) {
-        spawn(lyricsAutoOrder[rank], rank);
+      // Сначала кэш: пользователь видит уже найденный текст сразу, не ожидая
+      // ни одной базы. Чтение ограничено ~300 мс, поэтому недоступный диск не
+      // задерживает поиск.
+      final Map<LyricsSource, Lyrics> cached =
+          await _readCachedLyrics(cache, request.videoId);
+      for (final MapEntry<LyricsSource, Lyrics> item in cached.entries) {
+        accept(item.key, rankOf(item.key), item.value);
+      }
+
+      for (final LyricsSource source in order) {
+        spawn(source);
       }
 
       // Тексты YouTube — последними и в самом низу списка: у них нет
       // метаданных, поэтому при равной синхронизации внешняя база
       // всегда предпочтительнее.
-      final int youtubeRank = lyricsAutoOrder.length;
-      spawn(LyricsSource.subtitles, youtubeRank);
-      spawn(LyricsSource.music, youtubeRank + 1);
+      spawn(LyricsSource.subtitles);
+      spawn(LyricsSource.music);
 
-      await Future.wait(tasks);
+      // Завершаемся по дедлайну, а не по самой медленной базе: иначе меню
+      // крутилось бы, пока кто-то молчит. Уже полученные варианты остаются
+      // в `found`, так что досрочное завершение их не теряет.
+      await Future.any<void>(<Future<void>>[
+        Future.wait(tasks),
+        Future<void>.delayed(_lyricsSearchDeadline),
+      ]);
     } on Object catch (error) {
       debugPrint('[Lyrics] поиск прерван: $error');
     } finally {
       // Терминальное состояние выставляем всегда, иначе интерфейс навсегда
       // остался бы в «идёт поиск».
       if (!disposed) {
+        terminal = true;
         controller.add(LyricsSearchState(
           candidates: List<LyricsCandidate>.of(found),
           loading: false,

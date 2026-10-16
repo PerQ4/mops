@@ -75,6 +75,26 @@ class PlaybackState {
   static const PlaybackState initial = PlaybackState();
 }
 
+/// Устройство вывода звука, не зависящее от бэкенда.
+class AudioOutputDevice {
+  const AudioOutputDevice({required this.name, required this.description});
+
+  /// Внутреннее имя устройства (`auto` — выбор системы).
+  final String name;
+
+  /// Человекочитаемое описание.
+  final String description;
+
+  bool get isAuto => name == 'auto';
+
+  @override
+  bool operator ==(Object other) =>
+      other is AudioOutputDevice && other.name == name;
+
+  @override
+  int get hashCode => name.hashCode;
+}
+
 /// Контракт аудиодвижка.
 ///
 /// Реализация по умолчанию — [MediaKitEngine] (`media_kit`/libmpv). Он
@@ -115,6 +135,15 @@ abstract class AudioEngine {
 
   /// Скорость воспроизведения (1.0 — обычная).
   Future<void> setSpeed(double speed);
+
+  /// Доступные устройства вывода звука.
+  List<AudioOutputDevice> get audioDevices;
+
+  /// Поток изменений списка устройств (и выбранного).
+  Stream<List<AudioOutputDevice>> get audioDevicesStream;
+
+  /// Выбирает устройство вывода по имени (`auto` — системное).
+  Future<void> setAudioDevice(String name);
 
   Future<void> dispose();
 }

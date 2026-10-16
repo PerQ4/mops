@@ -1,3 +1,4 @@
+import 'dart:async';
 import 'dart:convert';
 import 'dart:io';
 
@@ -6,18 +7,24 @@ import 'lyrics_format.dart';
 
 /// Тексты из YouLy+ (`lyricsplus.*`).
 ///
-/// Почему она: те же зеркала, что использует ArchiveTune. Сначала пробуем TTML
-/// (пословная разметка Apple Music), затем обычный JSON со строками и
-/// временами. Зеркал несколько: если одно недоступно, запрос идёт к следующему.
+/// Почему она: те же зеркала, что использует ArchiveTune, и она отдаёт TTML
+/// (пословная разметка Apple Music) — то есть караоке, а не просто строки.
+/// Первый путь — TTML, второй — обычный JSON со строками и временами слов.
+///
+/// Зеркала опрашиваются **параллельно**: раньше они перебирались по очереди, и
+/// на мёртвом зеркале запрос висел до таймаута, из-за чего источник не успевал
+/// ответить в общий бюджет поиска и текст пропадал. Теперь побеждает тот, кто
+/// ответил первым с непустым результатом.
 class YouLyPlusSource {
   YouLyPlusSource({HttpClient? client}) : _client = client ?? HttpClient();
 
   final HttpClient _client;
 
-  /// Зеркала сервиса — на случай, если одно из них заблокировано или лежит.
+  /// Зеркала сервиса. Порядок — по фактической доступности: у `binimum`
+  /// работает только `v2/lyrics/get`, у `prjktla.my.id` — и TTML тоже.
   static const List<String> _mirrors = <String>[
-    'https://lyricsplus.binimum.org',
     'https://lyricsplus.prjktla.my.id',
+    'https://lyricsplus.binimum.org',
     'https://lyricsplus.prjktla.workers.dev',
     'https://lyricsplus.atomix.one',
     'https://lyricsplus-seven.vercel.app',
@@ -25,6 +32,10 @@ class YouLyPlusSource {
 
   static const String _ttmlPath = '/v1/ttml/get';
   static const String _lrcPath = '/v2/lyrics/get';
+
+  /// Сколько ждём одно зеркало. Короткий таймаут важнее полноты: молчащее
+  /// зеркало всё равно ничего не отдаст, а поиск держать нельзя.
+  static const Duration _mirrorTimeout = Duration(seconds: 6);
 
   static final RegExp _ttmlRoot =
       RegExp(r'<(?:[A-Za-z_][\w.-]*:)?tt[\s>]', caseSensitive: false);
@@ -46,6 +57,7 @@ class YouLyPlusSource {
     return Lyrics.none;
   }
 
+  /// Опрашивает все зеркала одного пути параллельно.
   Future<Lyrics> _fetchPath(
     String path,
     String title,
@@ -53,24 +65,53 @@ class YouLyPlusSource {
     String? album,
     Duration? duration,
   ) async {
+    final Completer<Lyrics> winner = Completer<Lyrics>();
+    int pending = _mirrors.length;
+
     for (final String mirror in _mirrors) {
-      final Uri uri = Uri.parse('$mirror$path').replace(
-        queryParameters: <String, String>{
-          'title': title,
-          'artist': artist,
-          if (album != null && album.trim().isNotEmpty) 'album': album.trim(),
-          if (duration != null && duration > Duration.zero)
-            'duration': '${duration.inSeconds}',
-        },
+      unawaited(
+        _fetchMirror(mirror, path, title, artist, album, duration)
+            .then((Lyrics lyrics) {
+          if (!lyrics.isEmpty && !winner.isCompleted) {
+            winner.complete(lyrics);
+          }
+        }).whenComplete(() {
+          pending--;
+          if (pending == 0 && !winner.isCompleted) {
+            winner.complete(Lyrics.none);
+          }
+        }),
       );
-
-      final String? body = await _getText(uri);
-      if (body == null) continue;
-
-      final Lyrics lyrics = _decode(body);
-      if (!lyrics.isEmpty) return lyrics;
     }
-    return Lyrics.none;
+
+    // Страховка: даже если все зеркала «зависли», поиск не ждёт их вечно.
+    return winner.future.timeout(
+      _mirrorTimeout + const Duration(seconds: 1),
+      onTimeout: () => Lyrics.none,
+    );
+  }
+
+  Future<Lyrics> _fetchMirror(
+    String mirror,
+    String path,
+    String title,
+    String artist,
+    String? album,
+    Duration? duration,
+  ) async {
+    final Uri uri = Uri.parse('$mirror$path').replace(
+      queryParameters: <String, String>{
+        'title': title,
+        'artist': artist,
+        if (album != null && album.trim().isNotEmpty) 'album': album.trim(),
+        if (duration != null && duration > Duration.zero)
+          'duration': '${duration.inSeconds}',
+      },
+    );
+
+    final String? body = await _getText(uri);
+    if (body == null) return Lyrics.none;
+    return _decode(body);
   }
 
   /// Разбирает ответ зеркала: TTML, JSON со строками или обычный LRC.
@@ -100,7 +141,7 @@ class YouLyPlusSource {
       return lyricsFromText(lyricsNode, 'YouLy+');
     }
     if (lyricsNode is List) {
-      return _fromLineList(lyricsNode);
+      return _fromLineList(lyricsNode, decoded);
     }
     return Lyrics.none;
   }
@@ -112,10 +153,18 @@ class YouLyPlusSource {
         match: LyricsMatch(hasTranslation: ttmlHasTranslation(ttml)),
       );
 
-  /// Собирает текст из списка строк вида `{time, text}`.
-  Lyrics _fromLineList(List<dynamic> node) {
+  /// Собирает текст из списка строк вида `{time, text, syllabus:[...]}`.
+  ///
+  /// `syllabus` — разметка по словам: именно она делает текст караоке. Тип
+  /// ответа (`type: "Word"`) означает, что времена пословные, и брать из строки
+  /// только текст было бы потерей.
+  Lyrics _fromLineList(List<dynamic> node, dynamic root) {
+    final bool wordTimed =
+        _findString(root, 'type')?.toLowerCase() == 'word';
+
     final List<TimedLyric> timed = <TimedLyric>[];
     final List<String> plain = <String>[];
+
     for (final dynamic item in node) {
       if (item is! Map) continue;
       final String? text =
@@ -127,6 +176,7 @@ class YouLyPlusSource {
         timed.add(TimedLyric(
           time: Duration(milliseconds: time.toInt()),
           text: text.trim(),
+          words: wordTimed ? _words(item) : null,
         ));
       } else {
         plain.add(text.trim());
@@ -141,6 +191,32 @@ class YouLyPlusSource {
       return Lyrics(plain: plain.join('\n'), source: 'YouLy+');
     }
     return Lyrics.none;
+  }
+
+  /// Слова одной строки из `syllabus`.
+  List<TimedWord>? _words(Map<dynamic, dynamic> line) {
+    final dynamic syllabus = line['syllabus'];
+    if (syllabus is! List) return null;
+
+    final List<TimedWord> words = <TimedWord>[];
+    for (final dynamic item in syllabus) {
+      if (item is! Map) continue;
+      final dynamic time = item['time'];
+      final String? text = item['text'] is String ? item['text'] as String : null;
+      if (time is! num || text == null) continue;
+      final String trimmed = text.trim();
+      if (trimmed.isEmpty) continue;
+      final dynamic length = item['duration'];
+      final Duration start = Duration(milliseconds: time.toInt());
+      words.add(TimedWord(
+        time: start,
+        text: trimmed,
+        end: length is num && length > 0
+            ? start + Duration(milliseconds: length.toInt())
+            : null,
+      ));
+    }
+    return words.isEmpty ? null : words;
   }
 
   bool _looksLikeTtml(String value) {
@@ -185,7 +261,7 @@ class YouLyPlusSource {
       final HttpClientRequest request = await _client.getUrl(uri);
       request.headers.set(HttpHeaders.acceptHeader, 'application/json');
       final HttpClientResponse response =
-          await request.close().timeout(const Duration(seconds: 20));
+          await request.close().timeout(_mirrorTimeout);
       if (response.statusCode != HttpStatus.ok) {
         await response.drain<void>();
         return null;

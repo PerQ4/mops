@@ -75,6 +75,9 @@ class _SearchScreenState extends ConsumerState<SearchScreen> {
   Widget build(BuildContext context) {
     return Scaffold(
       appBar: AppBar(
+        // Поле — 56, панель — 72: по 8 сверху и снизу. При стандартной высоте
+        // 56 поле прилипало к краям панели вплотную.
+        toolbarHeight: 72,
         title: TextField(
           controller: _controller,
           focusNode: _focus,

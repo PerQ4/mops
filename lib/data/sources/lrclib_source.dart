@@ -20,8 +20,11 @@ class LrclibSource {
   final HttpClient _client;
 
   static const String _host = 'https://lrclib.net/api';
-  static const String _userAgent =
-      'mOps/1.0 (https://github.com/mops; клиент YouTube Music)';
+
+  /// Только ASCII: заголовки HTTP кодируются как latin-1, и кириллица в
+  /// `User-Agent` приводила к исключению при отправке — запрос молча падал,
+  /// и база всегда выглядела пустой.
+  static const String _userAgent = 'mOps/1.0 (YouTube Music client)';
 
   /// Ищет текст по исполнителю, названию, альбому и длительности.
   ///

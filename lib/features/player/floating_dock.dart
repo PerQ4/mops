@@ -496,15 +496,23 @@ class _PlayerIslandState extends ConsumerState<_PlayerIsland> {
             _dragging ? Duration.zero : const Duration(milliseconds: 280),
         curve: Curves.easeOutBack,
         transform: Matrix4.translationValues(
-          // Влево не сдвигаем: там работает обрезка, а стык должен стоять.
-          _dragDx > 0 ? _dragDx * 0.32 : 0,
+          // Влево — едем вместе с обрезкой: капсула уходит под навигацию, а
+          // левый край (обрез) остаётся на её границе. Вправо — лёгкий сдвиг,
+          // там обрезки нет.
+          _dragDx > 0 ? _dragDx * 0.32 : -shrink,
           _dragDy * 0.30,
           0,
         ),
-        child: ClipRect(
-          clipper: _RightInsetClipper(shrink),
-          child: islandWithJoint,
-        ),
+        child: shrink <= 0.5
+            ? islandWithJoint
+            : ClipRRect(
+                clipper: _LeftInsetClipper(
+                  inset: shrink,
+                  edgeRadius: FloatingDock.joinRadius,
+                  outerRadius: FloatingDock.playerRadius,
+                ),
+                child: islandWithJoint,
+              ),
       ),
     );
   }
@@ -921,28 +929,45 @@ class _PanelHeader extends ConsumerWidget {
 ///
 /// Без размытия и полупрозрачности — в ArchiveTune такой «стеклянности» нет,
 /// а размытие фона заметно нагружает отрисовку.
-/// Обрезает правый край блока на заданную величину.
+/// Обрезает левый край блока на заданную величину.
 ///
-/// Нужен для свайпа к навигации: блок должен «сжиматься» вместе с содержимым,
-/// а левый край — стык с навигацией — оставаться на месте. Изменение ширины
-/// самого виджета сдвинуло бы всю строку (она центрируется), поэтому режем
-/// только видимую часть.
-class _RightInsetClipper extends CustomClipper<Rect> {
-  const _RightInsetClipper(this.inset);
+/// Нужен для свайпа к навигации: капсула «уезжает» влево под остров навигации,
+/// поэтому прячется именно левая часть, а правый край остаётся на месте.
+/// Кромка обрезки скруглена как базовый стык (`joinRadius`), а внешний правый
+/// угол сохраняет штатный радиус — иначе кромка выглядит чужим капсульным
+/// закруглением.
+class _LeftInsetClipper extends CustomClipper<RRect> {
+  const _LeftInsetClipper({
+    required this.inset,
+    required this.edgeRadius,
+    required this.outerRadius,
+  });
 
   final double inset;
 
-  @override
-  Rect getClip(Size size) => Rect.fromLTRB(
-        0,
-        0,
-        (size.width - inset).clamp(0.0, size.width),
-        size.height,
-      );
+  /// Радиус обрезанной (левой) кромки — как у стыка с навигацией.
+  final double edgeRadius;
+
+  /// Радиус внешнего (правого) угла — как в покое.
+  final double outerRadius;
 
   @override
-  bool shouldReclip(_RightInsetClipper oldClipper) =>
-      oldClipper.inset != inset;
+  RRect getClip(Size size) {
+    final double left = inset.clamp(0.0, size.width);
+    return RRect.fromRectAndCorners(
+      Rect.fromLTRB(left, 0, size.width, size.height),
+      topLeft: Radius.circular(edgeRadius),
+      bottomLeft: Radius.circular(edgeRadius),
+      topRight: Radius.circular(outerRadius),
+      bottomRight: Radius.circular(outerRadius),
+    );
+  }
+
+  @override
+  bool shouldReclip(_LeftInsetClipper oldClipper) =>
+      oldClipper.inset != inset ||
+      oldClipper.edgeRadius != edgeRadius ||
+      oldClipper.outerRadius != outerRadius;
 }
 
 class _DockSurface extends StatelessWidget {

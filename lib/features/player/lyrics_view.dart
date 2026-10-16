@@ -12,6 +12,7 @@ import 'package:flutter_riverpod/flutter_riverpod.dart';
 import '../../data/local/app_settings.dart';
 import '../../data/models/models.dart';
 import '../../state/catalog_providers.dart';
+import '../../state/lyrics_edits.dart';
 import '../../state/player_controller.dart';
 import '../../state/providers.dart';
 import '../../widgets/async_views.dart';
@@ -206,11 +207,17 @@ class _LyricsViewState extends ConsumerState<LyricsView> {
   @override
   Widget build(BuildContext context) {
     // Метаданные берём у играющего трека: внешняя база (LRCLIB) ищет текст
-    // по названию и исполнителю, а не по id YouTube.
+    // по названию и исполнителю, а не по id YouTube. Ручной поиск для трека
+    // важнее — если пользователь ввёл свои данные, ищем по ним.
     final Track? current = ref.watch(currentTrackProvider);
-    final LyricsRequest request = (current != null && current.id == widget.videoId)
-        ? LyricsRequest.fromTrack(current)
-        : LyricsRequest(videoId: widget.videoId);
+    final LyricsRequest? manual = ref.watch(
+      manualLyricsRequestsProvider
+          .select((Map<String, LyricsRequest> m) => m[widget.videoId]),
+    );
+    final LyricsRequest request = manual ??
+        ((current != null && current.id == widget.videoId)
+            ? LyricsRequest.fromTrack(current)
+            : LyricsRequest(videoId: widget.videoId));
 
     // Источник: ручной выбор для этого трека важнее настройки.
     final LyricsSource selected =
@@ -221,16 +228,34 @@ class _LyricsViewState extends ConsumerState<LyricsView> {
               ),
             );
 
+    // Порядок источников из настроек: внутри одного типа синхронизации он
+    // решает, какой источник приоритетнее.
+    final List<LyricsSource> order = ref.watch(
+      settingsControllerProvider.select(
+        (AppSettings s) => s.lyricsProviderOrder,
+      ),
+    );
+
     final AsyncValue<LyricsSearchState> searchAsync =
         ref.watch(lyricsProvider(request));
     final LyricsSearchState state =
         searchAsync.value ?? const LyricsSearchState();
 
-    // Что показываем: в «Авто» — лучший по совместимости, иначе — ровно
-    // выбранную базу. Пустота выбранной базы остаётся пустотой, подмены нет.
-    final Lyrics? data = _resolve(state, selected);
+    // Правка текста и оффсет привязаны к треку, поэтому читаем их по его id.
+    final String? edit = ref.watch(
+      lyricsEditsProvider.select((Map<String, String> m) => m[widget.videoId]),
+    );
+    final int offsetMs = ref.watch(
+      lyricsOffsetProvider.select((Map<String, int> m) => m[widget.videoId] ?? 0),
+    );
+
+    // Что показываем: в «Авто» — лучший по механизму приоритета (сначала тип
+    // синхронизации, затем порядок источников), иначе — ровно выбранную базу.
+    // Пустота выбранной базы остаётся пустотой, подмены нет. Ручная правка
+    // ложится поверх найденного текста.
+    final Lyrics? data = _applyEdit(_resolve(state, selected, order), edit);
     final LyricsCandidate? shown = selected == LyricsSource.auto
-        ? state.best
+        ? state.bestByOrder(order)
         : state.candidateFor(selected);
 
     // Подсветку и переходы считаем по уже загруженному тексту: держать это в
@@ -246,6 +271,33 @@ class _LyricsViewState extends ConsumerState<LyricsView> {
       jumpSeq: _jumpSeq,
     );
 
+    // Романизацию спрашиваем только при включённой настройке: выключенная
+    // настройка не должна тянуть сеть. Один запрос на весь текст, результат —
+    // соответствие «строка → латиница».
+    final bool romanizationEnabled = ref.watch(
+      settingsControllerProvider.select(
+        (AppSettings s) => s.romanizationEnabled,
+      ),
+    );
+    final RomanizationLanguage romanizationLanguage = ref.watch(
+      settingsControllerProvider.select(
+        (AppSettings s) => s.romanizationLanguage,
+      ),
+    );
+    Map<int, String> romanized = const <int, String>{};
+    if (romanizationEnabled && lineTexts.isNotEmpty) {
+      romanized = ref.watch(
+            romanizationProvider(
+              RomanizationQuery(
+                videoId: widget.videoId,
+                language: romanizationLanguage,
+                lines: lineTexts,
+              ),
+            ),
+          ).value ??
+          const <int, String>{};
+    }
+
     return Column(
       children: <Widget>[
         _LyricsToolbar(
@@ -255,6 +307,9 @@ class _LyricsViewState extends ConsumerState<LyricsView> {
           actualSource: shown?.source.label,
           searchOpen: _searchOpen,
           onToggleSearch: _toggleSearch,
+          // Кнопки оффсета нужны только там, где есть времена: у обычного
+          // текста сдвигать нечего.
+          showOffset: data?.isSynced ?? false,
         ),
         if (_searchOpen)
           _LyricsSearchBar(
@@ -270,7 +325,8 @@ class _LyricsViewState extends ConsumerState<LyricsView> {
         Expanded(
           child: searchAsync.when(
             data: (LyricsSearchState value) {
-              final Lyrics? resolved = _resolve(value, selected);
+              final Lyrics? resolved =
+                  _applyEdit(_resolve(value, selected, order), edit);
               // Поиск ещё идёт и показывать нечего — честное ожидание вместо
               // пустого экрана: вариант может появиться в любой момент.
               if (resolved == null && value.loading) {
@@ -298,6 +354,8 @@ class _LyricsViewState extends ConsumerState<LyricsView> {
                 return _SyncedLyrics(
                   lines: lyricsValue.timed!,
                   search: search,
+                  offsetMs: offsetMs,
+                  romanized: romanized,
                 );
               }
               // Обычный текст: подсветки и автопрокрутки нет — их честно
@@ -306,6 +364,7 @@ class _LyricsViewState extends ConsumerState<LyricsView> {
                 text: lyricsValue.plain ?? '',
                 source: lyricsValue.source,
                 search: search,
+                romanized: romanized,
                 onFindSource: () => showLyricsMenu(context, request),
               );
             },
@@ -320,12 +379,42 @@ class _LyricsViewState extends ConsumerState<LyricsView> {
 
   /// Текст, который нужно показать для текущего выбора источника.
   ///
-  /// В «Авто» показываем лучший по совместимости вариант, при явном выборе —
-  /// только результат выбранной базы (её отсутствие не подменяем чужой
-  /// выдачей — так честнее и понятнее, почему текста нет).
-  Lyrics? _resolve(LyricsSearchState state, LyricsSource selected) {
-    if (selected == LyricsSource.auto) return state.best?.lyrics;
+  /// В «Авто» показываем лучший по приоритету вариант (тип синхронизации,
+  /// затем порядок источников), при явном выборе — только результат выбранной
+  /// базы (её отсутствие не подменяем чужой выдачей — так честнее и понятнее,
+  /// почему текста нет).
+  Lyrics? _resolve(
+    LyricsSearchState state,
+    LyricsSource selected,
+    List<LyricsSource> order,
+  ) {
+    if (selected == LyricsSource.auto) return state.bestByOrder(order)?.lyrics;
     return state.candidateFor(selected)?.lyrics;
+  }
+
+  /// Кладёт ручную правку поверх найденного текста.
+  ///
+  /// Времена сохраняем по индексу строки, когда число строк совпало: тогда
+  /// подсветка и автопрокрутка продолжают работать. Пословную разметку при
+  /// этом отбрасываем — она привязана к старым словам и после правки врала бы.
+  /// Если строки не совпали — показываем как обычный текст без времён: лучше
+  /// без синхронизации, чем с выдуманной.
+  Lyrics? _applyEdit(Lyrics? base, String? edit) {
+    if (edit == null) return base;
+    final List<String> edited = edit.split('\n');
+    final List<TimedLyric>? timed = base?.timed;
+    if (timed != null && timed.length == edited.length) {
+      return Lyrics(
+        timed: <TimedLyric>[
+          for (int i = 0; i < edited.length; i++)
+            TimedLyric(time: timed[i].time, text: edited[i]),
+        ],
+        plain: edit,
+        source: base?.source,
+        match: base?.match,
+      );
+    }
+    return Lyrics(plain: edit, source: base?.source, match: base?.match);
   }
 
   /// Тексты строк для подсветки поиска — из синхронизации или из обычного
@@ -380,6 +469,7 @@ class _LyricsToolbar extends ConsumerWidget {
     required this.searchOpen,
     required this.onToggleSearch,
     this.actualSource,
+    this.showOffset = false,
   });
 
   final LyricsRequest request;
@@ -389,6 +479,9 @@ class _LyricsToolbar extends ConsumerWidget {
   /// Источник, из которого пришёл текст (может отличаться от выбранного:
   /// основной источник подтягивает синхронизацию из LRCLIB).
   final String? actualSource;
+
+  /// Показывать ли кнопки сдвига синхронизации (есть ли времена).
+  final bool showOffset;
 
   @override
   Widget build(BuildContext context, WidgetRef ref) {
@@ -426,10 +519,94 @@ class _LyricsToolbar extends ConsumerWidget {
             icon: Icon(searchOpen ? Icons.search_off : Icons.search),
             onPressed: onToggleSearch,
           ),
+          if (showOffset) _OffsetControls(videoId: request.videoId),
           LyricsMenuButton(request: request, iconSize: 20),
         ],
       ),
     );
+  }
+}
+
+/// Кнопки сдвига синхронизации текста: «−0.5 с», «+0.5 с» и сброс.
+///
+/// Оффсет хранится на трек (см. `lyrics_edits.dart`) и применяется сразу:
+/// перезапрашивать текст не нужно. Текущее значение показываем только когда оно
+/// не ноль — в обычном состоянии шапка не должна пестреть лишними цифрами.
+class _OffsetControls extends ConsumerWidget {
+  const _OffsetControls({required this.videoId});
+
+  final String videoId;
+
+  @override
+  Widget build(BuildContext context, WidgetRef ref) {
+    final ColorScheme scheme = Theme.of(context).colorScheme;
+    final int offset = ref.watch(
+      lyricsOffsetProvider.select((Map<String, int> m) => m[videoId] ?? 0),
+    );
+    final LyricsOffsets notifier = ref.read(lyricsOffsetProvider.notifier);
+
+    return Row(
+      mainAxisSize: MainAxisSize.min,
+      children: <Widget>[
+        _offsetButton(
+          context,
+          '−0.5 с',
+          'Текст раньше на 0.5 с',
+          () => notifier.nudge(videoId, -kLyricsOffsetStepMs),
+        ),
+        _offsetButton(
+          context,
+          '+0.5 с',
+          'Текст позже на 0.5 с',
+          () => notifier.nudge(videoId, kLyricsOffsetStepMs),
+        ),
+        if (offset != 0) ...<Widget>[
+          Text(
+            _offsetLabel(offset),
+            style: Theme.of(context).textTheme.labelMedium?.copyWith(
+                  color: scheme.primary,
+                  fontWeight: FontWeight.w700,
+                ),
+          ),
+          IconButton(
+            tooltip: 'Сбросить сдвиг',
+            iconSize: 18,
+            visualDensity: VisualDensity.compact,
+            icon: const Icon(Icons.restart_alt),
+            onPressed: () => notifier.reset(videoId),
+          ),
+        ],
+      ],
+    );
+  }
+
+  /// Компактная кнопка: в шапке уже есть поиск и меню, и обычный `TextButton`
+  /// растянул бы строку.
+  Widget _offsetButton(
+    BuildContext context,
+    String label,
+    String tooltip,
+    VoidCallback onPressed,
+  ) {
+    return Tooltip(
+      message: tooltip,
+      child: TextButton(
+        onPressed: onPressed,
+        style: TextButton.styleFrom(
+          minimumSize: Size.zero,
+          padding: const EdgeInsets.symmetric(horizontal: 6, vertical: 4),
+          tapTargetSize: MaterialTapTargetSize.shrinkWrap,
+          textStyle: Theme.of(context).textTheme.labelMedium,
+        ),
+        child: Text(label),
+      ),
+    );
+  }
+
+  String _offsetLabel(int offsetMs) {
+    final double seconds = offsetMs / 1000;
+    final String sign = seconds > 0 ? '+' : '−';
+    return '$sign${seconds.abs().toStringAsFixed(1)} с';
   }
 }
 
@@ -565,18 +742,53 @@ List<InlineSpan> _highlightSpans(
 
 /// Обычный текст: прокручиваемый блок без выделения строк, но с подсветкой
 /// найденного запроса и переходом к совпадению.
+/// Плашка «Проигрыш»: показывается, когда в треке идёт длинная пауза между
+/// строками и петь пока нечего.
+class _InterludeBadge extends StatelessWidget {
+  const _InterludeBadge();
+
+  @override
+  Widget build(BuildContext context) {
+    final ColorScheme scheme = Theme.of(context).colorScheme;
+    return Container(
+      padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 6),
+      decoration: BoxDecoration(
+        color: scheme.surfaceContainerHighest.withValues(alpha: 0.9),
+        borderRadius: BorderRadius.circular(999),
+      ),
+      child: Row(
+        mainAxisSize: MainAxisSize.min,
+        children: <Widget>[
+          Icon(Icons.music_note, size: 16, color: scheme.onSurfaceVariant),
+          const SizedBox(width: 6),
+          Text(
+            'Проигрыш',
+            style: Theme.of(context).textTheme.labelMedium?.copyWith(
+                  color: scheme.onSurfaceVariant,
+                ),
+          ),
+        ],
+      ),
+    );
+  }
+}
+
 class _PlainLyrics extends ConsumerStatefulWidget {
   const _PlainLyrics({
     required this.text,
     required this.source,
     required this.search,
     required this.onFindSource,
+    this.romanized = const <int, String>{},
   });
 
   final String text;
   final String? source;
   final _LyricsSearch search;
   final VoidCallback onFindSource;
+
+  /// Романизация по номерам строк (латиница под оригиналом).
+  final Map<int, String> romanized;
 
   @override
   ConsumerState<_PlainLyrics> createState() => _PlainLyricsState();
@@ -653,17 +865,33 @@ class _PlainLyricsState extends ConsumerState<_PlainLyrics> {
               Padding(
                 key: i < _keys.length ? _keys[i] : null,
                 padding: const EdgeInsets.only(bottom: 2),
-                child: Text.rich(
-                  TextSpan(
-                    children: _highlightSpans(
-                      lines[i],
-                      widget.search.query,
-                      matchStyle: widget.search.currentLine == i
-                          ? currentStyle
-                          : matchStyle,
+                child: Column(
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  children: <Widget>[
+                    Text.rich(
+                      TextSpan(
+                        children: _highlightSpans(
+                          lines[i],
+                          widget.search.query,
+                          matchStyle: widget.search.currentLine == i
+                              ? currentStyle
+                              : matchStyle,
+                        ),
+                      ),
+                      style: baseStyle,
                     ),
-                  ),
-                  style: baseStyle,
+                    // Романизация идёт строкой под оригиналом и не заменяет
+                    // его: нужны оба текста.
+                    if (widget.romanized[i] != null)
+                      Text(
+                        widget.romanized[i]!,
+                        style: baseStyle.copyWith(
+                          fontSize: baseSize * 0.7,
+                          color: scheme.onSurfaceVariant,
+                          fontWeight: FontWeight.w400,
+                        ),
+                      ),
+                  ],
                 ),
               ),
           ],
@@ -690,10 +918,22 @@ class _WordTiming {
 /// Синхронизированный текст: плавная автопрокрутка, подсветка активной строки
 /// и пословное «караоке», как в `LyricsV2` (ArchiveTune).
 class _SyncedLyrics extends ConsumerStatefulWidget {
-  const _SyncedLyrics({required this.lines, required this.search});
+  const _SyncedLyrics({
+    required this.lines,
+    required this.search,
+    this.offsetMs = 0,
+    this.romanized = const <int, String>{},
+  });
 
   final List<TimedLyric> lines;
   final _LyricsSearch search;
+
+  /// Сдвиг синхронизации в миллисекундах — на трек, хранится на диске.
+  /// Положительное значение задерживает подсветку.
+  final int offsetMs;
+
+  /// Романизация по номерам строк (латиница под оригиналом).
+  final Map<int, String> romanized;
 
   @override
   ConsumerState<_SyncedLyrics> createState() => _SyncedLyricsState();
@@ -728,6 +968,17 @@ class _SyncedLyricsState extends ConsumerState<_SyncedLyrics>
   /// Номер активной строки — список перестраивается только при её смене, а не
   /// на каждом тике позиции.
   final ValueNotifier<int> _activeIndex = ValueNotifier<int>(-1);
+
+  /// Идёт инструментальная вставка: строку уже пропели, следующая ещё далеко.
+  /// По этому признаку показывается «♪» — иначе казалось бы, что текст встал.
+  final ValueNotifier<bool> _interlude = ValueNotifier<bool>(false);
+
+  /// С какой паузы между строками считать её инструментальной вставкой.
+  static const int _interludeMinGapMs = 5000;
+
+  /// Сколько «звучит» строка без пословной разметки: точнее база не знает,
+  /// а 4 с — тот же запас, что у конца последней строки.
+  static const int _lineSungTailMs = 4000;
 
   Ticker? _ticker;
   Duration _lastTick = Duration.zero;
@@ -781,6 +1032,7 @@ class _SyncedLyricsState extends ConsumerState<_SyncedLyrics>
     _controller.dispose();
     _positionMs.dispose();
     _activeIndex.dispose();
+    _interlude.dispose();
     super.dispose();
   }
 
@@ -899,13 +1151,18 @@ class _SyncedLyricsState extends ConsumerState<_SyncedLyrics>
       }
     }
 
-    final int rounded = _smoothMs.round();
+    // Оффсет применяем к самой позиции: по ней же рисуется «караоке», поэтому
+    // сдвиг виден сразу, без перезапроса текста.
+    final int rounded = _smoothMs.round() - widget.offsetMs;
     if (_positionMs.value != rounded) _positionMs.value = rounded;
 
     final int index = _indexForPosition(rounded + _leadMs);
     if (index != _activeIndex.value) {
       _activeIndex.value = index;
     }
+
+    final bool gap = _inLongGap(rounded + _leadMs);
+    if (_interlude.value != gap) _interlude.value = gap;
     // Прокручиваем при смене строки, а также один раз после первой раскладки
     // (`_lastScrolledIndex` обновляется только после удачной прокрутки).
     if (_canAutoScroll && index >= 0 && _lastScrolledIndex != index) {
@@ -1002,6 +1259,36 @@ class _SyncedLyricsState extends ConsumerState<_SyncedLyrics>
     return start + 4000;
   }
 
+  /// Долгая пауза между строками — инструментальная вставка.
+  ///
+  /// Границы считаем по концу пропевания строки: у пословного текста это конец
+  /// последнего слова, у построчного — начало плюс запас. Если до следующей
+  /// строки остаётся больше [_interludeMinGapMs] и позиция уже внутри этой
+  /// паузы — значит поют не сейчас.
+  bool _inLongGap(int positionMs) {
+    final int index = _activeIndex.value;
+    if (index < 0 || index + 1 >= widget.lines.length) return false;
+
+    final int nextStart = widget.lines[index + 1].time.inMilliseconds;
+    final int sungEnd = _sungEndMs(index);
+    if (nextStart - sungEnd < _interludeMinGapMs) return false;
+    return positionMs >= sungEnd && positionMs < nextStart;
+  }
+
+  /// Конец пропевания строки.
+  int _sungEndMs(int index) {
+    final int start = widget.lines[index].time.inMilliseconds;
+    final List<TimedWord>? words = widget.lines[index].words;
+    if (words == null || words.isEmpty) return start + _lineSungTailMs;
+
+    int end = start;
+    for (final TimedWord word in words) {
+      final int wordEnd = word.end?.inMilliseconds ?? word.time.inMilliseconds;
+      if (wordEnd > end) end = wordEnd;
+    }
+    return end;
+  }
+
   List<_WordTiming> _wordTimings(int index) {
     final List<TimedWord>? words = widget.lines[index].words;
     if (words == null || words.isEmpty) return const <_WordTiming>[];
@@ -1088,6 +1375,7 @@ class _SyncedLyricsState extends ConsumerState<_SyncedLyrics>
                     words: _wordTimings(i),
                     baseSize: baseSize,
                     search: widget.search,
+                    romanized: widget.romanized[i],
                   ),
               ],
                 ),
@@ -1108,6 +1396,22 @@ class _SyncedLyricsState extends ConsumerState<_SyncedLyrics>
         child: Stack(
           children: <Widget>[
             list,
+            // Инструментальная вставка: строк нет, но трек играет — говорим
+            // об этом прямо, иначе текст выглядит «зависшим».
+            ValueListenableBuilder<bool>(
+              valueListenable: _interlude,
+              builder: (BuildContext context, bool gap, Widget? _) {
+                if (!gap || _manualScrolling || widget.search.isActive) {
+                  return const SizedBox.shrink();
+                }
+                return const Positioned(
+                  left: 0,
+                  right: 0,
+                  bottom: 16,
+                  child: Center(child: _InterludeBadge()),
+                );
+              },
+            ),
             if (_manualScrolling && !widget.search.isActive)
               Positioned(
                 left: 0,
@@ -1143,6 +1447,7 @@ class _LyricLine extends StatelessWidget {
     required this.words,
     required this.baseSize,
     required this.search,
+    this.romanized,
   });
 
   final int index;
@@ -1161,6 +1466,9 @@ class _LyricLine extends StatelessWidget {
   final List<_WordTiming> words;
   final double baseSize;
   final _LyricsSearch search;
+
+  /// Латиница под строкой; `null` — романизации нет.
+  final String? romanized;
 
   /// Прозрачность строки по расстоянию (`LyricsV2.kt:549-583`).
   ///
@@ -1232,10 +1540,29 @@ class _LyricLine extends StatelessWidget {
                       child: content,
                     );
                   }
-                  return Transform.scale(
+                  final Widget scaled = Transform.scale(
                     scale: scaleValue,
                     alignment: Alignment.centerLeft,
                     child: content,
+                  );
+                  if (romanized == null) return scaled;
+                  // Романизация идёт отдельной строкой под оригиналом: мельче
+                  // и приглушённее, чтобы латиница оставалась подсказкой, а не
+                  // заменяла текст песни.
+                  return Column(
+                    crossAxisAlignment: CrossAxisAlignment.start,
+                    children: <Widget>[
+                      scaled,
+                      Text(
+                        romanized!,
+                        style: TextStyle(
+                          height: 1.35,
+                          fontSize: baseSize * 0.7,
+                          fontWeight: FontWeight.w500,
+                          color: scheme.onSurface.withValues(alpha: alpha * 0.7),
+                        ),
+                      ),
+                    ],
                   );
                 },
               );

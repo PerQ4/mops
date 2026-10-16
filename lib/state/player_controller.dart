@@ -44,6 +44,8 @@ class PlayerUiState {
     this.downloading = false,
     this.downloadProgress = 0,
     this.streamNote,
+    this.audioDevices = const <AudioOutputDevice>[],
+    this.audioDeviceName = 'auto',
   });
 
   final List<Track> queue;
@@ -67,6 +69,12 @@ class PlayerUiState {
 
   /// Подпись качества потока: контейнер и битрейт, например `WEBM 147`.
   final String? streamNote;
+
+  /// Доступные устройства вывода звука.
+  final List<AudioOutputDevice> audioDevices;
+
+  /// Выбранное устройство вывода (`auto` — системное).
+  final String audioDeviceName;
 
   Track? get current =>
       (index >= 0 && index < queue.length) ? queue[index] : null;
@@ -97,6 +105,8 @@ class PlayerUiState {
     bool? downloading,
     double? downloadProgress,
     String? streamNote,
+    List<AudioOutputDevice>? audioDevices,
+    String? audioDeviceName,
   }) {
     return PlayerUiState(
       queue: queue ?? this.queue,
@@ -110,6 +120,8 @@ class PlayerUiState {
       downloading: downloading ?? this.downloading,
       downloadProgress: downloadProgress ?? this.downloadProgress,
       streamNote: streamNote ?? this.streamNote,
+      audioDevices: audioDevices ?? this.audioDevices,
+      audioDeviceName: audioDeviceName ?? this.audioDeviceName,
     );
   }
 }
@@ -125,6 +137,7 @@ class PlayerController extends Notifier<PlayerUiState> {
   AudioEngine get _engine => ref.read(audioEngineProvider);
 
   StreamSubscription<PlaybackState>? _engineSub;
+  StreamSubscription<List<AudioOutputDevice>>? _devicesSub;
   final Random _random = Random();
 
   /// История проигранных индексов — нужна для «назад» при перемешивании.
@@ -171,12 +184,24 @@ class PlayerController extends Notifier<PlayerUiState> {
     unawaited(_engine.setVolume(settings.lastVolume));
     unawaited(_engine.setSpeed(settings.lastSpeed));
 
+    // Устройства вывода: список приходит от движка и меняется на лету.
+    // В `build()` состояние читать нельзя — начальный список отдаём через
+    // возвращаемое значение, а дальше обновляем из потока.
+    _devicesSub?.cancel();
+    _devicesSub = _engine.audioDevicesStream.listen(
+      (List<AudioOutputDevice> devices) {
+        state = state.copyWith(audioDevices: devices);
+      },
+    );
+
     ref.onDispose(() {
       _engineSub?.cancel();
       _engineSub = null;
+      _devicesSub?.cancel();
+      _devicesSub = null;
     });
 
-    return const PlayerUiState();
+    return PlayerUiState(audioDevices: _engine.audioDevices);
   }
 
   // ------------------------------------------------------------- запуск
@@ -369,6 +394,12 @@ class PlayerController extends Notifier<PlayerUiState> {
   Future<void> setSpeed(double speed) async {
     await _engine.setSpeed(speed);
     await ref.read(settingsControllerProvider.notifier).setLastSpeed(speed);
+  }
+
+  /// Выбирает устройство вывода звука (`auto` — системное).
+  Future<void> setAudioDevice(String name) async {
+    state = state.copyWith(audioDeviceName: name);
+    await _engine.setAudioDevice(name);
   }
 
   void toggleShuffle() {

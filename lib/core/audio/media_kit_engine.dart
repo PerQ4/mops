@@ -26,6 +26,8 @@ class MediaKitEngine implements AudioEngine {
   final Player _player;
   final StreamController<PlaybackState> _controller =
       StreamController<PlaybackState>.broadcast();
+  final StreamController<List<AudioOutputDevice>> _devices =
+      StreamController<List<AudioOutputDevice>>.broadcast();
   final List<StreamSubscription<dynamic>> _subs =
       <StreamSubscription<dynamic>>[];
 
@@ -82,7 +84,37 @@ class MediaKitEngine implements AudioEngine {
       }),
       _player.stream.error.listen(_onError),
       _player.stream.log.listen(_onLog),
+      _player.stream.audioDevices.listen(_onAudioDevices),
     ]);
+  }
+
+  void _onAudioDevices(List<AudioDevice> devices) {
+    if (_devices.isClosed) return;
+    _devices.add(_mapDevices(devices));
+  }
+
+  List<AudioOutputDevice> _mapDevices(List<AudioDevice> devices) => devices
+      .map((AudioDevice d) => AudioOutputDevice(
+            name: d.name,
+            description: d.description.isEmpty ? d.name : d.description,
+          ))
+      .toList(growable: false);
+
+  @override
+  List<AudioOutputDevice> get audioDevices =>
+      _mapDevices(_player.state.audioDevices);
+
+  @override
+  Stream<List<AudioOutputDevice>> get audioDevicesStream => _devices.stream;
+
+  @override
+  Future<void> setAudioDevice(String name) async {
+    final List<AudioDevice> list = _player.state.audioDevices;
+    final AudioDevice device = list.firstWhere(
+      (AudioDevice d) => d.name == name,
+      orElse: () => AudioDevice(name, ''),
+    );
+    await _player.setAudioDevice(device);
   }
 
   void _onPlaying(bool playing) {
@@ -372,6 +404,7 @@ class MediaKitEngine implements AudioEngine {
     }
     _subs.clear();
     await _controller.close();
+    await _devices.close();
     try {
       await _player.dispose();
     } on Object catch (error) {

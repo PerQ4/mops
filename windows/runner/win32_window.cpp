@@ -16,6 +16,25 @@ namespace {
 #define DWMWA_USE_IMMERSIVE_DARK_MODE 20
 #endif
 
+/// Цвет рамки окна в DWM. `DWMWA_COLOR_NONE` — «не рисовать рамку вовсе»:
+/// окно своё, шапку рисует Flutter, и светлая кромка по краю выглядела бы
+/// остатком нативной рамки.
+#ifndef DWMWA_BORDER_COLOR
+#define DWMWA_BORDER_COLOR 34
+#endif
+#ifndef DWMWA_COLOR_NONE
+#define DWMWA_COLOR_NONE 0xFFFFFFFE
+#endif
+
+/// Скругление углов окна (Windows 11). Без него безрамочное окно рисуется
+/// прямоугольником, хотя у системных оно скруглено.
+#ifndef DWMWA_WINDOW_CORNER_PREFERENCE
+#define DWMWA_WINDOW_CORNER_PREFERENCE 33
+#endif
+#ifndef DWMWCP_ROUND
+#define DWMWCP_ROUND 2
+#endif
+
 constexpr const wchar_t kWindowClassName[] = L"FLUTTER_RUNNER_WIN32_WINDOW";
 
 /// Registry key for app theme preference.
@@ -35,6 +54,76 @@ using EnableNonClientDpiScaling = BOOL __stdcall(HWND hwnd);
 // scale factor
 int Scale(int source, double scale_factor) {
   return static_cast<int>(source * scale_factor);
+}
+
+// DPI окна. Берём динамически, чтобы не зависеть от версии Windows SDK.
+UINT GetWindowDpi(HWND hwnd) {
+  HMODULE user32_module = GetModuleHandleA("User32.dll");
+  if (user32_module != nullptr) {
+    auto get_dpi_for_window = reinterpret_cast<UINT(WINAPI*)(HWND)>(
+        GetProcAddress(user32_module, "GetDpiForWindow"));
+    if (get_dpi_for_window != nullptr) {
+      return get_dpi_for_window(hwnd);
+    }
+  }
+  return 96;
+}
+
+// Зона изменения размера по экранной точке курсора: 0, если точка не у края.
+//
+// Нужна и родительскому окну, и дочернему: содержимое Flutter занимает всю
+// клиентскую область, поэтому курсор всегда оказывается над дочерним окном, и
+// систему о краях спрашивает именно оно (см. ChildContentWndProc).
+LRESULT HitTestResizeBorder(HWND hwnd, LPARAM lparam) {
+  if (hwnd == nullptr || IsZoomed(hwnd)) return 0;
+
+  const int border = static_cast<int>(6 * GetWindowDpi(hwnd) / 96.0);
+  const int x = static_cast<short>(LOWORD(lparam));
+  const int y = static_cast<short>(HIWORD(lparam));
+
+  RECT rect;
+  if (!GetWindowRect(hwnd, &rect)) return 0;
+
+  const bool left = x < rect.left + border;
+  const bool right = x >= rect.right - border;
+  const bool top = y < rect.top + border;
+  const bool bottom = y >= rect.bottom - border;
+
+  if (top && left) return HTTOPLEFT;
+  if (top && right) return HTTOPRIGHT;
+  if (bottom && left) return HTBOTTOMLEFT;
+  if (bottom && right) return HTBOTTOMRIGHT;
+  if (left) return HTLEFT;
+  if (right) return HTRIGHT;
+  if (top) return HTTOP;
+  if (bottom) return HTBOTTOM;
+  return 0;
+}
+
+// Исходная процедура дочернего окна содержимого — её надо вызывать для всех
+// сообщений, которые мы не перехватываем.
+WNDPROC g_child_content_proc = nullptr;
+
+// Процедура дочернего окна содержимого (окно Flutter).
+//
+// Перехватываем только определение попадания: содержимое закрывает всю
+// клиентскую область, и без этого система считала бы край окна обычной
+// клиентской зоной — окно нельзя было бы растянуть, а курсор у кромки
+// оставался бы стрелкой.
+LRESULT CALLBACK ChildContentWndProc(HWND child,
+                                     UINT message,
+                                     WPARAM wparam,
+                                     LPARAM lparam) {
+  if (message == WM_NCHITTEST) {
+    HWND parent = GetAncestor(child, GA_PARENT);
+    const LRESULT hit = HitTestResizeBorder(parent, lparam);
+    if (hit != 0) return hit;
+  }
+
+  if (g_child_content_proc != nullptr) {
+    return CallWindowProc(g_child_content_proc, child, message, wparam, lparam);
+  }
+  return DefWindowProc(child, message, wparam, lparam);
 }
 
 // Dynamically loads the |EnableNonClientDpiScaling| from the User32 module.
@@ -134,8 +223,12 @@ bool Win32Window::Create(const std::wstring& title,
   UINT dpi = FlutterDesktopGetDpiForMonitor(monitor);
   double scale_factor = dpi / 96.0;
 
+  // Своя шапка, как в Telegram: убираем системный заголовок (WS_CAPTION), но
+  // оставляем рамку изменения размера и кнопки «свернуть/развернуть». Панель
+  // рисует Flutter (`WindowTitleBar`), перетаскивание — каналом `startDrag`.
+  const DWORD style = WS_OVERLAPPEDWINDOW & ~WS_CAPTION;
   HWND window = CreateWindow(
-      window_class, title.c_str(), WS_OVERLAPPEDWINDOW,
+      window_class, title.c_str(), style,
       Scale(origin.x, scale_factor), Scale(origin.y, scale_factor),
       Scale(size.width, scale_factor), Scale(size.height, scale_factor),
       nullptr, nullptr, GetModuleHandle(nullptr), this);
@@ -150,6 +243,15 @@ bool Win32Window::Create(const std::wstring& title,
 }
 
 bool Win32Window::Show() {
+  // Страховка: даже если окно почему-то создалось с системным заголовком,
+  // снимаем WS_CAPTION перед показом и просим пересчитать рамку. Иначе
+  // получается два заголовка — нативный и наша панель во Flutter.
+  LONG_PTR style = GetWindowLongPtr(window_handle_, GWL_STYLE);
+  if ((style & WS_CAPTION) != 0) {
+    SetWindowLongPtr(window_handle_, GWL_STYLE, style & ~WS_CAPTION);
+    SetWindowPos(window_handle_, nullptr, 0, 0, 0, 0,
+                 SWP_NOMOVE | SWP_NOSIZE | SWP_NOZORDER | SWP_FRAMECHANGED);
+  }
   return ShowWindow(window_handle_, SW_SHOWNORMAL);
 }
 
@@ -191,22 +293,55 @@ Win32Window::MessageHandler(HWND hwnd,
       // Минимальный размер окна: на меньшем раскладка ломается — островки,
       // боковая библиотека и панель плеера перестают помещаться. Значение
       // масштабируем по DPI, иначе на HiDPI минимум окажется крошечным.
-      UINT dpi = 96;
-      HMODULE user32_module = GetModuleHandleA("User32.dll");
-      if (user32_module != nullptr) {
-        auto get_dpi_for_window =
-            reinterpret_cast<UINT(WINAPI*)(HWND)>(GetProcAddress(
-                user32_module, "GetDpiForWindow"));
-        if (get_dpi_for_window != nullptr) {
-          dpi = get_dpi_for_window(hwnd);
-        }
-      }
-      const double scale = static_cast<double>(dpi) / 96.0;
+      const double scale = static_cast<double>(GetWindowDpi(hwnd)) / 96.0;
       auto* info = reinterpret_cast<MINMAXINFO*>(lparam);
       info->ptMinTrackSize.x = static_cast<LONG>(960 * scale);
       info->ptMinTrackSize.y = static_cast<LONG>(600 * scale);
+
+      // Без WS_CAPTION Windows разворачивает окно на ВЕСЬ монитор и накрывает
+      // панель задач. Ограничиваем разворот рабочей областью: панель задач
+      // остаётся видна, ничего не уезжает за края.
+      MONITORINFO monitor_info = {};
+      monitor_info.cbSize = sizeof(MONITORINFO);
+      if (GetMonitorInfo(MonitorFromWindow(hwnd, MONITOR_DEFAULTTONEAREST),
+                         &monitor_info)) {
+        const RECT work = monitor_info.rcWork;
+        const RECT full = monitor_info.rcMonitor;
+        info->ptMaxPosition.x = work.left - full.left;
+        info->ptMaxPosition.y = work.top - full.top;
+        info->ptMaxSize.x = work.right - work.left;
+        info->ptMaxSize.y = work.bottom - work.top;
+      }
       return 0;
     }
+
+    case WM_NCCALCSIZE: {
+      // Своя шапка: клиентская область занимает окно целиком, нативной рамки
+      // заголовка нет. Без этого при развороте содержимое уезжало бы за края
+      // на ширину рамки, а сверху оставалась бы нативная полоса.
+      if (wparam == TRUE) {
+        return 0;
+      }
+      break;
+    }
+
+    case WM_NCHITTEST: {
+      // Своя рамка: `WM_NCCALCSIZE` убрал неклиентскую область, поэтому зоны
+      // изменения размера считаем сами.
+      const LRESULT hit = HitTestResizeBorder(hwnd, lparam);
+      if (hit != 0) return hit;
+      break;
+    }
+
+    case WM_NCACTIVATE:
+      // Система при смене активности перерисовывает рамку несуществующего
+      // заголовка — по краю окна мелькала белая полоса. Рисовать нечего:
+      // всю шапку рисует Flutter.
+      return TRUE;
+
+    case WM_NCPAINT:
+      // Рамку тоже рисует Flutter.
+      return 0;
 
     case WM_DPICHANGED: {
       auto newRectSize = reinterpret_cast<RECT*>(lparam);
@@ -262,6 +397,13 @@ Win32Window* Win32Window::GetThisFromHandle(HWND const window) noexcept {
 void Win32Window::SetChildContent(HWND content) {
   child_content_ = content;
   SetParent(content, window_handle_);
+
+  // Содержимое Flutter занимает всю клиентскую область, поэтому край окна
+  // обязан распознавать именно оно — иначе окно не растягивается.
+  g_child_content_proc = reinterpret_cast<WNDPROC>(SetWindowLongPtr(
+      content, GWLP_WNDPROC,
+      reinterpret_cast<LONG_PTR>(ChildContentWndProc)));
+
   RECT frame = GetClientArea();
 
   MoveWindow(content, frame.left, frame.top, frame.right - frame.left,
@@ -306,4 +448,15 @@ void Win32Window::UpdateTheme(HWND const window) {
     DwmSetWindowAttribute(window, DWMWA_USE_IMMERSIVE_DARK_MODE,
                           &enable_dark_mode, sizeof(enable_dark_mode));
   }
+
+  // Бордюр не рисуем: у своего окна он лишний и выглядит как остаток нативной
+  // рамки. Тень и скругление углов при этом сохраняются.
+  COLORREF no_border = DWMWA_COLOR_NONE;
+  DwmSetWindowAttribute(window, DWMWA_BORDER_COLOR, &no_border,
+                        sizeof(no_border));
+
+  // Скругление углов окна — как у системных окон Windows 11.
+  int corner_preference = DWMWCP_ROUND;
+  DwmSetWindowAttribute(window, DWMWA_WINDOW_CORNER_PREFERENCE,
+                        &corner_preference, sizeof(corner_preference));
 }

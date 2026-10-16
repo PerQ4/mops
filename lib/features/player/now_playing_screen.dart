@@ -4,7 +4,6 @@ import 'package:flutter_riverpod/flutter_riverpod.dart';
 import '../../core/theme/app_theme.dart';
 import '../../core/theme/layout.dart';
 import '../common/navigation.dart';
-import '../shell/content_navigator.dart';
 import '../../core/utils/artwork_urls.dart';
 import '../../core/utils/format.dart';
 import '../../data/local/app_settings.dart';
@@ -16,6 +15,7 @@ import '../../state/player_controller.dart';
 import '../../state/providers.dart';
 import '../../widgets/artist_line.dart';
 import '../../widgets/artwork.dart';
+import '../../widgets/blurred_artwork_background.dart';
 import '../../widgets/track_menu.dart';
 import 'lyrics_actions.dart';
 import 'lyrics_view.dart';
@@ -48,6 +48,19 @@ class _NowPlayingScreenState extends ConsumerState<NowPlayingScreen> {
     );
     final Track? track = player.current;
     final ColorScheme scheme = Theme.of(context).colorScheme;
+    // Стиль фона полноэкранного плеера — из настроек (как PlayerBackgroundStyle
+    // в ArchiveTune).
+    final PlayerBackgroundStyle backgroundStyle = ref.watch(
+      settingsControllerProvider.select(
+        (AppSettings s) => s.playerBackgroundStyle,
+      ),
+    );
+    final bool disableBlur = ref.watch(
+      settingsControllerProvider.select((AppSettings s) => s.disableBlur),
+    );
+    final double blurRadius = ref.watch(
+      settingsControllerProvider.select((AppSettings s) => s.blurRadius),
+    );
 
     return Scaffold(
       backgroundColor: scheme.surface,
@@ -55,8 +68,14 @@ class _NowPlayingScreenState extends ConsumerState<NowPlayingScreen> {
           ? _Empty(onClose: () => Navigator.maybePop(context))
           : Stack(
               children: <Widget>[
-                // Фон: размытая обложка, плавно переходящая в тёмную панель.
-                Positioned.fill(child: _ArtworkBackdrop(track: track)),
+                // Фон: стиль из настроек (градиент или размытая обложка).
+                Positioned.fill(
+                  child: _ArtworkBackdrop(
+                    track: track,
+                    style: backgroundStyle,
+                    blurSigma: disableBlur ? 0 : blurRadius,
+                  ),
+                ),
                 SafeArea(
                   child: Column(
                     children: <Widget>[
@@ -84,15 +103,22 @@ class _NowPlayingScreenState extends ConsumerState<NowPlayingScreen> {
                                   ),
                                   Expanded(
                                     flex: 4,
-                                    // Очередь сверху — своя прокручиваемая
-                                    // область; шапку скрываем, название и
-                                    // действия уже есть в блоке управления.
-                                    child: _StackedControls(
-                                      reserve: _kQueueMinHeight,
-                                      track: track,
-                                      player: player,
+                                    child: Padding(
+                                      // Отступ справа: без него управление и
+                                      // очередь прилипали к краю окна.
+                                      padding: const EdgeInsets.only(right: 20),
+                                      // Очередь сверху — своя прокручиваемая
+                                      // область; шапку скрываем, название и
+                                      // действия уже есть в блоке управления.
+                                      child: _StackedControls(
+                                        reserve: _kQueueMinHeight,
+                                        track: track,
+                                        player: player,
                                       flexible: const QueueList(
                                         showHeader: false,
+                                        showCurrent: false,
+                                        showCarousel: false,
+                                      ),
                                       ),
                                     ),
                                   ),
@@ -258,9 +284,19 @@ class _Controls extends StatelessWidget {
 /// 0.92 / 0.75 / 0.65 и мягкая подложка 0.18. Размытия и «стекла» нет —
 /// только градиент.
 class _ArtworkBackdrop extends StatefulWidget {
-  const _ArtworkBackdrop({required this.track});
+  const _ArtworkBackdrop({
+    required this.track,
+    required this.style,
+    this.blurSigma = 28,
+  });
 
   final Track track;
+
+  /// Стиль фона из настроек.
+  final PlayerBackgroundStyle style;
+
+  /// Сила размытия для стиля «размытая обложка» (0 — без размытия).
+  final double blurSigma;
 
   @override
   State<_ArtworkBackdrop> createState() => _ArtworkBackdropState();
@@ -318,6 +354,13 @@ class _ArtworkBackdropState extends State<_ArtworkBackdrop> {
 
   @override
   Widget build(BuildContext context) {
+    // «Размытая обложка» — сама картинка трека с размытием и затемнением.
+    if (widget.style == PlayerBackgroundStyle.blur) {
+      return BlurredArtworkBackground(
+        track: widget.track,
+        blurSigma: widget.blurSigma,
+      );
+    }
     final ColorScheme scheme = Theme.of(context).colorScheme;
     // Пока палитра не готова, рисуем фон ролями темы: тот же градиент, но без
     // вклада обложки. Подмена незаметна — цвета близки по светлоте.
@@ -561,13 +604,12 @@ class _InfoRow extends ConsumerWidget {
                               style: text.titleMedium?.copyWith(
                                 color: scheme.onSurfaceVariant,
                               ),
-                              // Сначала сворачиваем плеер, потом открываем
-                              // исполнителя: иначе страница уходит под плеер,
-                              // и он остаётся на экране.
-                              onArtistTap: (ArtistRef artist) {
-                                rootNavigatorKey.currentState?.maybePop();
-                                AppRoutes.artist(context, artist.id!);
-                              },
+                              // Плеер живёт в корневом навигаторе, поэтому
+                              // исполнителя открываем там же: во вложенном
+                              // навигаторе страница ушла бы ПОД плеер, и
+                              // нажатие выглядело бы как «ничего не открылось».
+                              onArtistTap: (ArtistRef artist) =>
+                                  AppRoutes.artist(context, artist.id!, root: true),
                             ),
                     ),
                     const SizedBox(width: 8),

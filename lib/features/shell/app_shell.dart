@@ -21,6 +21,10 @@ import 'sidebar.dart';
 ///    содержимое отдельной скруглённой панелью, внизу док из двух островков;
 ///  * **узкая** — боковой панели нет, но док тот же: навигация остаётся
 ///    плавающим островком, а не превращается в стандартную нижнюю панель.
+///
+/// На Windows окно безрамочное, а своя заголовочная панель живёт **выше**
+/// навигатора (в `MaterialApp.builder`) — иначе её перекрывали бы диалоги,
+/// шторки и полноэкранный плеер.
 class AppShell extends ConsumerWidget {
   const AppShell({super.key});
 
@@ -77,31 +81,30 @@ class AppShell extends ConsumerWidget {
         backgroundColor: scheme.surfaceContainer,
         body: _MouseBackListener(
           child: Row(
-          children: <Widget>[
-            const LibrarySidebar(),
-            Expanded(
-              child: ClipRRect(
-                // Скруглены углы, примыкающие к панелям: слева — к библиотеке,
-                // справа — к плееру, но только когда панель действительно
-                // раскрыта. Раньше закругление появлялось уже при одном
-                // играющем треке, хотя панель была свёрнута.
-                borderRadius: BorderRadius.horizontal(
-                  left: const Radius.circular(AppLayout.contentPanelRadius),
-                  right: Radius.circular(
-                    panelOpen ? AppLayout.contentPanelRadius : 0,
+            children: <Widget>[
+              const LibrarySidebar(),
+              Expanded(
+                child: ClipRRect(
+                  // Скруглены углы, примыкающие к панелям: слева — к
+                  // библиотеке, справа — к плееру, но только когда панель
+                  // действительно раскрыта.
+                  borderRadius: BorderRadius.horizontal(
+                    left: const Radius.circular(AppLayout.contentPanelRadius),
+                    right: Radius.circular(
+                      panelOpen ? AppLayout.contentPanelRadius : 0,
+                    ),
+                  ),
+                  child: ColoredBox(
+                    color: scheme.surface,
+                    child: content,
                   ),
                 ),
-                child: ColoredBox(
-                  color: scheme.surface,
-                  child: content,
-                ),
               ),
-            ),
-            // Панель плеера отнимает ширину у содержимого (оно сужается
-            // плавно), а док остаётся видимым — он лежит внутри содержимого.
-            if (rightPanel) PlayerRightPanelSlot(open: panelOpen),
-          ],
-        ),
+              // Панель плеера отнимает ширину у содержимого (оно сужается
+              // плавно), а док остаётся видимым — он лежит внутри содержимого.
+              if (rightPanel) PlayerRightPanelSlot(open: panelOpen),
+            ],
+          ),
         ),
       );
     }

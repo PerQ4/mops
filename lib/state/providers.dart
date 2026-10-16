@@ -9,6 +9,7 @@ import '../core/net/anti_dpi.dart';
 import '../core/theme/seed_colors.dart';
 import '../core/theme/ui_scaler.dart';
 import '../data/local/app_settings.dart';
+import '../data/sources/romanization.dart';
 import '../data/sources/stream_downloader.dart';
 import '../data/sources/stream_proxy.dart';
 import '../data/sources/stream_resolver.dart';
@@ -134,6 +135,58 @@ class SettingsController extends Notifier<AppSettings> {
   Future<void> setMusixmatchApiKey(String value) =>
       update((AppSettings s) => s.copyWith(musixmatchApiKey: value.trim()));
 
+  /// Включает или выключает Discord Rich Presence.
+  Future<void> setDiscordRichPresence(bool value) =>
+      update((AppSettings s) => s.copyWith(discordRichPresence: value));
+
+  /// Application ID приложения Discord из Developer Portal.
+  Future<void> setDiscordApplicationId(String value) =>
+      update((AppSettings s) => s.copyWith(discordApplicationId: value.trim()));
+
+  /// Фон полноэкранного плеера — стиль из ArchiveTune.
+  Future<void> setPlayerBackgroundStyle(PlayerBackgroundStyle style) =>
+      update((AppSettings s) => s.copyWith(playerBackgroundStyle: style));
+
+  /// Отключить размытие фона.
+  Future<void> setDisableBlur(bool value) =>
+      update((AppSettings s) => s.copyWith(disableBlur: value));
+
+  /// Сила размытия фона.
+  Future<void> setBlurRadius(double value) =>
+      update((AppSettings s) => s.copyWith(blurRadius: value));
+
+  /// Стиль ползунка громкости.
+  Future<void> setVolumeSliderStyle(ProgressBarStyle style) =>
+      update((AppSettings s) => s.copyWith(volumeSliderStyle: style));
+
+  /// Заголовок окна по центру (иначе — слева).
+  Future<void> setTitleBarCentered(bool value) =>
+      update((AppSettings s) => s.copyWith(titleBarCentered: value));
+
+  /// Красить шапку окна в цвет фона приложения.
+  Future<void> setTitleBarMatchesBackground(bool value) =>
+      update((AppSettings s) => s.copyWith(titleBarMatchesBackground: value));
+
+  /// Межстрочный интервал текста песни.
+  Future<void> setLyricsLineSpacing(double value) =>
+      update((AppSettings s) => s.copyWith(lyricsLineSpacing: value));
+
+  /// Размывать неактивные строки текста песни.
+  Future<void> setLyricsLineBlur(bool value) =>
+      update((AppSettings s) => s.copyWith(lyricsLineBlur: value));
+
+  /// Порядок источников текста (первый — приоритетный).
+  Future<void> setLyricsProviderOrder(List<LyricsSource> order) =>
+      update((AppSettings s) => s.copyWith(lyricsProviderOrder: order));
+
+  /// Романизация текста: латиница под оригинальной строкой.
+  Future<void> setRomanizationEnabled(bool value) =>
+      update((AppSettings s) => s.copyWith(romanizationEnabled: value));
+
+  /// Язык, для которого запрашивается романизация.
+  Future<void> setRomanizationLanguage(RomanizationLanguage language) =>
+      update((AppSettings s) => s.copyWith(romanizationLanguage: language));
+
   Future<void> setAutoPlayNext(bool value) =>
       update((AppSettings s) => s.copyWith(autoPlayNext: value));
 
@@ -208,6 +261,68 @@ class SettingsController extends Notifier<AppSettings> {
 
 final NotifierProvider<SettingsController, AppSettings> settingsControllerProvider =
     NotifierProvider<SettingsController, AppSettings>(SettingsController.new);
+
+/// ---------------------------------------------------------------------------
+/// Романизация текста
+/// ---------------------------------------------------------------------------
+
+/// Сервис романизации: один на приложение — держит HTTP-клиент и кэш по
+/// трекам, чтобы не дёргать сервис на каждую перерисовку.
+final Provider<RomanizationService> romanizationServiceProvider =
+    Provider<RomanizationService>((ref) {
+  final RomanizationService service = RomanizationService();
+  ref.onDispose(service.dispose);
+  return service;
+});
+
+/// Запрос романизации: трек, язык и строки текста.
+///
+/// Строки входят в ключ, чтобы результат пересчитался при смене текста
+/// (например, выбран другой источник) и не смешался со старым.
+class RomanizationQuery {
+  const RomanizationQuery({
+    required this.videoId,
+    required this.language,
+    required this.lines,
+  });
+
+  final String videoId;
+  final RomanizationLanguage language;
+  final List<String> lines;
+
+  @override
+  bool operator ==(Object other) =>
+      other is RomanizationQuery &&
+      other.videoId == videoId &&
+      other.language == language &&
+      _sameLines(other.lines, lines);
+
+  @override
+  int get hashCode => Object.hash(videoId, language, Object.hashAll(lines));
+
+  static bool _sameLines(List<String> a, List<String> b) {
+    if (a.length != b.length) return false;
+    for (int i = 0; i < a.length; i++) {
+      if (a[i] != b[i]) return false;
+    }
+    return true;
+  }
+}
+
+/// Романизация строк текста: `Map` «номер строки → латиница».
+///
+/// Провайдер кэширует будущее по аргументам, а сервис — по треку: пока текст
+/// не сменился, в сеть уходит ровно один запрос. `autoDispose` — чтобы после
+/// ухода с трека будущее не висело в памяти: повторный запрос всё равно
+/// возьмётся из кэша сервиса.
+final romanizationProvider =
+    FutureProvider.autoDispose.family<Map<int, String>?, RomanizationQuery>(
+  (ref, query) => ref.watch(romanizationServiceProvider).romanize(
+        videoId: query.videoId,
+        language: query.language,
+        lines: query.lines,
+      ),
+);
 
 /// ---------------------------------------------------------------------------
 /// Масштаб интерфейса

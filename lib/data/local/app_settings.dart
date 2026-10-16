@@ -81,7 +81,7 @@ enum LyricsSource {
   megalobiz('Megalobiz', 'Внешняя база — текст с временами'),
   simpmusic('SimpMusic', 'Индекс по id видео — текст с временами'),
   unison('Unison', 'Внешняя база — текст с временами'),
-  musixmatch('Musixmatch', 'Через Paxsenix — нужен ключ в настройках');
+  musixmatch('Paxsenix', 'Apple Music и Musixmatch — нужен ключ в настройках');
 
   const LyricsSource(this.label, this.description);
 
@@ -93,6 +93,64 @@ enum LyricsSource {
         (LyricsSource v) => v.name == name,
         orElse: () => LyricsSource.auto,
       );
+}
+
+/// Языки, для которых показываем романизацию (латиницу под оригиналом) —
+/// как `ROMANIZATION_LANGUAGES` в BetterLyrics.
+///
+/// `code` служит и исходным языком (`sl`), и основой для целевого
+/// (`tl=<code>-Latn`): так сервис не переводит текст, а записывает его
+/// произношение латиницей. Перевода мы не делаем намеренно.
+enum RomanizationLanguage {
+  japanese('ja', 'Японский'),
+  korean('ko', 'Корейский'),
+  chineseSimplified('zh-CN', 'Китайский (упрощённый)'),
+  chineseTraditional('zh-TW', 'Китайский (традиционный)'),
+  hindi('hi', 'Хинди'),
+  russian('ru', 'Русский'),
+  thai('th', 'Тайский'),
+  arabic('ar', 'Арабский'),
+  greek('el', 'Греческий');
+
+  const RomanizationLanguage(this.code, this.label);
+
+  final String code;
+  final String label;
+
+  static RomanizationLanguage fromName(String? name) =>
+      RomanizationLanguage.values.firstWhere(
+        (RomanizationLanguage v) => v.name == name,
+        orElse: () => RomanizationLanguage.japanese,
+      );
+}
+
+/// Порядок источников текста по умолчанию — как `DefaultLyricsProviderOrder`
+/// в ArchiveTune. Первый в списке — приоритетный.
+/// Порядок подобран по тому, что реально отвечает и что даёт подробнее
+/// разметку. Megalobiz и SimpMusic из списка убраны: их хосты недоступны,
+/// и они лишь держали поиск открытым до таймаута, ничего не принося.
+const List<LyricsSource> kDefaultLyricsOrder = <LyricsSource>[
+  LyricsSource.youlyPlus,
+  LyricsSource.betterLyrics,
+  LyricsSource.musixmatch,
+  LyricsSource.kugou,
+  LyricsSource.lrclib,
+  LyricsSource.unison,
+];
+
+/// Разбирает сохранённый порядок источников; при мусоре — порядок по умолчанию.
+List<LyricsSource> _parseLyricsOrder(String? raw) {
+  if (raw == null || raw.trim().isEmpty) return kDefaultLyricsOrder;
+  final List<LyricsSource> parsed = <LyricsSource>[];
+  for (final String name in raw.split(',')) {
+    final String trimmed = name.trim();
+    if (trimmed.isEmpty) continue;
+    final LyricsSource? source = LyricsSource.values
+        .cast<LyricsSource?>()
+        .firstWhere((LyricsSource? v) => v?.name == trimmed, orElse: () => null);
+    if (source != null && !parsed.contains(source)) parsed.add(source);
+  }
+  return parsed.isEmpty ? kDefaultLyricsOrder : parsed;
 }
 
 /// Режим правой панели плеера.
@@ -145,6 +203,27 @@ enum ProgressBarStyle {
       ProgressBarStyle.values.firstWhere(
         (ProgressBarStyle v) => v.name == name,
         orElse: () => ProgressBarStyle.standard,
+      );
+}
+
+/// Стиль фона полноэкранного плеера.
+///
+/// Первый шаг переноса настроек внешнего вида ArchiveTune
+/// (`PlayerBackgroundStyle`): там вариантов восемь, здесь пока базовые —
+/// градиент из цветов обложки и размытая обложка.
+enum PlayerBackgroundStyle {
+  gradient('Градиент', 'Градиент из цветов обложки'),
+  blur('Размытая обложка', 'Обложка трека, размытая и затемнённая');
+
+  const PlayerBackgroundStyle(this.label, this.description);
+
+  final String label;
+  final String description;
+
+  static PlayerBackgroundStyle fromName(String? name) =>
+      PlayerBackgroundStyle.values.firstWhere(
+        (PlayerBackgroundStyle v) => v.name == name,
+        orElse: () => PlayerBackgroundStyle.gradient,
       );
 }
 
@@ -244,6 +323,11 @@ class AppSettings {
     this.streamClient = StreamSource.auto,
     this.showLyricsInPlayer = true,
     this.lyricsTextScale = 1.0,
+    this.lyricsLineSpacing = 1.35,
+    this.lyricsLineBlur = true,
+    this.lyricsProviderOrder = kDefaultLyricsOrder,
+    this.romanizationEnabled = false,
+    this.romanizationLanguage = RomanizationLanguage.japanese,
     this.crossfadeSeconds = 0,
     this.autoPlayNext = true,
     this.searchSource = SearchSource.online,
@@ -254,6 +338,8 @@ class AppSettings {
     this.oauthClientId = '',
     this.oauthClientSecret = '',
     this.musixmatchApiKey = '',
+    this.discordRichPresence = false,
+    this.discordApplicationId = '',
     this.lastVolume = 1.0,
     this.lastSpeed = 1.0,
     this.uiScale = 0.0,
@@ -262,6 +348,12 @@ class AppSettings {
     this.sidebarCollapsed = false,
     this.playerPanelEnabled = true,
     this.progressBarStyle = ProgressBarStyle.standard,
+    this.playerBackgroundStyle = PlayerBackgroundStyle.gradient,
+    this.disableBlur = false,
+    this.blurRadius = 48,
+    this.volumeSliderStyle = ProgressBarStyle.standard,
+    this.titleBarCentered = true,
+    this.titleBarMatchesBackground = false,
   });
 
   final ThemeModePreference themeMode;
@@ -298,6 +390,22 @@ class AppSettings {
   /// слова, не меняя системный масштаб всего интерфейса.
   final double lyricsTextScale;
 
+  /// Межстрочный интервал текста песни (как `LyricsLineSpacingKey`).
+  final double lyricsLineSpacing;
+
+  /// Размывать неактивные строки текста (как `LyricsLineBlurKey`).
+  final bool lyricsLineBlur;
+
+  /// Порядок источников текста в режиме «Авто» — как `LyricsProviderOrderKey`
+  /// в ArchiveTune. Первый источник в списке — приоритетный.
+  final List<LyricsSource> lyricsProviderOrder;
+
+  /// Показывать романизацию — латиницу под оригинальной строкой.
+  final bool romanizationEnabled;
+
+  /// Язык, для которого запрашивается романизация.
+  final RomanizationLanguage romanizationLanguage;
+
   /// Кроссфейд между треками в секундах. `0` — выключен.
   ///
   /// Значение хранится, но движок воспроизведения (вне этого модуля) пока
@@ -322,6 +430,12 @@ class AppSettings {
 
   /// Ключ Paxsenix — через него подключается Musixmatch (как в ArchiveTune).
   final String musixmatchApiKey;
+
+  /// Отправлять текущий трек в Discord (Rich Presence).
+  final bool discordRichPresence;
+
+  /// Application ID приложения Discord. Без него presence не отправляется.
+  final String discordApplicationId;
   final double lastVolume;
   final double lastSpeed;
 
@@ -357,6 +471,25 @@ class AppSettings {
   /// Стиль полосы перемотки в плеере (как пять `SliderStyle` в ArchiveTune).
   final ProgressBarStyle progressBarStyle;
 
+  /// Фон полноэкранного плеера — стиль из ArchiveTune.
+  final PlayerBackgroundStyle playerBackgroundStyle;
+
+  /// Отключить размытие (как в ArchiveTune): фон рисуется без блюра.
+  final bool disableBlur;
+
+  /// Сила размытия фона (0–64). Как `BlurRadiusKey` в ArchiveTune.
+  final double blurRadius;
+
+  /// Стиль ползунка громкости — тот же набор, что у полосы перемотки.
+  final ProgressBarStyle volumeSliderStyle;
+
+  /// Заголовок окна по центру (иначе — слева, у логотипа). Только Windows.
+  final bool titleBarCentered;
+
+  /// Красить шапку окна в цвет фона приложения (иначе — в самый тёмный тон
+  /// палитры, как рамка окна). Только Windows.
+  final bool titleBarMatchesBackground;
+
   bool get isUiScaleAuto => uiScale <= 0;
 
   int get safeSeedIndex =>
@@ -377,6 +510,11 @@ class AppSettings {
     StreamSource? streamClient,
     bool? showLyricsInPlayer,
     double? lyricsTextScale,
+    double? lyricsLineSpacing,
+    bool? lyricsLineBlur,
+    List<LyricsSource>? lyricsProviderOrder,
+    bool? romanizationEnabled,
+    RomanizationLanguage? romanizationLanguage,
     int? crossfadeSeconds,
     bool? autoPlayNext,
     SearchSource? searchSource,
@@ -387,6 +525,8 @@ class AppSettings {
     String? oauthClientId,
     String? oauthClientSecret,
     String? musixmatchApiKey,
+    bool? discordRichPresence,
+    String? discordApplicationId,
     double? lastVolume,
     double? lastSpeed,
     double? uiScale,
@@ -395,6 +535,12 @@ class AppSettings {
     bool? sidebarCollapsed,
     bool? playerPanelEnabled,
     ProgressBarStyle? progressBarStyle,
+    PlayerBackgroundStyle? playerBackgroundStyle,
+    bool? disableBlur,
+    double? blurRadius,
+    ProgressBarStyle? volumeSliderStyle,
+    bool? titleBarCentered,
+    bool? titleBarMatchesBackground,
   }) {
     return AppSettings(
       themeMode: themeMode ?? this.themeMode,
@@ -411,6 +557,12 @@ class AppSettings {
       streamClient: streamClient ?? this.streamClient,
       showLyricsInPlayer: showLyricsInPlayer ?? this.showLyricsInPlayer,
       lyricsTextScale: lyricsTextScale ?? this.lyricsTextScale,
+      lyricsLineSpacing: lyricsLineSpacing ?? this.lyricsLineSpacing,
+      lyricsLineBlur: lyricsLineBlur ?? this.lyricsLineBlur,
+      lyricsProviderOrder: lyricsProviderOrder ?? this.lyricsProviderOrder,
+      romanizationEnabled: romanizationEnabled ?? this.romanizationEnabled,
+      romanizationLanguage:
+          romanizationLanguage ?? this.romanizationLanguage,
       crossfadeSeconds: crossfadeSeconds ?? this.crossfadeSeconds,
       autoPlayNext: autoPlayNext ?? this.autoPlayNext,
       searchSource: searchSource ?? this.searchSource,
@@ -421,6 +573,8 @@ class AppSettings {
       oauthClientId: oauthClientId ?? this.oauthClientId,
       oauthClientSecret: oauthClientSecret ?? this.oauthClientSecret,
       musixmatchApiKey: musixmatchApiKey ?? this.musixmatchApiKey,
+      discordRichPresence: discordRichPresence ?? this.discordRichPresence,
+      discordApplicationId: discordApplicationId ?? this.discordApplicationId,
       lastVolume: lastVolume ?? this.lastVolume,
       lastSpeed: lastSpeed ?? this.lastSpeed,
       uiScale: uiScale ?? this.uiScale,
@@ -429,6 +583,14 @@ class AppSettings {
       sidebarCollapsed: sidebarCollapsed ?? this.sidebarCollapsed,
       playerPanelEnabled: playerPanelEnabled ?? this.playerPanelEnabled,
       progressBarStyle: progressBarStyle ?? this.progressBarStyle,
+      playerBackgroundStyle:
+          playerBackgroundStyle ?? this.playerBackgroundStyle,
+      disableBlur: disableBlur ?? this.disableBlur,
+      blurRadius: blurRadius ?? this.blurRadius,
+      volumeSliderStyle: volumeSliderStyle ?? this.volumeSliderStyle,
+      titleBarCentered: titleBarCentered ?? this.titleBarCentered,
+      titleBarMatchesBackground:
+          titleBarMatchesBackground ?? this.titleBarMatchesBackground,
     );
   }
 
@@ -447,6 +609,12 @@ class AppSettings {
         'streamClient': streamClient.name,
         'showLyricsInPlayer': showLyricsInPlayer,
         'lyricsTextScale': lyricsTextScale,
+        'lyricsLineSpacing': lyricsLineSpacing,
+        'lyricsLineBlur': lyricsLineBlur,
+        'lyricsProviderOrder':
+            lyricsProviderOrder.map((LyricsSource s) => s.name).join(','),
+        'romanizationEnabled': romanizationEnabled,
+        'romanizationLanguage': romanizationLanguage.name,
         'crossfadeSeconds': crossfadeSeconds,
         'autoPlayNext': autoPlayNext,
         'searchSource': searchSource.name,
@@ -457,6 +625,8 @@ class AppSettings {
         'oauthClientId': oauthClientId,
         'oauthClientSecret': oauthClientSecret,
         'musixmatchApiKey': musixmatchApiKey,
+        'discordRichPresence': discordRichPresence,
+        'discordApplicationId': discordApplicationId,
         'lastVolume': lastVolume,
         'lastSpeed': lastSpeed,
         'uiScale': uiScale,
@@ -465,6 +635,12 @@ class AppSettings {
         'sidebarCollapsed': sidebarCollapsed,
         'playerPanelEnabled': playerPanelEnabled,
         'progressBarStyle': progressBarStyle.name,
+        'playerBackgroundStyle': playerBackgroundStyle.name,
+        'disableBlur': disableBlur,
+        'blurRadius': blurRadius,
+        'volumeSliderStyle': volumeSliderStyle.name,
+        'titleBarCentered': titleBarCentered,
+        'titleBarMatchesBackground': titleBarMatchesBackground,
       };
 
   String encode() => jsonEncode(toJson());
@@ -487,6 +663,15 @@ class AppSettings {
       streamClient: StreamSource.fromName(json['streamClient'] as String?),
       showLyricsInPlayer: json['showLyricsInPlayer'] as bool? ?? true,
       lyricsTextScale: (json['lyricsTextScale'] as num?)?.toDouble() ?? 1.0,
+      lyricsLineSpacing: (json['lyricsLineSpacing'] as num?)?.toDouble() ?? 1.35,
+      lyricsLineBlur: json['lyricsLineBlur'] as bool? ?? true,
+      lyricsProviderOrder: _parseLyricsOrder(
+        json['lyricsProviderOrder'] as String?,
+      ),
+      romanizationEnabled: json['romanizationEnabled'] as bool? ?? false,
+      romanizationLanguage: RomanizationLanguage.fromName(
+        json['romanizationLanguage'] as String?,
+      ),
       crossfadeSeconds: (json['crossfadeSeconds'] as num?)?.toInt() ?? 0,
       autoPlayNext: json['autoPlayNext'] as bool? ?? true,
       searchSource: SearchSource.fromName(json['searchSource'] as String?),
@@ -499,6 +684,8 @@ class AppSettings {
       oauthClientId: json['oauthClientId'] as String? ?? '',
       oauthClientSecret: json['oauthClientSecret'] as String? ?? '',
       musixmatchApiKey: json['musixmatchApiKey'] as String? ?? '',
+      discordRichPresence: json['discordRichPresence'] as bool? ?? false,
+      discordApplicationId: json['discordApplicationId'] as String? ?? '',
       lastVolume: (json['lastVolume'] as num?)?.toDouble() ?? 1.0,
       lastSpeed: (json['lastSpeed'] as num?)?.toDouble() ?? 1.0,
       uiScale: (json['uiScale'] as num?)?.toDouble() ?? 0.0,
@@ -509,6 +696,17 @@ class AppSettings {
       sidebarCollapsed: json['sidebarCollapsed'] as bool? ?? false,
       playerPanelEnabled: json['playerPanelEnabled'] as bool? ?? true,
       progressBarStyle: ProgressBarStyle.fromName(json['progressBarStyle'] as String?),
+      playerBackgroundStyle: PlayerBackgroundStyle.fromName(
+        json['playerBackgroundStyle'] as String?,
+      ),
+      disableBlur: json['disableBlur'] as bool? ?? false,
+      blurRadius: (json['blurRadius'] as num?)?.toDouble() ?? 48,
+      volumeSliderStyle: ProgressBarStyle.fromName(
+        json['volumeSliderStyle'] as String?,
+      ),
+      titleBarCentered: json['titleBarCentered'] as bool? ?? true,
+      titleBarMatchesBackground:
+          json['titleBarMatchesBackground'] as bool? ?? false,
     );
   }
 

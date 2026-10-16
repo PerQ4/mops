@@ -7,6 +7,7 @@ import 'package:flutter_riverpod/flutter_riverpod.dart';
 
 import 'core/theme/seed_colors.dart';
 import 'core/theme/ui_scaler.dart';
+import 'core/discord/discord_presence.dart';
 import 'core/net/anti_dpi.dart';
 import 'core/net/bypass.dart';
 import 'core/net/fronting.dart';
@@ -15,6 +16,7 @@ import 'data/local/app_settings.dart';
 import 'features/shell/app_shell.dart';
 import 'features/shell/app_shortcuts.dart';
 import 'features/shell/content_navigator.dart';
+import 'features/shell/window_title_bar.dart';
 import 'widgets/back_gesture.dart';
 import 'state/providers.dart';
 import 'state/theme_providers.dart';
@@ -39,6 +41,7 @@ class _MopsAppState extends ConsumerState<MopsApp> {
     // запуск: она может занять несколько секунд.
     WidgetsBinding.instance.addPostFrameCallback((_) {
       unawaited(_configureAccess());
+      unawaited(_initDiscordPresence());
     });
   }
 
@@ -115,6 +118,13 @@ class _MopsAppState extends ConsumerState<MopsApp> {
     }
   }
 
+  /// Первичная отправка presence: `ref.listen` не срабатывает на первый кадр.
+  Future<void> _initDiscordPresence() async {
+    final DiscordPresenceService service =
+        ref.read(discordPresenceServiceProvider);
+    await service.apply(ref.read(discordPresenceInputProvider));
+  }
+
   @override
   Widget build(BuildContext context) {
     final ({ThemeData light, ThemeData dark}) themes =
@@ -127,6 +137,17 @@ class _MopsAppState extends ConsumerState<MopsApp> {
     ref.listen(bypassProvider, (AntiDpiConfig? previous, AntiDpiConfig next) {
       BypassManager.instance.apply(next);
     });
+
+    // Discord Rich Presence: держим сервис живым и шлём текущий трек при
+    // смене трека или паузе.
+    final DiscordPresenceService discord =
+        ref.watch(discordPresenceServiceProvider);
+    ref.listen<DiscordPresenceInput>(
+      discordPresenceInputProvider,
+      (DiscordPresenceInput? previous, DiscordPresenceInput next) {
+        unawaited(discord.apply(next));
+      },
+    );
 
     return MaterialApp(
       navigatorKey: rootNavigatorKey,
@@ -150,7 +171,7 @@ class _MopsAppState extends ConsumerState<MopsApp> {
         // Глобальные горячие клавиши (пробел, стрелки, L, M, Esc, Ctrl+K)
         // оборачивают всё содержимое: так они работают независимо от того,
         // какой экран и какой фокус сейчас активны.
-        return AppShortcuts(
+        final Widget app = AppShortcuts(
           child: _ScaleShortcuts(
             // Жест «назад» ставим внутри корневого навигатора: тогда к нему
             // всплывают события и от подэкранов, и от полноэкранного плеера.
@@ -163,6 +184,18 @@ class _MopsAppState extends ConsumerState<MopsApp> {
               ),
             ),
           ),
+        );
+
+        // Своя шапка окна (Windows) — ВЫШЕ навигатора, а не внутри экрана:
+        // иначе её перекрывали бы диалоги, шторки и полноэкранный плеер.
+        // Заодно она не попадает под масштабирование интерфейса: у нативной
+        // шапки размер всегда один.
+        if (!hasCustomTitleBar) return app;
+        return Column(
+          children: <Widget>[
+            const WindowTitleBar(),
+            Expanded(child: app),
+          ],
         );
       },
     );

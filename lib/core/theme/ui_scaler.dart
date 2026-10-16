@@ -39,19 +39,30 @@ class UiScaler extends StatelessWidget {
         final MediaQueryData media = MediaQuery.of(context);
 
         return ClipRect(
-          child: FittedBox(
-            fit: BoxFit.fill,
-            child: SizedBox(
-              width: virtual.width,
-              height: virtual.height,
-              child: MediaQuery(
-                data: media.copyWith(
-                  size: virtual,
-                  // DPR увеличиваем во столько же раз, чтобы картинки
-                  // запрашивались в нужном разрешении и не мылились.
-                  devicePixelRatio: media.devicePixelRatio * scale,
+          child: SizedBox(
+            width: available.width,
+            height: available.height,
+            child: FittedBox(
+              // Ключ по размеру: при изменении размера окна слой растяжения
+              // пересоздаётся. Без этого движок переиспользовал прежний слой, и
+              // по краю окна оставалась полоса со старым кадром — при растяжении
+              // окна часть картинки была от прежнего размера.
+              key: ValueKey<String>(
+                'ui-scale-${available.width}x${available.height}',
+              ),
+              fit: BoxFit.fill,
+              child: SizedBox(
+                width: virtual.width,
+                height: virtual.height,
+                child: MediaQuery(
+                  data: media.copyWith(
+                    size: virtual,
+                    // DPR увеличиваем во столько же раз, чтобы картинки
+                    // запрашивались в нужном разрешении и не мылились.
+                    devicePixelRatio: media.devicePixelRatio * scale,
+                  ),
+                  child: child,
                 ),
-                child: child,
               ),
             ),
           ),

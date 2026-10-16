@@ -7,6 +7,7 @@ import 'package:flutter_riverpod/flutter_riverpod.dart';
 // зазор 6, а дорожка толщиной 16 — точные токены Compose Material 3.
 import 'package:material_3_expressive/material_3_expressive.dart' as m3e;
 
+import '../../core/audio/audio_engine.dart';
 import '../../core/utils/format.dart';
 import '../../data/local/app_settings.dart';
 import '../../state/player_controller.dart';
@@ -103,70 +104,68 @@ class _PlayerSeekBarState extends ConsumerState<PlayerSeekBar> {
           fontFeatures: const <FontFeature>[FontFeature.tabularFigures()],
         );
 
-    return Padding(
-      // Отступ как `PlayerHorizontalPadding` в ArchiveTune (32), в панели —
-      // вдвое уже (16): там колонка узкая.
-      padding: EdgeInsets.symmetric(
-        horizontal: widget.compact ? 16 : _kPlayerHorizontalPadding,
-      ),
-      child: Column(
-        children: <Widget>[
-          // «Обычный», «волнистый» и «с кружком» — компонент Material 3
-          // Expressive из пакета `material_3_expressive`.
-          if (style == ProgressBarStyle.standard ||
-              style == ProgressBarStyle.wavy ||
-              style == ProgressBarStyle.circular)
-            _M3ESeekBar(
-              style: style,
-              value: value.clamp(0.0, 1.0),
-              waveAmplitude: waveAmplitude,
-              onChanged: seekable
-                  ? (double v) => setState(() => _dragValue = v)
-                  : null,
-              onChangeEnd: seekable
-                  ? (double v) {
-                      // Позицию считаем сами: у движка длительность может
-                      // быть нулевой, тогда seekFraction дал бы ноль.
-                      ref
-                          .read(playerControllerProvider.notifier)
-                          .seek(duration * v);
-                      setState(() => _dragValue = null);
-                    }
-                  : null,
-            )
-          else
-            _StyledSeekBar(
-              progress: value.clamp(0.0, 1.0),
-              style: style,
-              // Обе части — цветом акцента; прозрачность каждой части задаёт
-              // сам painter по таблице `PlayerSliderColors.Config`.
-              activeColor: scheme.primary,
-              inactiveColor: scheme.primary,
-              playing: playing,
-              enabled: seekable,
-              onSeek: (double fraction) =>
-                  setState(() => _dragValue = fraction),
-              onSeekEnd: (double fraction) {
-                ref
-                    .read(playerControllerProvider.notifier)
-                    .seek(duration * fraction);
-                setState(() => _dragValue = null);
-              },
-            ),
-          Padding(
-            // Подписи времени стоят на 4 px глубже дорожки — как
-            // `PlayerTimeLabel` в ArchiveTune (`PlayerHorizontalPadding + 4`).
-            padding: const EdgeInsets.symmetric(horizontal: 4),
-            child: Row(
-              children: <Widget>[
-                Text(formatDurationClock(shown), style: label),
-                const Spacer(),
-                Text(formatDurationClock(duration), style: label),
-              ],
-            ),
+    // Боковой отступ — как `PlayerHorizontalPadding` в ArchiveTune (32),
+    // в панели вдвое уже (16). У «волнистого» он тоже нужен: внутренний
+    // отступ под рычажок убирается в самом стиле, а не снаружи.
+    final double sidePad = widget.compact ? 16 : _kPlayerHorizontalPadding;
+
+    return Column(
+      children: <Widget>[
+        Padding(
+          padding: EdgeInsets.symmetric(horizontal: sidePad),
+          child: style == ProgressBarStyle.standard ||
+                  style == ProgressBarStyle.wavy ||
+                  style == ProgressBarStyle.circular
+              ? _M3ESeekBar(
+                  style: style,
+                  value: value.clamp(0.0, 1.0),
+                  waveAmplitude: waveAmplitude,
+                  onChanged: seekable
+                      ? (double v) => setState(() => _dragValue = v)
+                      : null,
+                  onChangeEnd: seekable
+                      ? (double v) {
+                          // Позицию считаем сами: у движка длительность может
+                          // быть нулевой, тогда seekFraction дал бы ноль.
+                          ref
+                              .read(playerControllerProvider.notifier)
+                              .seek(duration * v);
+                          setState(() => _dragValue = null);
+                        }
+                      : null,
+                )
+              : _StyledSeekBar(
+                  progress: value.clamp(0.0, 1.0),
+                  style: style,
+                  // Обе части — цветом акцента; прозрачность каждой части
+                  // задаёт сам painter по таблице `PlayerSliderColors.Config`.
+                  activeColor: scheme.primary,
+                  inactiveColor: scheme.primary,
+                  playing: playing,
+                  enabled: seekable,
+                  onSeek: (double fraction) =>
+                      setState(() => _dragValue = fraction),
+                  onSeekEnd: (double fraction) {
+                    ref
+                        .read(playerControllerProvider.notifier)
+                        .seek(duration * fraction);
+                    setState(() => _dragValue = null);
+                  },
+                ),
+        ),
+        Padding(
+          // Подписи времени стоят на 4 px глубже дорожки — как
+          // `PlayerTimeLabel` в ArchiveTune (`PlayerHorizontalPadding + 4`).
+          padding: EdgeInsets.symmetric(horizontal: sidePad + 4),
+          child: Row(
+            children: <Widget>[
+              Text(formatDurationClock(shown), style: label),
+              const Spacer(),
+              Text(formatDurationClock(duration), style: label),
+            ],
           ),
-        ],
-      ),
+        ),
+      ],
     );
   }
 }
@@ -302,7 +301,9 @@ class _M3ESeekBar extends StatelessWidget {
             trackThickness: 6,
             // Ползунок «с кружком» — прямоугольник 6x24 из `SquigglySlider`
             // (`height = strokeWidth * 4`), а не высокая ручка Material 3.
-            thumbLength: 24,
+            // У «волнистого» рычажка нет, поэтому и места под него не
+            // резервируем (иначе дорожка уходила в отступ по краям).
+            thumbLength: style == ProgressBarStyle.wavy ? 0 : 24,
             // Ползунок есть только у «с кружком»; у «волнистого» его нет.
             thumbBuilder: style == ProgressBarStyle.wavy ? _noThumb : null,
           )
@@ -673,93 +674,113 @@ class _TransportPlayButton extends StatelessWidget {
 /// Раньше полоса стояла всегда, а рядом была вторая иконка динамика — дубль.
 /// Теперь полоса появляется по наведению (на десктопе) и всегда видна на
 /// тач-экранах, где наведения нет.
-class PlayerVolumeControl extends ConsumerStatefulWidget {
+/// Громкость и устройство вывода: одна строка во всю ширину блока.
+class PlayerVolumeControl extends ConsumerWidget {
   const PlayerVolumeControl({super.key, this.iconSize = 20});
 
   final double iconSize;
 
   @override
-  ConsumerState<PlayerVolumeControl> createState() =>
-      _PlayerVolumeControlState();
-}
-
-class _PlayerVolumeControlState extends ConsumerState<PlayerVolumeControl> {
-  bool _hovered = false;
-
-  /// Есть ли наведение. На телефонах его нет — там полоса видна всегда.
-  bool get _hasHover => switch (Theme.of(context).platform) {
-        TargetPlatform.windows ||
-        TargetPlatform.macOS ||
-        TargetPlatform.linux =>
-          true,
-        _ => false,
-      };
-
-  @override
-  Widget build(BuildContext context) {
-    final double volume = ref.watch(
-      playerControllerProvider.select((PlayerUiState s) => s.playback.volume),
-    );
+  Widget build(BuildContext context, WidgetRef ref) {
+    final PlayerUiState player = ref.watch(playerControllerProvider);
+    final double volume = player.playback.volume;
     final PlayerController controller =
         ref.read(playerControllerProvider.notifier);
     final ColorScheme scheme = Theme.of(context).colorScheme;
-    final bool expanded = !_hasHover || _hovered;
+    final ProgressBarStyle style = ref.watch(
+      settingsControllerProvider.select((AppSettings s) => s.volumeSliderStyle),
+    );
 
-    return Align(
-      alignment: Alignment.centerLeft,
-      child: MouseRegion(
-        onEnter: (_) => setState(() => _hovered = true),
-        onExit: (_) => setState(() => _hovered = false),
-        child: Row(
-          mainAxisSize: MainAxisSize.min,
+    return Row(
+      children: <Widget>[
+        IconButton(
+          tooltip: volume > 0 ? 'Выключить звук' : 'Включить звук',
+          iconSize: iconSize,
+          padding: EdgeInsets.zero,
+          visualDensity: VisualDensity.compact,
+          constraints: const BoxConstraints.tightFor(width: 36, height: 36),
+          icon: Icon(
+            volume == 0
+                ? Icons.volume_off_rounded
+                : volume < 0.5
+                    ? Icons.volume_down_rounded
+                    : Icons.volume_up_rounded,
+          ),
+          color: scheme.onSurfaceVariant,
+          onPressed: () => controller.setVolume(volume == 0 ? 1.0 : 0.0),
+        ),
+        // Полоса громкости — во всю ширину блока; стиль тот же, что у полосы
+        // перемотки (тот же компонент), поэтому вид совпадает.
+        Expanded(
+          child: style == ProgressBarStyle.standard ||
+                  style == ProgressBarStyle.wavy ||
+                  style == ProgressBarStyle.circular
+              ? _M3ESeekBar(
+                  style: style,
+                  value: volume.clamp(0.0, 1.0),
+                  // Амплитуда волны: у громкости она постоянная, уровня звука
+                  // у движка нет.
+                  waveAmplitude: 0.5,
+                  onChanged: controller.setVolume,
+                  onChangeEnd: (_) {},
+                )
+              : _StyledSeekBar(
+                  progress: volume.clamp(0.0, 1.0),
+                  style: style,
+                  activeColor: scheme.primary,
+                  inactiveColor: scheme.primary,
+                  playing: false,
+                  enabled: true,
+                  onSeek: controller.setVolume,
+                  onSeekEnd: (_) {},
+                ),
+        ),
+        // С другой стороны — выбор устройства вывода.
+        IconButton(
+          tooltip: 'Устройство вывода',
+          iconSize: iconSize,
+          padding: EdgeInsets.zero,
+          visualDensity: VisualDensity.compact,
+          constraints: const BoxConstraints.tightFor(width: 36, height: 36),
+          icon: const Icon(Icons.speaker),
+          color: scheme.onSurfaceVariant,
+          onPressed: () => _pickOutputDevice(context, ref, player),
+        ),
+      ],
+    );
+  }
+
+  Future<void> _pickOutputDevice(
+    BuildContext context,
+    WidgetRef ref,
+    PlayerUiState player,
+  ) async {
+    final PlayerController controller =
+        ref.read(playerControllerProvider.notifier);
+    final List<AudioOutputDevice> devices = player.audioDevices;
+    await showModalBottomSheet<void>(
+      context: context,
+      showDragHandle: true,
+      builder: (BuildContext sheetContext) => SafeArea(
+        child: ListView(
+          shrinkWrap: true,
           children: <Widget>[
-            IconButton(
-              tooltip: volume > 0 ? 'Выключить звук' : 'Включить звук',
-              iconSize: widget.iconSize,
-              padding: EdgeInsets.zero,
-              visualDensity: VisualDensity.compact,
-              constraints: const BoxConstraints.tightFor(width: 36, height: 36),
-              icon: Icon(
-                volume == 0
-                    ? Icons.volume_off_rounded
-                    : volume < 0.5
-                        ? Icons.volume_down_rounded
-                        : Icons.volume_up_rounded,
+            const Padding(
+              padding: EdgeInsets.fromLTRB(16, 0, 16, 8),
+              child: Text('Устройство вывода'),
+            ),
+            for (final AudioOutputDevice device in devices)
+              ListTile(
+                title: Text(device.isAuto ? 'Системное' : device.description),
+                selected: device.name == player.audioDeviceName,
+                trailing: device.name == player.audioDeviceName
+                    ? const Icon(Icons.check)
+                    : null,
+                onTap: () {
+                  controller.setAudioDevice(device.name);
+                  Navigator.of(sheetContext).pop();
+                },
               ),
-              color: scheme.onSurfaceVariant,
-              onPressed: () => controller.setVolume(volume == 0 ? 1.0 : 0.0),
-            ),
-            AnimatedSize(
-              duration: const Duration(milliseconds: 180),
-              curve: Curves.easeOutCubic,
-              alignment: Alignment.centerLeft,
-              child: expanded
-                  ? SizedBox(
-                      width: 170,
-                      child: SliderTheme(
-                        // Громкость как в ArchiveTune (`AppleMusicControls`):
-                        // дорожка 8 dp, активная часть — акцент с альфой 0.88,
-                        // неактивная — с 0.24, ползунок радиусом 6.
-                        data: SliderTheme.of(context).copyWith(
-                          trackHeight: 8,
-                          activeTrackColor:
-                              scheme.primary.withValues(alpha: 0.88),
-                          inactiveTrackColor:
-                              scheme.primary.withValues(alpha: 0.24),
-                          thumbColor: scheme.primary,
-                          thumbShape: const RoundSliderThumbShape(
-                              enabledThumbRadius: 6),
-                          overlayShape:
-                              const RoundSliderOverlayShape(overlayRadius: 14),
-                        ),
-                        child: Slider(
-                          value: volume.clamp(0.0, 1.0),
-                          onChanged: controller.setVolume,
-                        ),
-                      ),
-                    )
-                  : const SizedBox.shrink(),
-            ),
           ],
         ),
       ),
@@ -767,7 +788,6 @@ class _PlayerVolumeControlState extends ConsumerState<PlayerVolumeControl> {
   }
 }
 
-/// Громкость: иконка «выключить» и слайдер.
 class PlayerVolumeBar extends ConsumerWidget {
   const PlayerVolumeBar({super.key, required this.player});
 

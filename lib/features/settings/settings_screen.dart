@@ -1,5 +1,6 @@
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
+import 'package:url_launcher/url_launcher.dart';
 
 import '../../core/net/anti_dpi.dart';
 import '../../core/theme/seed_colors.dart';
@@ -114,8 +115,13 @@ class SettingsScreen extends ConsumerWidget {
                   subtitle: settings.musixmatchApiKey.isEmpty
                       ? 'Не задан — источник Musixmatch выключен'
                       : 'Задан',
-                  onTap: () =>
-                      _editMusixmatchKey(context, controller, settings),
+                  onTap: () => _editMusixmatchKey(context, controller, settings),
+                ),
+                SettingsRow(
+                  icon: Icons.reorder,
+                  title: 'Порядок источников текста',
+                  subtitle: settings.lyricsProviderOrder.first.label,
+                  onTap: () => _pickLyricsOrder(context, controller, settings),
                 ),
                 SettingsSwitchRow(
                   icon: Icons.subtitles_outlined,
@@ -131,6 +137,24 @@ class SettingsScreen extends ConsumerWidget {
                   onTap: () =>
                       _pickLyricsTextScale(context, controller, settings),
                 ),
+                SettingsSwitchRow(
+                  icon: Icons.translate,
+                  title: 'Романизация',
+                  subtitle: 'Латиница под строкой — для японского, корейского, '
+                      'китайского и других языков',
+                  value: settings.romanizationEnabled,
+                  onChanged: controller.setRomanizationEnabled,
+                ),
+                // Язык имеет смысл выбирать только при включённой романизации:
+                // без неё запрос к сервису не уходит.
+                if (settings.romanizationEnabled)
+                  SettingsRow(
+                    icon: Icons.language,
+                    title: 'Язык романизации',
+                    subtitle: settings.romanizationLanguage.label,
+                    onTap: () =>
+                        _pickRomanizationLanguage(context, controller, settings),
+                  ),
               ],
             ),
             const SizedBox(height: SettingsDims.sectionSpacing),
@@ -186,6 +210,53 @@ class SettingsScreen extends ConsumerWidget {
                   subtitle: settings.progressBarStyle.label,
                   onTap: () =>
                       _pickProgressBarStyle(context, controller, settings),
+                ),
+                SettingsRow(
+                  icon: Icons.blur_on,
+                  title: 'Фон плеера',
+                  subtitle: settings.playerBackgroundStyle.label,
+                  onTap: () => _pickPlayerBackgroundStyle(
+                    context,
+                    controller,
+                    settings,
+                  ),
+                ),
+                SettingsSwitchRow(
+                  icon: Icons.blur_off,
+                  title: 'Отключить размытие',
+                  subtitle: 'Фон плеера рисуется без размытия',
+                  value: settings.disableBlur,
+                  onChanged: controller.setDisableBlur,
+                ),
+                SettingsRow(
+                  icon: Icons.blur_circular,
+                  title: 'Интенсивность размытия',
+                  subtitle: '${settings.blurRadius.round()}',
+                  onTap: () => _pickBlurRadius(context, controller, settings),
+                ),
+                SettingsRow(
+                  icon: Icons.volume_up,
+                  title: 'Ползунок громкости',
+                  subtitle: settings.volumeSliderStyle.label,
+                  onTap: () => _pickVolumeSliderStyle(
+                    context,
+                    controller,
+                    settings,
+                  ),
+                ),
+                SettingsSwitchRow(
+                  icon: Icons.web_asset,
+                  title: 'Заголовок окна по центру',
+                  subtitle: 'Иначе заголовок слева, у логотипа (Windows)',
+                  value: settings.titleBarCentered,
+                  onChanged: controller.setTitleBarCentered,
+                ),
+                SettingsSwitchRow(
+                  icon: Icons.format_color_fill,
+                  title: 'Шапка в цвет фона',
+                  subtitle: 'Иначе шапка темнее фона — как рамка окна (Windows)',
+                  value: settings.titleBarMatchesBackground,
+                  onChanged: controller.setTitleBarMatchesBackground,
                 ),
               ],
             ),
@@ -266,6 +337,30 @@ class SettingsScreen extends ConsumerWidget {
             const SizedBox(height: SettingsDims.sectionSpacing),
 
             SettingsGroup(
+              title: 'Интеграции',
+              accent: scheme.tertiary,
+              children: <Widget>[
+                SettingsSwitchRow(
+                  icon: Icons.forum_outlined,
+                  title: 'Discord Rich Presence',
+                  subtitle: 'Показывать текущий трек в профиле Discord',
+                  value: settings.discordRichPresence,
+                  onChanged: controller.setDiscordRichPresence,
+                ),
+                SettingsRow(
+                  icon: Icons.app_registration,
+                  title: 'Application ID',
+                  subtitle: settings.discordApplicationId.isEmpty
+                      ? 'Не задан — трек в Discord не отправляется'
+                      : settings.discordApplicationId,
+                  onTap: () =>
+                      _editDiscordApplicationId(context, controller, settings),
+                ),
+              ],
+            ),
+            const SizedBox(height: SettingsDims.sectionSpacing),
+
+            SettingsGroup(
               title: 'О приложении',
               accent: scheme.secondary,
               children: <Widget>[
@@ -334,6 +429,75 @@ class SettingsScreen extends ConsumerWidget {
       label: (AudioQuality v) => v.label,
     );
     if (result != null) await controller.setAudioQuality(result);
+  }
+
+  /// Фон полноэкранного плеера — стиль из ArchiveTune.
+  Future<void> _pickPlayerBackgroundStyle(
+    BuildContext context,
+    SettingsController controller,
+    AppSettings settings,
+  ) async {
+    final PlayerBackgroundStyle? result =
+        await _showChoice<PlayerBackgroundStyle>(
+      context,
+      title: 'Фон плеера',
+      current: settings.playerBackgroundStyle,
+      values: PlayerBackgroundStyle.values,
+      label: (PlayerBackgroundStyle v) => v.label,
+    );
+    if (result != null) await controller.setPlayerBackgroundStyle(result);
+  }
+
+  /// Интенсивность размытия фона (0–64) — слайдер в диалоге.
+  Future<void> _pickBlurRadius(
+    BuildContext context,
+    SettingsController controller,
+    AppSettings settings,
+  ) async {
+    double value = settings.blurRadius;
+    final double? result = await showDialog<double>(
+      context: context,
+      builder: (BuildContext dialogContext) => StatefulBuilder(
+        builder: (BuildContext context, StateSetter setState) => AlertDialog(
+          title: const Text('Интенсивность размытия'),
+          content: Slider(
+            value: value,
+            min: 0,
+            max: 64,
+            divisions: 64,
+            label: '${value.round()}',
+            onChanged: (double v) => setState(() => value = v),
+          ),
+          actions: <Widget>[
+            TextButton(
+              onPressed: () => Navigator.of(dialogContext).pop(),
+              child: const Text('Отмена'),
+            ),
+            FilledButton(
+              onPressed: () => Navigator.of(dialogContext).pop(value),
+              child: const Text('Сохранить'),
+            ),
+          ],
+        ),
+      ),
+    );
+    if (result != null) await controller.setBlurRadius(result);
+  }
+
+  /// Стиль ползунка громкости — тот же набор, что у полосы перемотки.
+  Future<void> _pickVolumeSliderStyle(
+    BuildContext context,
+    SettingsController controller,
+    AppSettings settings,
+  ) async {
+    final ProgressBarStyle? result = await _showChoice<ProgressBarStyle>(
+      context,
+      title: 'Ползунок громкости',
+      current: settings.volumeSliderStyle,
+      values: ProgressBarStyle.values,
+      label: (ProgressBarStyle v) => v.label,
+    );
+    if (result != null) await controller.setVolumeSliderStyle(result);
   }
 
   Future<void> _pickLyricsSource(
@@ -416,6 +580,74 @@ class SettingsScreen extends ConsumerWidget {
   }
 
   /// Ключ Paxsenix: через него работает источник Musixmatch.
+  /// Порядок источников текста: первый — приоритетный (как в ArchiveTune).
+  Future<void> _pickLyricsOrder(
+    BuildContext context,
+    SettingsController controller,
+    AppSettings settings,
+  ) async {
+    final List<LyricsSource> order =
+        List<LyricsSource>.of(settings.lyricsProviderOrder);
+    final List<LyricsSource>? result = await showDialog<List<LyricsSource>>(
+      context: context,
+      builder: (BuildContext dialogContext) => StatefulBuilder(
+        builder: (BuildContext context, StateSetter setState) => AlertDialog(
+          title: const Text('Порядок источников текста'),
+          content: SizedBox(
+            width: 360,
+            child: ListView(
+              shrinkWrap: true,
+              children: <Widget>[
+                for (int i = 0; i < order.length; i++)
+                  ListTile(
+                    dense: true,
+                    leading: Text('${i + 1}'),
+                    title: Text(order[i].label),
+                    trailing: Row(
+                      mainAxisSize: MainAxisSize.min,
+                      children: <Widget>[
+                        IconButton(
+                          tooltip: 'Выше',
+                          icon: const Icon(Icons.keyboard_arrow_up),
+                          onPressed: i == 0
+                              ? null
+                              : () => setState(() {
+                                    final LyricsSource moved = order.removeAt(i);
+                                    order.insert(i - 1, moved);
+                                  }),
+                        ),
+                        IconButton(
+                          tooltip: 'Ниже',
+                          icon: const Icon(Icons.keyboard_arrow_down),
+                          onPressed: i == order.length - 1
+                              ? null
+                              : () => setState(() {
+                                    final LyricsSource moved = order.removeAt(i);
+                                    order.insert(i + 1, moved);
+                                  }),
+                        ),
+                      ],
+                    ),
+                  ),
+              ],
+            ),
+          ),
+          actions: <Widget>[
+            TextButton(
+              onPressed: () => Navigator.of(dialogContext).pop(),
+              child: const Text('Отмена'),
+            ),
+            FilledButton(
+              onPressed: () => Navigator.of(dialogContext).pop(order),
+              child: const Text('Сохранить'),
+            ),
+          ],
+        ),
+      ),
+    );
+    if (result != null) await controller.setLyricsProviderOrder(result);
+  }
+
   Future<void> _editMusixmatchKey(
     BuildContext context,
     SettingsController controller,
@@ -427,12 +659,31 @@ class SettingsScreen extends ConsumerWidget {
       context: context,
       builder: (BuildContext dialogContext) => AlertDialog(
         title: const Text('Ключ Paxsenix (Musixmatch)'),
-        content: TextField(
-          controller: field,
-          autofocus: true,
-          decoration: const InputDecoration(hintText: 'Bearer-ключ Paxsenix'),
+        content: Column(
+          mainAxisSize: MainAxisSize.min,
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: <Widget>[
+            TextField(
+              controller: field,
+              autofocus: true,
+              decoration: const InputDecoration(hintText: 'Bearer-ключ Paxsenix'),
+            ),
+            const SizedBox(height: 12),
+            const Text(
+              'Ключ выдаётся на lyrics.paxsenix.org — как в ArchiveTune. '
+              'Без ключа источник Musixmatch пропускается.',
+              style: TextStyle(fontSize: 12),
+            ),
+          ],
         ),
         actions: <Widget>[
+          TextButton(
+            onPressed: () => launchUrl(
+              Uri.parse('https://lyrics.paxsenix.org/'),
+              mode: LaunchMode.externalApplication,
+            ),
+            child: const Text('Получить ключ'),
+          ),
           TextButton(
             onPressed: () => Navigator.pop(dialogContext),
             child: const Text('Отмена'),
@@ -446,6 +697,60 @@ class SettingsScreen extends ConsumerWidget {
     );
     field.dispose();
     if (result != null) await controller.setMusixmatchApiKey(result);
+  }
+
+  /// Application ID приложения Discord: без него presence не отправляется.
+  Future<void> _editDiscordApplicationId(
+    BuildContext context,
+    SettingsController controller,
+    AppSettings settings,
+  ) async {
+    final TextEditingController field =
+        TextEditingController(text: settings.discordApplicationId);
+    final String? result = await showDialog<String>(
+      context: context,
+      builder: (BuildContext dialogContext) => AlertDialog(
+        title: const Text('Application ID'),
+        content: Column(
+          mainAxisSize: MainAxisSize.min,
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: <Widget>[
+            TextField(
+              controller: field,
+              autofocus: true,
+              decoration:
+                  const InputDecoration(hintText: 'Например, 123456789012345678'),
+            ),
+            const SizedBox(height: 12),
+            const Text(
+              'Создайте приложение на discord.com/developers/applications '
+              'и скопируйте его Application ID. Без него трек в Discord '
+              'не отправляется.',
+              style: TextStyle(fontSize: 12),
+            ),
+          ],
+        ),
+        actions: <Widget>[
+          TextButton(
+            onPressed: () => launchUrl(
+              Uri.parse('https://discord.com/developers/applications'),
+              mode: LaunchMode.externalApplication,
+            ),
+            child: const Text('Открыть портал'),
+          ),
+          TextButton(
+            onPressed: () => Navigator.pop(dialogContext),
+            child: const Text('Отмена'),
+          ),
+          FilledButton(
+            onPressed: () => Navigator.pop(dialogContext, field.text),
+            child: const Text('Сохранить'),
+          ),
+        ],
+      ),
+    );
+    field.dispose();
+    if (result != null) await controller.setDiscordApplicationId(result);
   }
 
   Future<void> _pickLyricsTextScale(
@@ -464,6 +769,22 @@ class SettingsScreen extends ConsumerWidget {
       label: (double v) => '${(v * 100).round()}%',
     );
     if (result != null) await controller.setLyricsTextScale(result);
+  }
+
+  Future<void> _pickRomanizationLanguage(
+    BuildContext context,
+    SettingsController controller,
+    AppSettings settings,
+  ) async {
+    final RomanizationLanguage? result =
+        await _showChoice<RomanizationLanguage>(
+      context,
+      title: 'Язык романизации',
+      current: settings.romanizationLanguage,
+      values: RomanizationLanguage.values,
+      label: (RomanizationLanguage v) => v.label,
+    );
+    if (result != null) await controller.setRomanizationLanguage(result);
   }
 
   Future<void> _pickSwipeSensitivity(

@@ -71,11 +71,16 @@ void openBrowseItem(
 ) {
   switch (item) {
     case TrackItem(:final Track track):
-      // У трека своей страницы нет — как и в ArchiveTune, нажатие на карточку
-      // трека его ЗАПУСКАЕТ. Раньше подпись уводила к исполнителю: это было и
-      // неожиданно, и неверно — имени исполнителя достаточно быть ссылкой.
-      // Альбом и исполнитель доступны из меню «…» на карточке.
-      ref.read(playerControllerProvider.notifier).playTrack(track);
+      // Нажатие на подпись карточки трека ведёт на страницу альбома (сингл —
+      // та же страница альбома). Раньше подпись запускала трек: альбом и
+      // исполнитель были доступны только из меню «…».
+      final AlbumRef? album = track.album;
+      if (album != null && album.isNavigable) {
+        AppRoutes.album(context, album.id!);
+      } else {
+        // Альбома нет — тогда, как и раньше, запускаем трек.
+        ref.read(playerControllerProvider.notifier).playTrack(track);
+      }
     case AlbumItem(:final Album album):
       AppRoutes.album(context, album.id);
     case ArtistItem(:final Artist artist):

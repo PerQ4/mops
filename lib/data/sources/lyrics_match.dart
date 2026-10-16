@@ -22,6 +22,58 @@ class LyricsScore {
   final List<String> reasons;
 }
 
+/// Тип синхронизации текста — как `SyncType` в BetterLyrics.
+///
+/// Порядок объявления задаёт приоритет: караоке по слогам лучше пословного,
+/// пословное — лучше построчного, построчное — лучше текста без времён.
+/// Именно по этому признаку выбирается текст в режиме «Авто», а балл
+/// [scoreLyrics] используется лишь для сортировки списка в меню.
+enum LyricsSyncType {
+  /// Время размечено у нескольких слов внутри строки — настоящее караоке.
+  syllable,
+
+  /// Время у слов, но по одному слову на строку.
+  word,
+
+  /// Время только у строк.
+  line,
+
+  /// Времён нет — подсветить и прокрутить нечего.
+  unsynced,
+}
+
+/// Определяет тип синхронизации текста.
+///
+/// Караоке считаем по слогам только тогда, когда размечено **большинство**
+/// строк: у некоторых баз слова есть лишь в припеве, и объявлять такой текст
+/// караоке было бы обманом.
+LyricsSyncType syncTypeOf(Lyrics lyrics) {
+  final List<TimedLyric> timed = lyrics.timed ?? const <TimedLyric>[];
+  if (timed.isEmpty) return LyricsSyncType.unsynced;
+
+  int withWords = 0;
+  int withSeveralWords = 0;
+  for (final TimedLyric line in timed) {
+    final List<TimedWord> words = line.words ?? const <TimedWord>[];
+    if (words.isEmpty) continue;
+    withWords++;
+    if (words.length > 1) withSeveralWords++;
+  }
+
+  if (withWords == 0) return LyricsSyncType.line;
+  return withSeveralWords * 2 >= withWords
+      ? LyricsSyncType.syllable
+      : LyricsSyncType.word;
+}
+
+/// Порядок типов синхронизации при выборе лучшего текста (лучший — первый).
+const List<LyricsSyncType> kLyricsSyncPriority = <LyricsSyncType>[
+  LyricsSyncType.syllable,
+  LyricsSyncType.word,
+  LyricsSyncType.line,
+  LyricsSyncType.unsynced,
+];
+
 /// Нормализует строку для сравнения названий и исполнителей.
 ///
 /// Регистр и пунктуацию убираем (Apple Music и YouTube пишут «Feat.»/«feat»
