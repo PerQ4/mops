@@ -398,6 +398,12 @@ class _PlayerIslandState extends ConsumerState<_PlayerIsland> {
     // становится таким же круглым, как правый.
     final double awayNav = (_dragDx / 140).clamp(0.0, 1.0);
 
+    // Свайп К навигации (влево) — блок ОБРЕЗАЕТСЯ справа вместе с содержимым:
+    // ширина становится меньше, а левый край с минимальным скруглением (стык)
+    // остаётся ровно на месте. Сдвигать блок было неверно: ширина не менялась,
+    // и стык уезжал вместе с ним.
+    final double shrink = (-_dragDx * 0.9).clamp(0.0, 260.0);
+
     final BorderRadius radius = BorderRadius.only(
       topLeft: Radius.circular(
         FloatingDock.joinRadius +
@@ -438,7 +444,12 @@ class _PlayerIslandState extends ConsumerState<_PlayerIsland> {
         ),
       );
 
-    final Widget islandWithJoint = island;
+    // Пока тянем, подсказки кнопок не должны всплывать: палец ведёт блок, а
+    // подсказка «Предыдущий/Следующий» поверх него только мешает.
+    final Widget islandWithJoint = TooltipVisibility(
+      visible: !_dragging,
+      child: island,
+    );
 
     // Жесты островка: свайп влево/вправо — следующий/предыдущий трек, тап по
     // свободному месту — полноэкранный плеер. Кнопки управления лежат внутри
@@ -485,11 +496,15 @@ class _PlayerIslandState extends ConsumerState<_PlayerIsland> {
             _dragging ? Duration.zero : const Duration(milliseconds: 280),
         curve: Curves.easeOutBack,
         transform: Matrix4.translationValues(
-          _dragDx * 0.32,
+          // Влево не сдвигаем: там работает обрезка, а стык должен стоять.
+          _dragDx > 0 ? _dragDx * 0.32 : 0,
           _dragDy * 0.30,
           0,
         ),
-        child: islandWithJoint,
+        child: ClipRect(
+          clipper: _RightInsetClipper(shrink),
+          child: islandWithJoint,
+        ),
       ),
     );
   }
@@ -562,12 +577,19 @@ class _ArtworkWithProgress extends StatelessWidget {
                   scheme.onSurface.withValues(alpha: playing ? 0.18 : 0.10),
             ),
           ),
-          Artwork(
-            url: variants.isEmpty ? null : variants.first,
-            fallbacks:
-                variants.length > 1 ? variants.sublist(1) : const <String>[],
-            size: side,
-            radius: BorderRadius.circular(side / 2),
+          SizedBox(
+            width: side,
+            height: side,
+            // Размер задаёт `SizedBox`, а не сам `Artwork`: тогда перелёт
+            // `Hero` растягивает картинку по промежуточному прямоугольнику,
+            // а не тащит её фиксированной.
+            child: Artwork(
+              url: variants.isEmpty ? null : variants.first,
+              fallbacks:
+                  variants.length > 1 ? variants.sublist(1) : const <String>[],
+              heroTag: kPlayerArtworkHeroTag,
+              radius: BorderRadius.circular(side / 2),
+            ),
           ),
         ],
       ),
@@ -899,6 +921,30 @@ class _PanelHeader extends ConsumerWidget {
 ///
 /// Без размытия и полупрозрачности — в ArchiveTune такой «стеклянности» нет,
 /// а размытие фона заметно нагружает отрисовку.
+/// Обрезает правый край блока на заданную величину.
+///
+/// Нужен для свайпа к навигации: блок должен «сжиматься» вместе с содержимым,
+/// а левый край — стык с навигацией — оставаться на месте. Изменение ширины
+/// самого виджета сдвинуло бы всю строку (она центрируется), поэтому режем
+/// только видимую часть.
+class _RightInsetClipper extends CustomClipper<Rect> {
+  const _RightInsetClipper(this.inset);
+
+  final double inset;
+
+  @override
+  Rect getClip(Size size) => Rect.fromLTRB(
+        0,
+        0,
+        (size.width - inset).clamp(0.0, size.width),
+        size.height,
+      );
+
+  @override
+  bool shouldReclip(_RightInsetClipper oldClipper) =>
+      oldClipper.inset != inset;
+}
+
 class _DockSurface extends StatelessWidget {
   const _DockSurface({
     required this.child,
