@@ -64,7 +64,11 @@ Future<void> showLyricsMenu(
 
 /// Меню поиска текста — как `LyricsMenu` в ArchiveTune: ряд действий сверху
 /// (обновить, ручной поиск, сбросить) и список найденных вариантов карточками.
-class _LyricsMenuSheet extends ConsumerWidget {
+///
+/// Шторка одна на два режима — список вариантов и форма ручного поиска. Почему
+/// так, а не диалог поверх шторки: две наложенные поверхности просвечивали друг
+/// сквозь друга и делили высоту экрана пополам, а нужен один экран.
+class _LyricsMenuSheet extends ConsumerStatefulWidget {
   const _LyricsMenuSheet({
     required this.request,
     this.onToggleVisibility,
@@ -76,7 +80,21 @@ class _LyricsMenuSheet extends ConsumerWidget {
   final bool lyricsVisible;
 
   @override
-  Widget build(BuildContext context, WidgetRef ref) {
+  ConsumerState<_LyricsMenuSheet> createState() => _LyricsMenuSheetState();
+}
+
+class _LyricsMenuSheetState extends ConsumerState<_LyricsMenuSheet> {
+  /// Показываем форму ручного поиска вместо списка вариантов.
+  bool _manualMode = false;
+
+  void _openManual() => setState(() => _manualMode = true);
+
+  /// Возврат к списку вариантов — по иконке «назад» в шапке шторки.
+  void _backToList() => setState(() => _manualMode = false);
+
+  @override
+  Widget build(BuildContext context) {
+    final LyricsRequest request = widget.request;
     final ColorScheme scheme = Theme.of(context).colorScheme;
     final TextTheme text = Theme.of(context).textTheme;
 
@@ -134,22 +152,35 @@ class _LyricsMenuSheet extends ConsumerWidget {
         mainAxisSize: MainAxisSize.min,
         children: <Widget>[
           Padding(
-            padding: const EdgeInsets.fromLTRB(20, 0, 20, 10),
+            padding: EdgeInsets.fromLTRB(_manualMode ? 8 : 20, 0, 20, 10),
             child: Row(
               children: <Widget>[
+                // Возврат к вариантам: без него из формы ручного поиска было бы
+                // не выйти, не закрыв всю шторку.
+                if (_manualMode)
+                  IconButton(
+                    tooltip: 'Назад к вариантам',
+                    iconSize: 20,
+                    icon: const Icon(Icons.arrow_back),
+                    onPressed: _backToList,
+                  ),
                 Expanded(
                   child: Column(
                     crossAxisAlignment: CrossAxisAlignment.start,
                     children: <Widget>[
                       Text(
-                        'Поиск текста',
+                        _manualMode ? 'Ручной поиск текста' : 'Поиск текста',
                         style: text.titleLarge?.copyWith(
                           fontWeight: FontWeight.w700,
                         ),
                       ),
                       const SizedBox(height: 2),
                       Text(
-                        subtitle,
+                        // В форме подсказываем, чего от неё ждать: подпись о
+                        // выбранном источнике здесь только мешала бы.
+                        _manualMode
+                            ? 'Ищем по вашим метаданным: названию и исполнителю.'
+                            : subtitle,
                         style: text.bodySmall?.copyWith(
                           color: scheme.onSurfaceVariant,
                         ),
@@ -162,48 +193,66 @@ class _LyricsMenuSheet extends ConsumerWidget {
               ],
             ),
           ),
-          Padding(
-            padding: const EdgeInsets.symmetric(horizontal: 8),
-            child: Row(
-              children: <Widget>[
-                _MenuAction(
-                  icon: Icons.refresh,
-                  label: 'Обновить',
-                  onTap: () => ref.invalidate(lyricsProvider(effective)),
-                ),
-                _MenuAction(
-                  icon: Icons.manage_search,
-                  label: 'Ручной поиск',
-                  onTap: () => _manualSearch(context, ref),
-                ),
-                _MenuAction(
-                  icon: Icons.edit_outlined,
-                  label: 'Изменить текст',
-                  onTap: () => _editLyrics(context, ref),
-                ),
-                _MenuAction(
-                  icon: Icons.restart_alt,
-                  label: 'Сбросить',
-                  onTap: () {
-                    ref
-                        .read(lyricsSourceOverrideProvider.notifier)
-                        .setSource(request.videoId, LyricsSource.auto);
-                    ref
-                        .read(manualLyricsRequestsProvider.notifier)
-                        .set(request.videoId, null);
-                    // Снимаем и выбранную запись: иначе поиск остался бы
-                    // привязан к ней и «Сбросить» был бы неполным.
-                    ref
-                        .read(manualLyricsSelectionProvider.notifier)
-                        .set(request.videoId, null);
-                    ref.invalidate(lyricsProvider(request));
-                  },
-                ),
-              ],
+          // Ряд действий — только для списка: у формы свои кнопки.
+          if (!_manualMode)
+            Padding(
+              padding: const EdgeInsets.symmetric(horizontal: 8),
+              child: Row(
+                children: <Widget>[
+                  _MenuAction(
+                    icon: Icons.refresh,
+                    label: 'Обновить',
+                    onTap: () => ref.invalidate(lyricsProvider(effective)),
+                  ),
+                  _MenuAction(
+                    icon: Icons.manage_search,
+                    label: 'Ручной поиск',
+                    onTap: _openManual,
+                  ),
+                  _MenuAction(
+                    icon: Icons.edit_outlined,
+                    label: 'Изменить текст',
+                    onTap: () => _editLyrics(context, ref),
+                  ),
+                  _MenuAction(
+                    icon: Icons.restart_alt,
+                    label: 'Сбросить',
+                    onTap: () {
+                      ref
+                          .read(lyricsSourceOverrideProvider.notifier)
+                          .setSource(request.videoId, LyricsSource.auto);
+                      ref
+                          .read(manualLyricsRequestsProvider.notifier)
+                          .set(request.videoId, null);
+                      // Снимаем и выбранную запись: иначе поиск остался бы
+                      // привязан к ней и «Сбросить» был бы неполным.
+                      ref
+                          .read(manualLyricsSelectionProvider.notifier)
+                          .set(request.videoId, null);
+                      ref.invalidate(lyricsProvider(request));
+                    },
+                  ),
+                ],
+              ),
             ),
-          ),
           const Divider(height: 20),
-          if (search.candidates.isEmpty && search.loading)
+          if (_manualMode)
+            // Форма живёт в той же шторке, что и список, поэтому прокручиваем
+            // её: на низком окне с открытой клавиатурой поля не обрежутся.
+            Flexible(
+              child: SingleChildScrollView(
+                padding: const EdgeInsets.only(bottom: 8),
+                child: _ManualSearchPane(
+                  // Основу берём из ручного запроса трека: пользователь правит
+                  // именно его, а не исходные данные YouTube.
+                  base: manual ?? request,
+                  videoId: request.videoId,
+                  onApplied: _backToList,
+                  onReset: _backToList,
+                ),
+              ),
+            )
+          else if (search.candidates.isEmpty && search.loading)
             const Padding(
               padding: EdgeInsets.all(24),
               child: Row(
@@ -245,26 +294,11 @@ class _LyricsMenuSheet extends ConsumerWidget {
     );
   }
 
-  /// Ручной поиск текста: ввод своих названия/исполнителя и поиск по ним —
-  /// как `SearchLyricsInputDialog` в ArchiveTune. После «Искать» показываем
-  /// список найденных треков: пользователь выбирает нужную запись, и текст
-  /// берётся ровно из неё.
-  Future<void> _manualSearch(BuildContext context, WidgetRef ref) async {
-    final LyricsRequest base =
-        ref.read(manualLyricsRequestsProvider)[request.videoId] ?? request;
-    await showDialog<void>(
-      context: context,
-      builder: (BuildContext dialogContext) =>
-          _ManualSearchDialog(base: base, videoId: request.videoId),
-    );
-    // Меню не закрываем и не перезапрашиваем вручную: выбранная запись и
-    // ручной запрос меняют провайдеры, которые меню и так слушает.
-  }
-
   /// Ручная правка текста: показываем найденный текст, даём поправить строки и
   /// кладём правку поверх — без перезапроса источников. Правка живёт по треку,
   /// поэтому её можно снять отдельной кнопкой.
   Future<void> _editLyrics(BuildContext context, WidgetRef ref) async {
+    final LyricsRequest request = widget.request;
     // Берём ровно тот текст, что показан сейчас: тот же выбор источника, что
     // и в плеере, иначе пользователь правил бы не то, что видит.
     final AppSettings settings = ref.read(settingsControllerProvider);
@@ -348,6 +382,7 @@ class _LyricsMenuSheet extends ConsumerWidget {
   }
 
   void _select(BuildContext context, WidgetRef ref, LyricsSource source) {
+    final LyricsRequest request = widget.request;
     // Источник запоминаем для этого трека: смена настройки затронула бы все
     // треки, а пользователь просил другой текст именно здесь.
     ref
@@ -515,22 +550,33 @@ String _hitTitle(LyricsTrackHit hit) {
   return parts.isEmpty ? 'без названия' : parts.join(' — ');
 }
 
-/// Диалог ручного поиска: метаданные сверху, найденные треки снизу.
+/// Форма ручного поиска: метаданные сверху, найденные треки снизу.
 ///
-/// Почему отдельным состоянием, а не диалогом «одно действие»: поиск
-/// асинхронный, и после «Искать» нужно показать список, не закрывая окно.
-class _ManualSearchDialog extends ConsumerStatefulWidget {
-  const _ManualSearchDialog({required this.base, required this.videoId});
+/// Живёт внутри шторки, а не в отдельном диалоге: поиск асинхронный, и после
+/// «Искать» список показывается в том же окне, а не во втором поверх первого.
+/// Почему не диалог «одно действие»: результат пользователь выбирает здесь же.
+class _ManualSearchPane extends ConsumerStatefulWidget {
+  const _ManualSearchPane({
+    required this.base,
+    required this.videoId,
+    required this.onApplied,
+    required this.onReset,
+  });
 
   final LyricsRequest base;
   final String videoId;
 
+  /// Возврат к списку вариантов после применения найденной записи.
+  final VoidCallback onApplied;
+
+  /// Возврат к списку вариантов после сброса.
+  final VoidCallback onReset;
+
   @override
-  ConsumerState<_ManualSearchDialog> createState() =>
-      _ManualSearchDialogState();
+  ConsumerState<_ManualSearchPane> createState() => _ManualSearchPaneState();
 }
 
-class _ManualSearchDialogState extends ConsumerState<_ManualSearchDialog> {
+class _ManualSearchPaneState extends ConsumerState<_ManualSearchPane> {
   late final TextEditingController _title;
   late final TextEditingController _artist;
   late final TextEditingController _album;
@@ -579,13 +625,14 @@ class _ManualSearchDialogState extends ConsumerState<_ManualSearchDialog> {
   /// «Искать»: запоминаем ручной запрос и запускаем список.
   void _search() {
     final LyricsRequest query = _buildRequest();
-    // Ручной запрос запоминаем: меню показывает его в шапке, а обычный
+    // Ручной запрос запоминаем: шторка показывает его в шапке, а обычный
     // параллельный поиск (если запись не выбрана) идёт по этим метаданным.
     ref.read(manualLyricsRequestsProvider.notifier).set(widget.videoId, query);
     setState(() => _query = query);
   }
 
-  /// Тап по записи: применяем её для этого трека и закрываем диалог.
+  /// Тап по записи: применяем её для этого трека и возвращаемся к списку
+  /// вариантов — шторка остаётся открытой, как было с диалогом поверх неё.
   void _apply(LyricsTrackHit hit) {
     ref
         .read(manualLyricsSelectionProvider.notifier)
@@ -594,7 +641,7 @@ class _ManualSearchDialogState extends ConsumerState<_ManualSearchDialog> {
     ref
         .read(lyricsSourceOverrideProvider.notifier)
         .setSource(widget.videoId, hit.source);
-    Navigator.pop(context);
+    widget.onApplied();
   }
 
   /// «Сбросить»: снимаем и ручной запрос, и выбранную запись.
@@ -608,7 +655,7 @@ class _ManualSearchDialogState extends ConsumerState<_ManualSearchDialog> {
     ref
         .read(lyricsSourceOverrideProvider.notifier)
         .setSource(widget.videoId, LyricsSource.auto);
-    Navigator.pop(context);
+    widget.onReset();
   }
 
   @override
@@ -621,62 +668,63 @@ class _ManualSearchDialogState extends ConsumerState<_ManualSearchDialog> {
     );
     final LyricsRequest? query = _query;
 
-    return AlertDialog(
-      title: const Text('Ручной поиск текста'),
-      content: SingleChildScrollView(
-        child: Column(
-          mainAxisSize: MainAxisSize.min,
-          crossAxisAlignment: CrossAxisAlignment.stretch,
-          children: <Widget>[
-            TextField(
-              controller: _title,
-              decoration: const InputDecoration(labelText: 'Название'),
+    // Отступы как у списка вариантов: форма и список — одна поверхность.
+    return Padding(
+      padding: const EdgeInsets.fromLTRB(20, 0, 20, 4),
+      child: Column(
+        mainAxisSize: MainAxisSize.min,
+        crossAxisAlignment: CrossAxisAlignment.stretch,
+        children: <Widget>[
+          TextField(
+            controller: _title,
+            decoration: const InputDecoration(labelText: 'Название'),
+          ),
+          TextField(
+            controller: _artist,
+            decoration: const InputDecoration(labelText: 'Исполнитель'),
+          ),
+          TextField(
+            controller: _album,
+            decoration: const InputDecoration(labelText: 'Альбом'),
+          ),
+          TextField(
+            controller: _duration,
+            decoration: const InputDecoration(labelText: 'Длительность, сек'),
+          ),
+          const SizedBox(height: 14),
+          if (query == null)
+            Text(
+              'Заполните метаданные и нажмите «Искать» — покажем список '
+              'найденных треков, из него выберете нужный.',
+              style: text.bodySmall?.copyWith(color: scheme.onSurfaceVariant),
+            )
+          else ...<Widget>[
+            Text('Найденные треки', style: text.titleSmall),
+            const SizedBox(height: 2),
+            Text(
+              'YouLy+ и BetterLyrics ищут только по метаданным — в списке '
+              'их нет.',
+              style: text.bodySmall?.copyWith(color: scheme.onSurfaceVariant),
             ),
-            TextField(
-              controller: _artist,
-              decoration: const InputDecoration(labelText: 'Исполнитель'),
+            const SizedBox(height: 8),
+            _HitResults(
+              request: query,
+              selected: selected,
+              onSelect: _apply,
             ),
-            TextField(
-              controller: _album,
-              decoration: const InputDecoration(labelText: 'Альбом'),
-            ),
-            TextField(
-              controller: _duration,
-              decoration: const InputDecoration(labelText: 'Длительность, сек'),
-            ),
-            const SizedBox(height: 14),
-            if (query == null)
-              Text(
-                'Заполните метаданные и нажмите «Искать» — покажем список '
-                'найденных треков, из него выберете нужный.',
-                style: text.bodySmall?.copyWith(color: scheme.onSurfaceVariant),
-              )
-            else ...<Widget>[
-              Text('Найденные треки', style: text.titleSmall),
-              const SizedBox(height: 2),
-              Text(
-                'YouLy+ и BetterLyrics ищут только по метаданным — в списке '
-                'их нет.',
-                style: text.bodySmall?.copyWith(color: scheme.onSurfaceVariant),
-              ),
-              const SizedBox(height: 8),
-              _HitResults(
-                request: query,
-                selected: selected,
-                onSelect: _apply,
-              ),
-            ],
           ],
-        ),
+          const SizedBox(height: 14),
+          Row(
+            children: <Widget>[
+              TextButton(onPressed: _reset, child: const Text('Сбросить')),
+              const Spacer(),
+              // Отдельной «Отмены» нет: возврат к списку — стрелкой в шапке
+              // шторки, дублировать то же действие кнопкой незачем.
+              FilledButton(onPressed: _search, child: const Text('Искать')),
+            ],
+          ),
+        ],
       ),
-      actions: <Widget>[
-        TextButton(onPressed: _reset, child: const Text('Сбросить')),
-        TextButton(
-          onPressed: () => Navigator.pop(context),
-          child: const Text('Отмена'),
-        ),
-        FilledButton(onPressed: _search, child: const Text('Искать')),
-      ],
     );
   }
 }
@@ -727,7 +775,7 @@ class _HitResults extends ConsumerWidget {
             ),
           );
         }
-        // Высоту ограничиваем, чтобы диалог не разрастался: список
+        // Высоту ограничиваем, чтобы форма в шторке не разрасталась: список
         // прокручивается внутри своей рамки.
         return ConstrainedBox(
           constraints: const BoxConstraints(maxHeight: 300),

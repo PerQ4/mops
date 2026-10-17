@@ -228,6 +228,14 @@ class _PlayerRightPanelState extends ConsumerState<PlayerRightPanel> {
                     : mode == RightPanelMode.player
                         ? _NextTracks(tracks: upcoming)
                         : const QueueList(
+                            // Шапку очереди скрываем: она повторяет текущий
+                            // трек (обложка, название, исполнитель, лайк) и
+                            // панель действий, а всё это уже есть в строке
+                            // трека сверху. Строка текущего трека и карусель
+                            // скрыты по той же причине — в панели остаются
+                            // только «Далее — N» и список. На полном экране и
+                            // в островке флаги свои, там вид не меняется.
+                            showHeader: false,
                             showCurrent: false,
                             showCarousel: false,
                           ),

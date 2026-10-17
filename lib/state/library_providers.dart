@@ -140,6 +140,80 @@ class LikedIdsController extends Notifier<Set<String>> {
 final NotifierProvider<LikedIdsController, Set<String>> likedIdsProvider =
     NotifierProvider<LikedIdsController, Set<String>>(LikedIdsController.new);
 
+/// Каналы, на которые оформлена подписка: одно состояние на всё приложение.
+///
+/// Подписка уже была в слое данных (`LibrarySource.setSubscribed`) и отдельной
+/// вкладкой в библиотеке, но кнопки не существовало — подписаться можно было
+/// только из YouTube Music. Держим множество id с локальными правками, как у
+/// лайков: кнопка реагирует сразу и показывает одно и то же на странице
+/// исполнителя и в библиотеке.
+class SubscribedIdsController extends Notifier<Set<String>> {
+  /// Локальные правки, ещё не подтверждённые сервером: `id → подписка`.
+  final Map<String, bool> _overrides = <String, bool>{};
+
+  /// Последний серверный список — чтобы повторная загрузка не гасила уже
+  /// показанную подписку.
+  Set<String> _lastServer = <String>{};
+
+  @override
+  Set<String> build() {
+    if (!_signedIn(ref)) {
+      _overrides.clear();
+      _lastServer = <String>{};
+      return <String>{};
+    }
+
+    final List<Artist>? artists = ref.watch(subscriptionsProvider).value;
+    if (artists != null) {
+      _lastServer = artists.map((Artist a) => a.id).toSet();
+    }
+
+    _overrides.removeWhere(
+      (String id, bool subscribed) => _lastServer.contains(id) == subscribed,
+    );
+
+    final Set<String> ids = <String>{..._lastServer};
+    _overrides.forEach((String id, bool subscribed) {
+      if (subscribed) {
+        ids.add(id);
+      } else {
+        ids.remove(id);
+      }
+    });
+    return ids;
+  }
+
+  /// Подписывает или отписывает, меняя состояние оптимистично.
+  Future<void> toggle(String channelId) async {
+    final Set<String> before = state;
+    final bool subscribed = !before.contains(channelId);
+
+    _overrides[channelId] = subscribed;
+    state = subscribed
+        ? <String>{...before, channelId}
+        : <String>{...before}..remove(channelId);
+
+    try {
+      await ref
+          .read(librarySourceProvider)
+          .setSubscribed(channelId, subscribed: subscribed);
+      // Вкладка «Подписки» устарела: перечитываем, чтобы список совпал.
+      ref.invalidate(subscriptionsProvider);
+    } on Object {
+      // Не вышло — возвращаем как было, иначе кнопка соврёт.
+      _overrides.remove(channelId);
+      state = before;
+      rethrow;
+    }
+  }
+}
+
+final NotifierProvider<SubscribedIdsController, Set<String>>
+    subscribedIdsProvider =
+    NotifierProvider<SubscribedIdsController, Set<String>>(
+  SubscribedIdsController.new,
+);
+
 /// Все сохранённые треки (включая добавленные вручную).
 final FutureProvider<List<Track>> librarySongsProvider =
     FutureProvider<List<Track>>((ref) async {

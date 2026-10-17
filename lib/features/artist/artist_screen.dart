@@ -3,7 +3,9 @@ import 'package:flutter_riverpod/flutter_riverpod.dart';
 
 import '../../core/theme/layout.dart';
 import '../../data/models/models.dart';
+import '../../state/auth_controller.dart';
 import '../../state/catalog_providers.dart';
+import '../../state/library_providers.dart';
 import '../../state/player_controller.dart';
 import '../../widgets/horizontal_list.dart';
 import '../../widgets/async_views.dart';
@@ -13,6 +15,50 @@ import '../album/media_hero.dart';
 import '../common/navigation.dart';
 import '../../widgets/empty_state.dart';
 import 'artist_hero.dart';
+
+/// Кнопка подписки на канал.
+///
+/// Подписка была только в слое данных и отдельной вкладкой в библиотеке —
+/// подписаться из приложения было нельзя. Иконка показывает состояние
+/// (колокольчик/активный колокольчик), нажатие меняет его сразу, а при ошибке
+/// состояние откатывается и показывается сообщение.
+class _SubscribeButton extends ConsumerWidget {
+  const _SubscribeButton({required this.channelId});
+
+  final String channelId;
+
+  @override
+  Widget build(BuildContext context, WidgetRef ref) {
+    final bool signedIn = ref.watch(
+      authControllerProvider.select((AuthState s) => s.isSignedIn),
+    );
+    final bool subscribed = ref.watch(
+      subscribedIdsProvider.select((Set<String> ids) => ids.contains(channelId)),
+    );
+
+    return HeroCircleButton(
+      icon: subscribed ? Icons.notifications_active : Icons.notifications_none,
+      tooltip: subscribed ? 'Отписаться' : 'Подписаться',
+      size: 52,
+      // Без входа подписываться некуда — как и лайк в меню трека.
+      onPressed: !signedIn
+          ? null
+          : () async {
+              try {
+                await ref
+                    .read(subscribedIdsProvider.notifier)
+                    .toggle(channelId);
+              } on Object catch (error) {
+                if (context.mounted) {
+                  ScaffoldMessenger.of(context).showSnackBar(
+                    SnackBar(content: Text(describeError(error))),
+                  );
+                }
+              }
+            },
+    );
+  }
+}
 
 /// Страница исполнителя: популярные треки, альбомы, синглы, похожие.
 ///
@@ -134,6 +180,8 @@ class _ArtistBody extends ConsumerWidget {
                 size: 52,
                 onPressed: hasTracks ? () => _enqueueAll(ref, top) : null,
               ),
+              // Подписка на канал — как кнопка «Подписаться» в YouTube Music.
+              _SubscribeButton(channelId: artist.id),
             ],
           ),
         ),

@@ -144,6 +144,12 @@ class _TrackMenuSheet extends ConsumerWidget {
                 },
               ),
             ],
+            // Клип доступен всегда: id трека — это и есть videoId на YouTube.
+            _MenuAction(
+              icon: Icons.play_circle_outline,
+              title: 'Смотреть клип',
+              onTap: () => _openClip(context),
+            ),
             _MenuAction(
               icon: liked ? Icons.favorite : Icons.favorite_border,
               title: liked ? 'Убрать из «Мне нравится»' : 'Мне нравится',
@@ -165,6 +171,13 @@ class _TrackMenuSheet extends ConsumerWidget {
   void _openAlbum(BuildContext sheetContext, AlbumRef album) {
     Navigator.pop(sheetContext);
     AppRoutes.album(hostContext, album.id!, root: rootNavigator);
+  }
+
+  void _openClip(BuildContext sheetContext) {
+    Navigator.pop(sheetContext);
+    // Клип, как и плеер, живёт в корневом навигаторе — иначе при открытии из
+    // полноэкранного плеера он остался бы под его экраном.
+    AppRoutes.clip(hostContext, track);
   }
 
   /// Первый исполнитель с id: у трека с несколькими авторами на страницу

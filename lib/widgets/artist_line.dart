@@ -15,6 +15,10 @@ import '../features/common/navigation.dart';
 ///
 /// Исполнители без идентификатора (гостевые ответы) остаются обычным текстом:
 /// вести некуда, и притворяться ссылкой нельзя.
+///
+/// Навигабельное имя помечается цветом акцента и подчёркиванием, а над строкой
+/// появляется курсор-указатель: иначе ссылку не отличить от обычного текста, и
+/// нажатие выглядит как «кнопка не работает».
 class ArtistLine extends StatefulWidget {
   const ArtistLine({
     super.key,
@@ -74,12 +78,43 @@ class _ArtistLineState extends State<ArtistLine> {
     _recognizers.clear();
   }
 
+  /// Распознаватель ссылки №[index].
+  ///
+  /// Распознаватели переиспользуются между сборками, а не создаются заново.
+  /// Причина: панель плеера и полный экран перестраиваются на каждом тике
+  /// позиции (несколько раз в секунду). Если при этом освобождать
+  /// распознаватель, нажатие, начатое до перестройки, обрывается: палец
+  /// опущен, распознаватель уже уничтожен — и тап не срабатывает. Поэтому
+  /// меняем только `onTap`, а сам объект живёт до смены набора исполнителей.
+  TapGestureRecognizer _recognizerAt(int index) {
+    while (_recognizers.length <= index) {
+      _recognizers.add(TapGestureRecognizer());
+    }
+    return _recognizers[index];
+  }
+
+  /// Освобождает распознаватели, оставшиеся от прошлого набора ссылок
+  /// (ссылок стало меньше) — иначе они копились бы и утекали.
+  void _trimRecognizers(int keep) {
+    while (_recognizers.length > keep) {
+      _recognizers.removeLast().dispose();
+    }
+  }
+
   @override
   Widget build(BuildContext context) {
-    // Набор исполнителей мог смениться — распознаватели пересобираем.
-    _disposeRecognizers();
+    final ColorScheme scheme = Theme.of(context).colorScheme;
+    // Навигабельный исполнитель обязан ВЫГЛЯДЕТЬ ссылкой: цвет акцента и
+    // подчёркивание. Без этого он не отличался от обычного текста, и нажатие
+    // читалось как «кнопка не работает». Ненавигабельный остаётся без стиля.
+    final TextStyle linkStyle = (widget.style ?? const TextStyle()).copyWith(
+      color: scheme.primary,
+      decoration: TextDecoration.underline,
+      decorationColor: scheme.primary.withValues(alpha: 0.6),
+    );
 
     final List<InlineSpan> spans = <InlineSpan>[];
+    int linkCount = 0;
     if (widget.artists.isEmpty) {
       spans.add(TextSpan(text: widget.fallback));
     } else {
@@ -88,29 +123,39 @@ class _ArtistLineState extends State<ArtistLine> {
         final ArtistRef artist = widget.artists[i];
         final String name = cleanArtistName(artist.name);
         if (artist.isNavigable) {
-          final TapGestureRecognizer recognizer = TapGestureRecognizer()
-            ..onTap = () => widget.onArtistTap != null
-                ? widget.onArtistTap!(artist)
-                : AppRoutes.artist(context, artist.id!);
-          _recognizers.add(recognizer);
-          spans.add(TextSpan(text: name, recognizer: recognizer));
+          final TapGestureRecognizer recognizer = _recognizerAt(linkCount++);
+          recognizer.onTap = () => widget.onArtistTap != null
+              ? widget.onArtistTap!(artist)
+              : AppRoutes.artist(context, artist.id!);
+          spans.add(TextSpan(
+            text: name,
+            style: linkStyle,
+            recognizer: recognizer,
+          ));
         } else {
           spans.add(TextSpan(text: name));
         }
       }
     }
+    _trimRecognizers(linkCount);
 
     for (final String tail in widget.suffix ?? const <String>[]) {
       if (tail.trim().isEmpty) continue;
       spans.add(TextSpan(text: ' • $tail'));
     }
 
-    return Text.rich(
+    final Widget text = Text.rich(
       TextSpan(children: spans),
       maxLines: widget.maxLines,
       overflow: widget.overflow,
       textAlign: widget.textAlign,
       style: widget.style,
     );
+
+    // Указатель-курсор: `TextSpan.mouseCursor` обычный `Text` не показывает,
+    // поэтому задаём его областью вокруг строки — и только когда в ней правда
+    // есть ссылка, иначе курсор обманывал бы так же, как и вид текста.
+    if (linkCount == 0) return text;
+    return MouseRegion(cursor: SystemMouseCursors.click, child: text);
   }
 }

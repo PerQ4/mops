@@ -622,7 +622,7 @@ class _InfoRow extends ConsumerWidget {
           const SizedBox(width: 12),
           // Действия — как в стиле V4: квадраты 44 с радиусом 14, фон с
           // альфой 0.12, иконка 22, зазор 10. Перемешивание и повтор
-          // переехали сюда из транспорта, поэтому здесь их четыре.
+          // переехали сюда из транспорта; рядом — клип, меню и лайк.
           _PlayerActionButton(
             tooltip: player.shuffle ? 'Перемешивание включено' : 'Перемешать',
             icon: Icons.shuffle,
@@ -637,6 +637,14 @@ class _InfoRow extends ConsumerWidget {
                 : Icons.repeat,
             selected: player.repeat != PlayerRepeatMode.off,
             onPressed: controller.cycleRepeat,
+          ),
+          const SizedBox(width: 10),
+          // Клип трека: наш плеер звук-only, поэтому видео открывается во
+          // встроенном браузере отдельным экраном поверх плеера.
+          _PlayerActionButton(
+            tooltip: 'Смотреть клип',
+            icon: Icons.play_circle_outline,
+            onPressed: () => AppRoutes.clip(context, track),
           ),
           const SizedBox(width: 10),
           // «…» открывает то же меню, что и из островка: исполнитель, альбом,
