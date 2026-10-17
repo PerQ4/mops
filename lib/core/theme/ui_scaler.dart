@@ -43,24 +43,18 @@ class UiScaler extends StatelessWidget {
             width: available.width,
             height: available.height,
             child: FittedBox(
-              // Ключ по размеру: при изменении размера окна слой растяжения
-              // пересоздаётся. Без этого движок переиспользовал прежний слой, и
-              // по краю окна оставалась полоса со старым кадром — при растяжении
-              // окна часть картинки была от прежнего размера.
-              key: ValueKey<String>(
-                'ui-scale-${available.width}x${available.height}',
-              ),
               fit: BoxFit.fill,
               child: SizedBox(
                 width: virtual.width,
                 height: virtual.height,
                 child: MediaQuery(
-                  data: media.copyWith(
-                    size: virtual,
-                    // DPR увеличиваем во столько же раз, чтобы картинки
-                    // запрашивались в нужном разрешении и не мылились.
-                    devicePixelRatio: media.devicePixelRatio * scale,
-                  ),
+                  // Логический размер уменьшаем, а кадр растягиваем обратно —
+                  // так масштабируется всё сразу: текст, отступы, иконки.
+                  //
+                  // Плотность пикселей НЕ подменяем: движок растеризует кадр с
+                  // реальной, и подмена рассинхронизировала размеры — при
+                  // изменении окна содержимое сжималось, а окно нет.
+                  data: media.copyWith(size: virtual),
                   child: child,
                 ),
               ),
