@@ -1463,6 +1463,18 @@ class _SyncedLyricsState extends ConsumerState<_SyncedLyrics>
                     _LyricLine(
                       key: _keys[i],
                       first: i == 0,
+                      // Клик по строке — переход к ней (как `LyricsClickKey` в
+                      // ArchiveTune). Оффсет текста учитываем так же, как в
+                      // подсветке: строка становится активной на `время + оффсет`.
+                      onTap: () => ref
+                          .read(playerControllerProvider.notifier)
+                          .seek(Duration(
+                            milliseconds: widget
+                                    .lines[_display[i].lineIndex]
+                                    .time
+                                    .inMilliseconds +
+                                widget.offsetMs,
+                          )),
                       index: _display[i].lineIndex,
                       line: widget.lines[_display[i].lineIndex],
                       active: i == active,
@@ -1535,7 +1547,12 @@ class _LyricLine extends StatelessWidget {
     required this.baseSize,
     required this.search,
     this.romanized,
+    this.onTap,
   });
+
+  /// Переход к строке по клику (`LyricsClickKey` в ArchiveTune). `null` —
+  /// переход выключен настройкой.
+  final VoidCallback? onTap;
 
   /// Первая строка списка отображения — у неё нет верхнего отступа.
   final bool first;
@@ -1604,7 +1621,7 @@ class _LyricLine extends StatelessWidget {
     final double targetBlur = _blur;
     final double targetScale = active ? 1 : 0.95;
 
-    return Padding(
+    final Widget body = Padding(
       padding: padding,
       child: TweenAnimationBuilder<double>(
         // Прозрачность: активная строка загорается за 330 мс, гаснет за 500 мс
@@ -1666,6 +1683,15 @@ class _LyricLine extends StatelessWidget {
           );
         },
       ),
+    );
+
+    if (onTap == null) return body;
+    return GestureDetector(
+      // Клик по строке — переход к ней. `opaque`, чтобы нажатие ловилось и в
+      // отступах строки, а не только по буквам.
+      behavior: HitTestBehavior.opaque,
+      onTap: onTap,
+      child: body,
     );
   }
 
