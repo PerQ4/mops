@@ -114,7 +114,7 @@ class YouLyPlusSource {
 
     final String? body = await _getText(uri);
     if (body == null) return Lyrics.none;
-    return _decode(body, title, artist);
+    return _decode(body, title, artist, duration);
   }
 
   /// Разбирает ответ зеркала: TTML, JSON со строками или обычный LRC.
@@ -123,7 +123,12 @@ class YouLyPlusSource {
   /// ищут по метаданным и на редких записях подсовывают кавер или одноимённую
   /// песню. Если в ответе есть название или исполнитель и ни одно из них не
   /// совпало с запросом — результат отбрасываем, а не показываем чужой текст.
-  Lyrics _decode(String body, String title, String artist) {
+  Lyrics _decode(
+    String body,
+    String title,
+    String artist,
+    Duration? duration,
+  ) {
     final String trimmed = body.trim();
     if (trimmed.isEmpty) return Lyrics.none;
 
@@ -139,7 +144,7 @@ class YouLyPlusSource {
     }
 
     final _ResponseMeta meta = _readMeta(decoded);
-    if (!_metaMatches(meta, title, artist)) {
+    if (!_metaMatches(meta, title, artist, duration)) {
       debugPrint('[YouLy+] ответ не о том треке: «${meta.title}» / '
           '«${meta.artist}» вместо «$title» / «$artist»');
       return Lyrics.none;
@@ -252,15 +257,42 @@ class YouLyPlusSource {
 
   /// Совпадает ли ответ с запросом.
   ///
-  /// Молчание метаданных не считаем несовпадением: сервис отдаёт их не всегда,
-  /// и терять из-за этого верный текст нельзя. Достаточно совпадения по
-  /// названию ИЛИ по исполнителю: у каверов другое имя исполнителя, у
-  /// ремиксов — наоборот.
-  bool _metaMatches(_ResponseMeta meta, String title, String artist) {
+  /// Название — главный признак: текст опознаётся именно по нему. Если сервис
+  /// назвал песню и оно не совпало — это ЧУЖАЯ песня, даже когда исполнитель
+  /// тот же: зеркало ищет по метаданным и на «ещё один трек этого артиста»
+  /// легко подсовывает другие слова. Раньше здесь хватало совпадения по
+  /// исполнителю, и такой вариант проходил.
+  ///
+  /// Исполнителя сверяем только когда названия в ответе нет — у каверов и
+  /// ремиксов он другой, и это единственная зацепка. Молчание метаданных
+  /// несовпадением не считаем: сервис отдаёт их не всегда, а терять из-за
+  /// этого верный текст нельзя.
+  bool _metaMatches(
+    _ResponseMeta meta,
+    String title,
+    String artist,
+    Duration? duration,
+  ) {
     if (meta.title == null && meta.artist == null) return true;
-    final bool titleOk = meta.title == null || _similar(meta.title!, title);
-    final bool artistOk = meta.artist == null || _similar(meta.artist!, artist);
-    return titleOk || artistOk;
+
+    if (meta.title != null && !_similar(meta.title!, title)) return false;
+    if (meta.title == null &&
+        meta.artist != null &&
+        !_similar(meta.artist!, artist)) {
+      return false;
+    }
+
+    // Длительность: расхождение больше 15 секунд — это другая запись
+    // (радио-версия, лайв), и её текст нам не нужен.
+    final Duration? candidate = meta.duration;
+    if (candidate != null &&
+        candidate > Duration.zero &&
+        duration != null &&
+        duration > Duration.zero &&
+        (candidate - duration).inSeconds.abs() > 15) {
+      return false;
+    }
+    return true;
   }
 
   /// Похожи ли строки: сравниваем нормализованный текст по вхождению, а затем
