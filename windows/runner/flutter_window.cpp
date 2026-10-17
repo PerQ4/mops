@@ -114,6 +114,15 @@ FlutterWindow::MessageHandler(HWND hwnd, UINT const message,
     case WM_FONTCHANGE:
       flutter_controller_->engine()->ReloadSystemFonts();
       break;
+
+    case WM_SIZE:
+    case WM_EXITSIZEMOVE:
+      // Живое изменение размера: движок может не успеть отрисовать кадр, и по
+      // краю окна остаётся картинка прежнего размера. Просим перерисовать.
+      if (flutter_controller_) {
+        flutter_controller_->ForceRedraw();
+      }
+      break;
   }
 
   return Win32Window::MessageHandler(hwnd, message, wparam, lparam);

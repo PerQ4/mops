@@ -116,8 +116,13 @@ LRESULT CALLBACK ChildContentWndProc(HWND child,
                                      LPARAM lparam) {
   if (message == WM_NCHITTEST) {
     HWND parent = GetAncestor(child, GA_PARENT);
-    const LRESULT hit = HitTestResizeBorder(parent, lparam);
-    if (hit != 0) return hit;
+    if (HitTestResizeBorder(parent, lparam) != 0) {
+      // Точка у кромки окна: пропускаем определение попадания к родителю.
+      // Возвращать зону растягивания самому нельзя — тогда система считает
+      // кромкой содержимое, и при перетаскивании окно и содержимое расходятся:
+      // тянется содержимое, а окно стоит.
+      return HTTRANSPARENT;
+    }
   }
 
   if (g_child_content_proc != nullptr) {
