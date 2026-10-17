@@ -1,6 +1,8 @@
 import 'dart:convert';
 import 'dart:io';
 
+import '../../state/catalog_providers.dart';
+import '../local/app_settings.dart';
 import '../models/models.dart';
 
 /// Тексты из открытой базы LRCLIB.
@@ -50,6 +52,63 @@ class LrclibSource {
     return _search('$artist $title');
   }
 
+  /// Ищет записи списком — для ручного выбора.
+  ///
+  /// Почему: обычный [fetch] отдаёт один вариант, и если база выбрала не ту
+  /// запись, пользователю нечего возразить. Здесь отдаём все совпадения с
+  /// метаданными, чтобы он сам выбрал нужный трек.
+  Future<List<LyricsTrackHit>> search({
+    required String title,
+    required String artist,
+    String? album,
+    Duration? duration,
+    String? apiKey,
+  }) async {
+    final String query = '$artist $title'.trim();
+    if (query.isEmpty) return const <LyricsTrackHit>[];
+
+    final Map<String, dynamic>? json = await _request(
+      Uri.parse('$_host/search').replace(
+        queryParameters: <String, String>{'q': query},
+      ),
+    );
+    if (json == null) return const <LyricsTrackHit>[];
+
+    final List<dynamic> results =
+        json['results'] as List<dynamic>? ?? <dynamic>[];
+    final List<LyricsTrackHit> hits = <LyricsTrackHit>[];
+    for (final dynamic item in results) {
+      if (item is! Map<String, dynamic>) continue;
+      final String id = '${item['id'] ?? ''}';
+      if (id.isEmpty) continue;
+      final num? seconds = item['duration'] as num?;
+      final String? synced = item['syncedLyrics'] as String?;
+      hits.add(LyricsTrackHit(
+        source: LyricsSource.lrclib,
+        id: id,
+        title: item['trackName'] as String?,
+        artist: item['artistName'] as String?,
+        album: item['albumName'] as String?,
+        duration: seconds == null ? null : Duration(seconds: seconds.toInt()),
+        // Пустой `syncedLyrics` — синхронизации нет, но запись всё равно
+        // годится: отдадим обычный текст.
+        hasSync: synced != null && synced.trim().isNotEmpty,
+      ));
+    }
+    return hits;
+  }
+
+  /// Достаёт текст ровно выбранной записи по её id.
+  Future<Lyrics> fetchHit(LyricsTrackHit hit) async {
+    final String id = hit.id.trim();
+    if (id.isEmpty) return Lyrics.none;
+    final Map<String, dynamic>? json =
+        await _request(Uri.parse('$_host/get/$id'));
+    if (json == null) return Lyrics.none;
+    // Метаданные берём из выбранной записи: по ним работает оценка.
+    return _fromJson(json, match: hit.match);
+  }
+
   Future<Lyrics> _get({
     required String title,
     required String artist,
@@ -93,16 +152,20 @@ class LrclibSource {
   }
 
   /// Превращает ответ базы в наш [Lyrics].
-  Lyrics _fromJson(Map<String, dynamic> json) {
+  ///
+  /// [match] — метаданные выбранной вручную записи: если они есть, оценка
+  /// совместимости идёт по ним, а не по полям ответа.
+  Lyrics _fromJson(Map<String, dynamic> json, {LyricsMatch? match}) {
     // Метаданные нужны оценке совместимости: у LRCLIB это название,
     // исполнитель и длительность в секундах.
     final num? duration = json['duration'] as num?;
-    final LyricsMatch match = LyricsMatch(
-      title: json['trackName'] as String?,
-      artist: json['artistName'] as String?,
-      duration:
-          duration == null ? null : Duration(seconds: duration.toInt()),
-    );
+    final LyricsMatch resolved = match ??
+        LyricsMatch(
+          title: json['trackName'] as String?,
+          artist: json['artistName'] as String?,
+          duration:
+              duration == null ? null : Duration(seconds: duration.toInt()),
+        );
 
     final String? synced = json['syncedLyrics'] as String?;
     if (synced != null && synced.trim().isNotEmpty) {
@@ -112,14 +175,14 @@ class LrclibSource {
           timed: timed,
           plain: timed.map((TimedLyric l) => l.text).join('\n'),
           source: 'LRCLIB',
-          match: match,
+          match: resolved,
         );
       }
     }
 
     final String? plain = json['plainLyrics'] as String?;
     if (plain != null && plain.trim().isNotEmpty) {
-      return Lyrics(plain: plain.trim(), source: 'LRCLIB', match: match);
+      return Lyrics(plain: plain.trim(), source: 'LRCLIB', match: resolved);
     }
     return Lyrics.none;
   }

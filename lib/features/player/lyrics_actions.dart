@@ -1,6 +1,7 @@
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 
+import '../../core/utils/format.dart';
 import '../../data/local/app_settings.dart';
 import '../../data/models/models.dart';
 import '../../state/catalog_providers.dart';
@@ -95,6 +96,22 @@ class _LyricsMenuSheet extends ConsumerWidget {
     );
     final LyricsRequest effective = manual ?? request;
 
+    // Выбранная вручную запись (ручной поиск). Пока она есть, показываем
+    // именно её текст и отмечаем её в шапке.
+    final LyricsTrackHit? selectedHit = ref.watch(
+      manualLyricsSelectionProvider
+          .select((Map<String, LyricsTrackHit> m) => m[request.videoId]),
+    );
+
+    // Подпись в шапке: выбранная запись важнее ручного запроса, а он — важнее
+    // источника по умолчанию.
+    final String subtitle = selectedHit != null
+        ? 'Выбран трек: ${_hitTitle(selectedHit)} (${selectedHit.source.label})'
+        : manual != null
+            ? 'Ручной поиск: '
+                '${<String>[manual.title ?? '', manual.artist ?? ''].where((String s) => s.trim().isNotEmpty).join(' ')}'
+            : 'Источник: ${current.label}';
+
     final LyricsSearchState search =
         ref.watch(lyricsProvider(effective)).value ??
             const LyricsSearchState();
@@ -132,11 +149,7 @@ class _LyricsMenuSheet extends ConsumerWidget {
                       ),
                       const SizedBox(height: 2),
                       Text(
-                        manual != null
-                            ? 'Ручной поиск: '
-                                '${manual.title ?? ''} ${manual.artist ?? ''}'
-                                    .trim()
-                            : 'Источник: ${current.label}',
+                        subtitle,
                         style: text.bodySmall?.copyWith(
                           color: scheme.onSurfaceVariant,
                         ),
@@ -177,6 +190,11 @@ class _LyricsMenuSheet extends ConsumerWidget {
                         .setSource(request.videoId, LyricsSource.auto);
                     ref
                         .read(manualLyricsRequestsProvider.notifier)
+                        .set(request.videoId, null);
+                    // Снимаем и выбранную запись: иначе поиск остался бы
+                    // привязан к ней и «Сбросить» был бы неполным.
+                    ref
+                        .read(manualLyricsSelectionProvider.notifier)
                         .set(request.videoId, null);
                     ref.invalidate(lyricsProvider(request));
                   },
@@ -228,94 +246,19 @@ class _LyricsMenuSheet extends ConsumerWidget {
   }
 
   /// Ручной поиск текста: ввод своих названия/исполнителя и поиск по ним —
-  /// как `SearchLyricsInputDialog` в ArchiveTune. После «Искать» список
-  /// вариантов обновляется прямо в этом меню, из него и выбирается нужный.
+  /// как `SearchLyricsInputDialog` в ArchiveTune. После «Искать» показываем
+  /// список найденных треков: пользователь выбирает нужную запись, и текст
+  /// берётся ровно из неё.
   Future<void> _manualSearch(BuildContext context, WidgetRef ref) async {
     final LyricsRequest base =
         ref.read(manualLyricsRequestsProvider)[request.videoId] ?? request;
-    final TextEditingController title =
-        TextEditingController(text: base.title ?? '');
-    final TextEditingController artist =
-        TextEditingController(text: base.artist ?? '');
-    final TextEditingController album =
-        TextEditingController(text: base.album ?? '');
-    final TextEditingController duration = TextEditingController(
-      text: (base.duration == null || base.duration == Duration.zero)
-          ? ''
-          : '${base.duration!.inSeconds}',
-    );
-
-    final int? action = await showDialog<int>(
+    await showDialog<void>(
       context: context,
-      builder: (BuildContext dialogContext) => AlertDialog(
-        title: const Text('Ручной поиск текста'),
-        content: SingleChildScrollView(
-          child: Column(
-            mainAxisSize: MainAxisSize.min,
-            children: <Widget>[
-              TextField(
-                controller: title,
-                decoration: const InputDecoration(labelText: 'Название'),
-              ),
-              TextField(
-                controller: artist,
-                decoration: const InputDecoration(labelText: 'Исполнитель'),
-              ),
-              TextField(
-                controller: album,
-                decoration: const InputDecoration(labelText: 'Альбом'),
-              ),
-              TextField(
-                controller: duration,
-                decoration:
-                    const InputDecoration(labelText: 'Длительность, сек'),
-              ),
-            ],
-          ),
-        ),
-        actions: <Widget>[
-          TextButton(
-            onPressed: () => Navigator.pop(dialogContext, 0),
-            child: const Text('Сбросить'),
-          ),
-          TextButton(
-            onPressed: () => Navigator.pop(dialogContext),
-            child: const Text('Отмена'),
-          ),
-          FilledButton(
-            onPressed: () => Navigator.pop(dialogContext, 1),
-            child: const Text('Искать'),
-          ),
-        ],
-      ),
+      builder: (BuildContext dialogContext) =>
+          _ManualSearchDialog(base: base, videoId: request.videoId),
     );
-
-    final String t = title.text.trim();
-    final String a = artist.text.trim();
-    final String al = album.text.trim();
-    final int? d = int.tryParse(duration.text.trim());
-    title.dispose();
-    artist.dispose();
-    album.dispose();
-    duration.dispose();
-
-    final ManualLyricsRequests notifier =
-        ref.read(manualLyricsRequestsProvider.notifier);
-    if (action == 0) {
-      notifier.set(request.videoId, null);
-    } else if (action == 1) {
-      notifier.set(
-        request.videoId,
-        LyricsRequest(
-          videoId: request.videoId,
-          title: t.isEmpty ? null : t,
-          artist: a.isEmpty ? null : a,
-          album: al.isEmpty ? null : al,
-          duration: (d == null || d <= 0) ? null : Duration(seconds: d),
-        ),
-      );
-    }
-    // Меню не закрываем: список вариантов обновится прямо здесь.
+    // Меню не закрываем и не перезапрашиваем вручную: выбранная запись и
+    // ручной запрос меняют провайдеры, которые меню и так слушает.
   }
 
   /// Ручная правка текста: показываем найденный текст, даём поправить строки и
@@ -555,6 +498,358 @@ class _ResultCard extends StatelessWidget {
                   color: scheme.onSurfaceVariant,
                 ),
               ),
+            ],
+          ),
+        ),
+      ),
+    );
+  }
+}
+
+/// «Название — Исполнитель» для подписи найденной записи.
+String _hitTitle(LyricsTrackHit hit) {
+  final List<String> parts = <String>[
+    if ((hit.title ?? '').trim().isNotEmpty) hit.title!.trim(),
+    if ((hit.artist ?? '').trim().isNotEmpty) hit.artist!.trim(),
+  ];
+  return parts.isEmpty ? 'без названия' : parts.join(' — ');
+}
+
+/// Диалог ручного поиска: метаданные сверху, найденные треки снизу.
+///
+/// Почему отдельным состоянием, а не диалогом «одно действие»: поиск
+/// асинхронный, и после «Искать» нужно показать список, не закрывая окно.
+class _ManualSearchDialog extends ConsumerStatefulWidget {
+  const _ManualSearchDialog({required this.base, required this.videoId});
+
+  final LyricsRequest base;
+  final String videoId;
+
+  @override
+  ConsumerState<_ManualSearchDialog> createState() =>
+      _ManualSearchDialogState();
+}
+
+class _ManualSearchDialogState extends ConsumerState<_ManualSearchDialog> {
+  late final TextEditingController _title;
+  late final TextEditingController _artist;
+  late final TextEditingController _album;
+  late final TextEditingController _duration;
+
+  /// Запрос, по которому показан список. `null` — ещё не искали.
+  LyricsRequest? _query;
+
+  @override
+  void initState() {
+    super.initState();
+    final LyricsRequest base = widget.base;
+    _title = TextEditingController(text: base.title ?? '');
+    _artist = TextEditingController(text: base.artist ?? '');
+    _album = TextEditingController(text: base.album ?? '');
+    _duration = TextEditingController(
+      text: (base.duration == null || base.duration == Duration.zero)
+          ? ''
+          : '${base.duration!.inSeconds}',
+    );
+  }
+
+  @override
+  void dispose() {
+    _title.dispose();
+    _artist.dispose();
+    _album.dispose();
+    _duration.dispose();
+    super.dispose();
+  }
+
+  LyricsRequest _buildRequest() {
+    final String t = _title.text.trim();
+    final String a = _artist.text.trim();
+    final String al = _album.text.trim();
+    final int? d = int.tryParse(_duration.text.trim());
+    return LyricsRequest(
+      videoId: widget.videoId,
+      title: t.isEmpty ? null : t,
+      artist: a.isEmpty ? null : a,
+      album: al.isEmpty ? null : al,
+      duration: (d == null || d <= 0) ? null : Duration(seconds: d),
+    );
+  }
+
+  /// «Искать»: запоминаем ручной запрос и запускаем список.
+  void _search() {
+    final LyricsRequest query = _buildRequest();
+    // Ручной запрос запоминаем: меню показывает его в шапке, а обычный
+    // параллельный поиск (если запись не выбрана) идёт по этим метаданным.
+    ref.read(manualLyricsRequestsProvider.notifier).set(widget.videoId, query);
+    setState(() => _query = query);
+  }
+
+  /// Тап по записи: применяем её для этого трека и закрываем диалог.
+  void _apply(LyricsTrackHit hit) {
+    ref
+        .read(manualLyricsSelectionProvider.notifier)
+        .set(widget.videoId, hit);
+    // Источник тоже фиксируем, иначе плеер не знал бы, какой вариант показать.
+    ref
+        .read(lyricsSourceOverrideProvider.notifier)
+        .setSource(widget.videoId, hit.source);
+    Navigator.pop(context);
+  }
+
+  /// «Сбросить»: снимаем и ручной запрос, и выбранную запись.
+  void _reset() {
+    ref
+        .read(manualLyricsSelectionProvider.notifier)
+        .set(widget.videoId, null);
+    ref
+        .read(manualLyricsRequestsProvider.notifier)
+        .set(widget.videoId, null);
+    ref
+        .read(lyricsSourceOverrideProvider.notifier)
+        .setSource(widget.videoId, LyricsSource.auto);
+    Navigator.pop(context);
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    final ColorScheme scheme = Theme.of(context).colorScheme;
+    final TextTheme text = Theme.of(context).textTheme;
+    final LyricsTrackHit? selected = ref.watch(
+      manualLyricsSelectionProvider
+          .select((Map<String, LyricsTrackHit> m) => m[widget.videoId]),
+    );
+    final LyricsRequest? query = _query;
+
+    return AlertDialog(
+      title: const Text('Ручной поиск текста'),
+      content: SingleChildScrollView(
+        child: Column(
+          mainAxisSize: MainAxisSize.min,
+          crossAxisAlignment: CrossAxisAlignment.stretch,
+          children: <Widget>[
+            TextField(
+              controller: _title,
+              decoration: const InputDecoration(labelText: 'Название'),
+            ),
+            TextField(
+              controller: _artist,
+              decoration: const InputDecoration(labelText: 'Исполнитель'),
+            ),
+            TextField(
+              controller: _album,
+              decoration: const InputDecoration(labelText: 'Альбом'),
+            ),
+            TextField(
+              controller: _duration,
+              decoration: const InputDecoration(labelText: 'Длительность, сек'),
+            ),
+            const SizedBox(height: 14),
+            if (query == null)
+              Text(
+                'Заполните метаданные и нажмите «Искать» — покажем список '
+                'найденных треков, из него выберете нужный.',
+                style: text.bodySmall?.copyWith(color: scheme.onSurfaceVariant),
+              )
+            else ...<Widget>[
+              Text('Найденные треки', style: text.titleSmall),
+              const SizedBox(height: 2),
+              Text(
+                'YouLy+ и BetterLyrics ищут только по метаданным — в списке '
+                'их нет.',
+                style: text.bodySmall?.copyWith(color: scheme.onSurfaceVariant),
+              ),
+              const SizedBox(height: 8),
+              _HitResults(
+                request: query,
+                selected: selected,
+                onSelect: _apply,
+              ),
+            ],
+          ],
+        ),
+      ),
+      actions: <Widget>[
+        TextButton(onPressed: _reset, child: const Text('Сбросить')),
+        TextButton(
+          onPressed: () => Navigator.pop(context),
+          child: const Text('Отмена'),
+        ),
+        FilledButton(onPressed: _search, child: const Text('Искать')),
+      ],
+    );
+  }
+}
+
+/// Список найденных треков под формой ручного поиска.
+class _HitResults extends ConsumerWidget {
+  const _HitResults({
+    required this.request,
+    required this.selected,
+    required this.onSelect,
+  });
+
+  final LyricsRequest request;
+  final LyricsTrackHit? selected;
+  final ValueChanged<LyricsTrackHit> onSelect;
+
+  @override
+  Widget build(BuildContext context, WidgetRef ref) {
+    final AsyncValue<List<LyricsTrackHit>> hits =
+        ref.watch(manualLyricsHitsProvider(request));
+
+    return hits.when(
+      loading: () => const Padding(
+        padding: EdgeInsets.all(20),
+        child: Row(
+          mainAxisAlignment: MainAxisAlignment.center,
+          children: <Widget>[
+            SizedBox(
+              width: 16,
+              height: 16,
+              child: CircularProgressIndicator(strokeWidth: 2),
+            ),
+            SizedBox(width: 12),
+            Text('Ищем треки…'),
+          ],
+        ),
+      ),
+      error: (Object error, StackTrace stack) => const Padding(
+        padding: EdgeInsets.all(20),
+        child: Text('Не удалось выполнить поиск. Попробуйте ещё раз.'),
+      ),
+      data: (List<LyricsTrackHit> list) {
+        if (list.isEmpty) {
+          return const Padding(
+            padding: EdgeInsets.all(20),
+            child: Text(
+              'Ничего не нашлось. Проверьте название и исполнителя.',
+            ),
+          );
+        }
+        // Высоту ограничиваем, чтобы диалог не разрастался: список
+        // прокручивается внутри своей рамки.
+        return ConstrainedBox(
+          constraints: const BoxConstraints(maxHeight: 300),
+          child: ListView.builder(
+            shrinkWrap: true,
+            padding: EdgeInsets.zero,
+            itemCount: list.length,
+            itemBuilder: (BuildContext context, int index) {
+              final LyricsTrackHit hit = list[index];
+              return _HitCard(
+                hit: hit,
+                selected: selected == hit,
+                onTap: () => onSelect(hit),
+              );
+            },
+          ),
+        );
+      },
+    );
+  }
+}
+
+/// Карточка найденного трека: источник, метаданные и подсказка о синхронизации.
+class _HitCard extends StatelessWidget {
+  const _HitCard({
+    required this.hit,
+    required this.selected,
+    required this.onTap,
+  });
+
+  final LyricsTrackHit hit;
+  final bool selected;
+  final VoidCallback onTap;
+
+  @override
+  Widget build(BuildContext context) {
+    final ColorScheme scheme = Theme.of(context).colorScheme;
+    final TextTheme text = Theme.of(context).textTheme;
+
+    final String syncLabel = hit.hasSync == true
+        ? 'Есть синхронизация'
+        : hit.hasSync == false
+            ? 'Без синхронизации'
+            : 'Синхронизация неизвестна';
+    final IconData syncIcon =
+        hit.hasSync == true ? Icons.sync : Icons.help_outline;
+
+    final String meta = <String>[
+      if ((hit.artist ?? '').trim().isNotEmpty) hit.artist!.trim(),
+      if ((hit.album ?? '').trim().isNotEmpty) hit.album!.trim(),
+      if (hit.duration != null && hit.duration! > Duration.zero)
+        formatDuration(hit.duration),
+    ].join(' · ');
+
+    return Card(
+      margin: const EdgeInsets.only(bottom: 8),
+      color:
+          selected ? scheme.secondaryContainer : scheme.surfaceContainerHighest,
+      child: InkWell(
+        onTap: onTap,
+        borderRadius: BorderRadius.circular(12),
+        child: Padding(
+          padding: const EdgeInsets.all(12),
+          child: Row(
+            children: <Widget>[
+              Expanded(
+                child: Column(
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  children: <Widget>[
+                    Text(
+                      _hitTitle(hit),
+                      style: text.titleSmall?.copyWith(
+                        fontWeight: FontWeight.w600,
+                      ),
+                      maxLines: 1,
+                      overflow: TextOverflow.ellipsis,
+                    ),
+                    if (meta.isNotEmpty)
+                      Text(
+                        meta,
+                        style: text.bodySmall?.copyWith(
+                          color: scheme.onSurfaceVariant,
+                        ),
+                        maxLines: 2,
+                        overflow: TextOverflow.ellipsis,
+                      ),
+                    const SizedBox(height: 4),
+                    Row(
+                      children: <Widget>[
+                        Flexible(
+                          child: Text(
+                            hit.source.label,
+                            style: text.labelSmall?.copyWith(
+                              color: scheme.onSurfaceVariant,
+                            ),
+                            maxLines: 1,
+                            overflow: TextOverflow.ellipsis,
+                          ),
+                        ),
+                        const SizedBox(width: 8),
+                        Icon(
+                          syncIcon,
+                          size: 14,
+                          color: scheme.onSurfaceVariant,
+                        ),
+                        const SizedBox(width: 4),
+                        Flexible(
+                          child: Text(
+                            syncLabel,
+                            style: text.labelSmall?.copyWith(
+                              color: scheme.onSurfaceVariant,
+                            ),
+                            maxLines: 1,
+                            overflow: TextOverflow.ellipsis,
+                          ),
+                        ),
+                      ],
+                    ),
+                  ],
+                ),
+              ),
+              if (selected) Icon(Icons.check, color: scheme.primary),
             ],
           ),
         ),

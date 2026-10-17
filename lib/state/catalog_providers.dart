@@ -370,6 +370,85 @@ final NotifierProvider<LyricsSourceOverride, Map<String, LyricsSource>>
   LyricsSourceOverride.new,
 );
 
+/// Найденный трек (запись базы) — то, из чего пользователь выбирает текст.
+///
+/// Почему отдельный тип: обычный поиск отдаёт по одному варианту на источник,
+/// и при ручном поиске выбрать другую запись было нельзя. Здесь храним
+/// метаданные записи и то, как её скачать, а не сам текст: текст берётся
+/// позже, ровно для выбранной записи (см. `fetchHit` у источников).
+@immutable
+class LyricsTrackHit {
+  const LyricsTrackHit({
+    required this.source,
+    required this.id,
+    this.accessKey,
+    this.provider,
+    this.title,
+    this.artist,
+    this.album,
+    this.duration,
+    this.hasSync,
+  });
+
+  /// База, из которой пришла запись.
+  final LyricsSource source;
+
+  /// Идентификатор записи внутри базы.
+  final String id;
+
+  /// Токен для скачивания текста (KuGou); у остальных баз не нужен.
+  final String? accessKey;
+
+  /// Подкаталог Paxsenix (`applemusic`/`spotify`) — какую базу спрашивать
+  /// за текстом. `null` у остальных источников.
+  final String? provider;
+
+  final String? title;
+  final String? artist;
+  final String? album;
+  final Duration? duration;
+
+  /// Подсказка о синхронизации: `true` — есть, `false` — знаем, что нет,
+  /// `null` — источник этого не сообщает.
+  final bool? hasSync;
+
+  /// Метаданные записи для оценки совместимости: по ним источник проставляет
+  /// [LyricsMatch] найденному тексту.
+  LyricsMatch get match => LyricsMatch(
+        title: title,
+        artist: artist,
+        duration: duration,
+      );
+
+  /// Равенство по значению: семейства провайдеров кэшируются по ключу, и
+  /// одинаковые записи должны считаться одним и тем же.
+  @override
+  bool operator ==(Object other) =>
+      other is LyricsTrackHit &&
+      other.source == source &&
+      other.id == id &&
+      other.accessKey == accessKey &&
+      other.provider == provider &&
+      other.title == title &&
+      other.artist == artist &&
+      other.album == album &&
+      other.duration == duration &&
+      other.hasSync == hasSync;
+
+  @override
+  int get hashCode => Object.hash(
+        source,
+        id,
+        accessKey,
+        provider,
+        title,
+        artist,
+        album,
+        duration,
+        hasSync,
+      );
+}
+
 /// Один найденный вариант текста вместе с оценкой совместимости.
 ///
 /// Это результат работы одного источника: сам текст и балл, по которому он
@@ -534,6 +613,167 @@ final NotifierProvider<ManualLyricsRequests, Map<String, LyricsRequest>>
   ManualLyricsRequests.new,
 );
 
+/// Запись базы, выбранная вручную для конкретного трека.
+///
+/// Пока запись выбрана, [lyricsProvider] не перебирает все источники, а берёт
+/// текст ровно этой записи — так пользователь исправляет «не тот» текст,
+/// который нашёлся автоматически.
+class ManualLyricsSelection extends Notifier<Map<String, LyricsTrackHit>> {
+  @override
+  Map<String, LyricsTrackHit> build() => const <String, LyricsTrackHit>{};
+
+  void set(String videoId, LyricsTrackHit? hit) {
+    final Map<String, LyricsTrackHit> next =
+        Map<String, LyricsTrackHit>.of(state);
+    if (hit == null) {
+      next.remove(videoId);
+    } else {
+      next[videoId] = hit;
+    }
+    state = next;
+  }
+}
+
+final NotifierProvider<ManualLyricsSelection, Map<String, LyricsTrackHit>>
+    manualLyricsSelectionProvider =
+    NotifierProvider<ManualLyricsSelection, Map<String, LyricsTrackHit>>(
+  ManualLyricsSelection.new,
+);
+
+/// Результаты ручного поиска: список найденных записей из всех баз.
+///
+/// Спрашиваем только те базы, что умеют искать списком. YouLy+ и BetterLyrics
+/// такого поиска не отдают — они ищут текст сразу по метаданным, поэтому в
+/// списке их нет (в интерфейсе это написано). Ошибки и недоступность сервиса
+/// дают пустой список, а не исключение.
+final manualLyricsHitsProvider =
+    FutureProvider.family<List<LyricsTrackHit>, LyricsRequest>(
+        (ref, request) async {
+  final String? title = request.title?.trim();
+  final String? artist = request.artist?.trim();
+  if (title == null || title.isEmpty) {
+    return const <LyricsTrackHit>[];
+  }
+
+  final LrclibSource lrclib = ref.watch(lrclibSourceProvider);
+  final KugouSource kugou = ref.watch(kugouSourceProvider);
+  final UnisonSource unison = ref.watch(unisonSourceProvider);
+  final PaxsenixSource paxsenix = ref.watch(paxsenixSourceProvider);
+  final String musixmatchKey = ref.watch(
+    settingsControllerProvider.select((AppSettings s) => s.musixmatchApiKey),
+  );
+
+  // У каждой базы свой бюджет: молчащая база не должна задерживать список.
+  Future<List<LyricsTrackHit>> bounded(
+    Future<List<LyricsTrackHit>> future,
+  ) =>
+      future.timeout(
+        _lyricsSourceBudget,
+        onTimeout: () => const <LyricsTrackHit>[],
+      );
+
+  final List<List<LyricsTrackHit>> groups =
+      await Future.wait(<Future<List<LyricsTrackHit>>>[
+    bounded(lrclib.search(
+      title: title,
+      artist: artist ?? '',
+      album: request.album,
+      duration: request.duration,
+    )),
+    bounded(kugou.search(
+      title: title,
+      artist: artist ?? '',
+      duration: request.duration,
+    )),
+    bounded(unison.search(
+      title: title,
+      artist: artist ?? '',
+      album: request.album,
+      duration: request.duration,
+    )),
+    // Paxsenix без ключа не работает — не спрашиваем его зря.
+    if (musixmatchKey.trim().isNotEmpty)
+      bounded(paxsenix.search(
+        title: title,
+        artist: artist ?? '',
+        duration: request.duration,
+        apiKey: musixmatchKey,
+      )),
+  ]);
+
+  final List<LyricsTrackHit> hits = <LyricsTrackHit>[];
+  for (final List<LyricsTrackHit> group in groups) {
+    hits.addAll(group);
+  }
+  // Порядок — по похожести на запрос: сначала название, затем исполнитель,
+  // затем близость длительности. Лучшее совпадение оказывается сверху.
+  hits.sort((LyricsTrackHit a, LyricsTrackHit b) => _hitScore(
+        b,
+        title: title,
+        artist: artist,
+        duration: request.duration,
+      ).compareTo(_hitScore(
+        a,
+        title: title,
+        artist: artist,
+        duration: request.duration,
+      )));
+  return hits;
+});
+
+/// Оценка похожести записи на запрос — для сортировки результатов ручного
+/// поиска. Веса задают приоритет: название важнее исполнителя, исполнитель
+/// важнее длительности.
+int _hitScore(
+  LyricsTrackHit hit, {
+  required String? title,
+  required String? artist,
+  required Duration? duration,
+}) {
+  int score = 0;
+
+  final String hitTitle = normalizeMatchText(hit.title ?? '');
+  final String wantTitle = normalizeMatchText(title ?? '');
+  if (hitTitle.isNotEmpty && wantTitle.isNotEmpty) {
+    if (hitTitle == wantTitle) {
+      score += 60;
+    } else if (hitTitle.contains(wantTitle) || wantTitle.contains(hitTitle)) {
+      score += 30;
+    }
+  }
+
+  final String hitArtist = normalizeMatchText(hit.artist ?? '');
+  final String wantArtist = normalizeMatchText(artist ?? '');
+  if (hitArtist.isNotEmpty && wantArtist.isNotEmpty) {
+    if (hitArtist == wantArtist) {
+      score += 30;
+    } else if (hitArtist.contains(wantArtist) ||
+        wantArtist.contains(hitArtist)) {
+      score += 15;
+    }
+  }
+
+  final Duration? hitDuration = hit.duration;
+  if (hitDuration != null &&
+      hitDuration > Duration.zero &&
+      duration != null &&
+      duration > Duration.zero) {
+    final int diff = (hitDuration - duration).inSeconds.abs();
+    if (diff <= 3) {
+      score += 20;
+    } else if (diff <= 10) {
+      score += 10;
+    } else if (diff > 30) {
+      // Совсем другая длительность — скорее всего, чужая запись.
+      score -= 10;
+    }
+  }
+
+  // При равных баллах выше та запись, у которой точно есть синхронизация.
+  if (hit.hasSync == true) score += 1;
+  return score;
+}
+
 /// id треков, для которых текст уже найден.
 ///
 /// Отметка в списках появляется только после того, как текст реально получен
@@ -594,6 +834,10 @@ Future<Map<LyricsSource, Lyrics>> _readCachedLyrics(
 /// результат, а пустота остаётся пустотой. Режим «Авто» показывает лучший по
 /// оценке [scoreLyrics].
 ///
+/// Если для трека выбрана конкретная запись ([manualLyricsSelectionProvider]),
+/// перебора источников нет вовсе: берём текст ровно этой записи и отдаём его
+/// единственным вариантом.
+///
 /// Перед сетевыми запросами отдаются уже найденные тексты из дискового кэша
 /// ([lyricsCacheProvider]) — они видны сразу, а сеть лишь уточняет и пополняет
 /// кэш. Поиск завершается по дедлайну, а не по самой медленной базе.
@@ -620,6 +864,14 @@ final lyricsProvider =
   final LyricsCache cache = ref.watch(lyricsCacheProvider);
   final String musixmatchKey = ref.watch(
     settingsControllerProvider.select((AppSettings s) => s.musixmatchApiKey),
+  );
+
+  // Выбранная вручную запись важнее обычного поиска: если она есть, берём
+  // текст ровно её, а не перебираем источники.
+  final LyricsTrackHit? selectedHit = ref.watch(
+    manualLyricsSelectionProvider.select(
+      (Map<String, LyricsTrackHit> m) => m[request.videoId],
+    ),
   );
 
   final bool externalOk = request.canQueryExternal;
@@ -696,6 +948,27 @@ final lyricsProvider =
           duration: duration,
         ));
       case LyricsSource.auto:
+        return Future<Lyrics>.value(Lyrics.none);
+    }
+  }
+
+  // Текст ровно выбранной записи: источник знает, как её скачать.
+  Future<Lyrics> fetchHit(LyricsTrackHit hit) {
+    switch (hit.source) {
+      case LyricsSource.lrclib:
+        return bounded(lrclib.fetchHit(hit));
+      case LyricsSource.kugou:
+        return bounded(kugou.fetchHit(hit));
+      case LyricsSource.unison:
+        return bounded(unison.fetchHit(hit));
+      case LyricsSource.musixmatch:
+        return bounded(paxsenix.fetchHit(hit, apiKey: musixmatchKey));
+      case LyricsSource.auto:
+      case LyricsSource.music:
+      case LyricsSource.subtitles:
+      case LyricsSource.betterLyrics:
+      case LyricsSource.youlyPlus:
+        // Эти источники списком не ищут — выбранной записи у них не бывает.
         return Future<Lyrics>.value(Lyrics.none);
     }
   }
@@ -784,6 +1057,17 @@ final lyricsProvider =
     }
 
     try {
+      if (selectedHit != null) {
+        // Выбрана конкретная запись: не перебираем источники, а берём её
+        // текст. Пустой ответ остаётся пустым — подмены нет.
+        final Lyrics lyrics = await fetchHit(selectedHit);
+        if (!lyrics.isEmpty) {
+          unawaited(cache.write(request.videoId, selectedHit.source, lyrics));
+        }
+        accept(selectedHit.source, rankOf(selectedHit.source), lyrics);
+        return;
+      }
+
       // Сначала кэш: пользователь видит уже найденный текст сразу, не ожидая
       // ни одной базы. Чтение ограничено ~300 мс, поэтому недоступный диск не
       // задерживает поиск.

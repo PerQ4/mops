@@ -2,6 +2,8 @@ import 'dart:async';
 import 'dart:convert';
 import 'dart:io';
 
+import '../../state/catalog_providers.dart';
+import '../local/app_settings.dart';
 import '../models/models.dart';
 import 'lyrics_format.dart';
 import 'lyrics_match.dart';
@@ -58,6 +60,146 @@ class PaxsenixSource {
     if (!musix.isEmpty) return musix;
 
     return _lrcget(title.trim(), artist.trim(), key);
+  }
+
+  /// Ищет записи списком — для ручного выбора.
+  ///
+  /// Почему: Apple Music и Spotify — разные каталоги, и один и тот же трек
+  /// может лежать в обоих. Отдаём объединённый список, а каталог каждой
+  /// записи запоминаем в [LyricsTrackHit.provider], чтобы [fetchHit] знал,
+  /// куда за текстом идти.
+  Future<List<LyricsTrackHit>> search({
+    required String title,
+    required String artist,
+    String? album,
+    Duration? duration,
+    String? apiKey,
+  }) async {
+    final String key = (apiKey ?? '').trim();
+    // Без ключа сервис отвечает 401 — источник просто пропускается.
+    if (key.isEmpty) return const <LyricsTrackHit>[];
+
+    final String trimmedTitle = title.trim();
+    final String trimmedArtist = artist.trim();
+    if (trimmedTitle.isEmpty && trimmedArtist.isEmpty) {
+      return const <LyricsTrackHit>[];
+    }
+
+    // Каталоги независимы — спрашиваем оба параллельно.
+    final List<List<LyricsTrackHit>> groups =
+        await Future.wait(<Future<List<LyricsTrackHit>>>[
+      _searchCatalog('apple-music/search', 'applemusic', trimmedTitle,
+          trimmedArtist, key),
+      _searchCatalog(
+          'spotify/search', 'spotify', trimmedTitle, trimmedArtist, key),
+    ]);
+
+    final List<LyricsTrackHit> hits = <LyricsTrackHit>[];
+    for (final List<LyricsTrackHit> group in groups) {
+      hits.addAll(group);
+    }
+    return hits;
+  }
+
+  /// Достаёт текст ровно выбранной записи.
+  ///
+  /// [provider] берётся из самой записи: Apple Music и Spotify живут на
+  /// разных эндпоинтах одного хоста.
+  Future<Lyrics> fetchHit(LyricsTrackHit hit, {String apiKey = ''}) async {
+    final String key = apiKey.trim();
+    if (key.isEmpty || hit.id.trim().isEmpty) return Lyrics.none;
+
+    final String provider = hit.provider ?? 'applemusic';
+    final Map<String, dynamic>? json = await _getJson(
+      Uri.parse('$_host/lyrics/$provider').replace(
+        queryParameters: <String, String>{'id': hit.id},
+      ),
+      key,
+    );
+    if (json == null) return Lyrics.none;
+
+    if (provider == 'applemusic') {
+      return _fromAppleMusic(json, hit.match);
+    }
+    // Spotify приходит обычным текстом или LRC. Формат ответа не
+    // гарантирован, поэтому собираем текст из строк и массивов строк.
+    final String? text = _looseLyricsText(json);
+    if (text == null || text.trim().isEmpty) return Lyrics.none;
+    return lyricsFromText(text, 'Paxsenix: Spotify', match: hit.match);
+  }
+
+  /// Достаёт текст из ответа Spotify произвольной формы.
+  ///
+  /// Почему не [_findText]: тот берёт первую найденную строку, а текст может
+  /// прийти массивом строк — тогда вернулась бы только первая строка.
+  String? _looseLyricsText(Map<String, dynamic> json) {
+    for (final String key in <String>[
+      'lyrics',
+      'lrc',
+      'syncedLyrics',
+      'plainLyrics',
+      'content',
+      'text',
+      'lines',
+    ]) {
+      final dynamic value = json[key];
+      if (value is String && value.trim().isNotEmpty) return value;
+      if (value is List) {
+        final List<String> parts = <String>[];
+        for (final dynamic item in value) {
+          if (item is String && item.trim().isNotEmpty) {
+            parts.add(item);
+          } else if (item is Map) {
+            final dynamic line = item['text'] ?? item['line'] ?? item['lyrics'];
+            if (line is String && line.trim().isNotEmpty) parts.add(line);
+          }
+        }
+        if (parts.isNotEmpty) return parts.join('\n');
+      }
+    }
+    return null;
+  }
+
+  /// Ищет треки в одном каталоге Paxsenix и превращает их в записи списка.
+  Future<List<LyricsTrackHit>> _searchCatalog(
+    String path,
+    String provider,
+    String title,
+    String artist,
+    String key,
+  ) async {
+    final Map<String, dynamic>? json = await _getJson(
+      Uri.parse('$_host/$path').replace(
+        queryParameters: <String, String>{'q': '$title $artist'.trim()},
+      ),
+      key,
+    );
+    if (json == null) return const <LyricsTrackHit>[];
+
+    final List<Map<String, dynamic>> tracks = <Map<String, dynamic>>[];
+    _collectTracks(json, tracks, 0);
+
+    final List<LyricsTrackHit> hits = <LyricsTrackHit>[];
+    for (final Map<String, dynamic> track in tracks) {
+      final String? id = _trackId(track);
+      final String? name = _trackName(track);
+      if (id == null || name == null) continue;
+      hits.add(LyricsTrackHit(
+        source: LyricsSource.musixmatch,
+        id: id,
+        provider: provider,
+        title: name,
+        artist: track['artistName'] as String? ??
+            track['artist_name'] as String?,
+        album: track['albumName'] as String? ??
+            track['album_name'] as String?,
+        duration: _durationOf(track),
+        // Apple Music отдаёт TTML с временами — синхронизация точно есть.
+        // По Spotify список этого не сообщает.
+        hasSync: provider == 'applemusic' ? true : null,
+      ));
+    }
+    return hits;
   }
 
   /// Лёгкая проверка ключа: один запрос к базе lrcget с заведомо известным

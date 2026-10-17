@@ -1,6 +1,8 @@
 import 'dart:convert';
 import 'dart:io';
 
+import '../../state/catalog_providers.dart';
+import '../local/app_settings.dart';
 import '../models/models.dart';
 import 'lrclib_source.dart';
 
@@ -71,6 +73,71 @@ class KugouSource {
       if (!lyrics.isEmpty) return lyrics;
     }
     return Lyrics.none;
+  }
+
+  /// Ищет кандидатов списком — для ручного выбора.
+  ///
+  /// Почему: [fetch] берёт первого кандидата, а KuGou часто отдаёт первым
+  /// кавер или live-версию. Здесь отдаём всех кандидатов с метаданными, чтобы
+  /// пользователь выбрал нужную запись.
+  Future<List<LyricsTrackHit>> search({
+    required String title,
+    required String artist,
+    String? album,
+    Duration? duration,
+    String? apiKey,
+  }) async {
+    final String trimmedTitle = title.trim();
+    if (trimmedTitle.isEmpty) return const <LyricsTrackHit>[];
+
+    final String keyword = artist.trim().isEmpty
+        ? trimmedTitle
+        : '${artist.trim()} - $trimmedTitle';
+
+    final Map<String, dynamic>? search = await _get(
+      Uri.parse(_searchHost).replace(queryParameters: <String, String>{
+        'ver': '1',
+        'man': 'yes',
+        'client': 'mobi',
+        'keyword': keyword,
+        if (duration != null && duration > Duration.zero)
+          'duration': '${duration.inMilliseconds}',
+      }),
+    );
+    if (search == null) return const <LyricsTrackHit>[];
+
+    final List<dynamic> candidates =
+        search['candidates'] as List<dynamic>? ?? <dynamic>[];
+    final List<LyricsTrackHit> hits = <LyricsTrackHit>[];
+    for (final dynamic item in candidates) {
+      if (item is! Map<String, dynamic>) continue;
+      final String id = '${item['id'] ?? ''}';
+      final String? key = item['accesskey'] as String?;
+      // Без id и ключа текст не скачать — такая запись бесполезна.
+      if (id.isEmpty || key == null || key.isEmpty) continue;
+
+      final num? ms = item['duration'] as num?;
+      hits.add(LyricsTrackHit(
+        source: LyricsSource.kugou,
+        id: id,
+        accessKey: key,
+        title: item['song'] as String?,
+        artist: item['singer'] as String?,
+        duration: ms == null ? null : Duration(milliseconds: ms.toInt()),
+        // KuGou отдаёт LRC — времена строк есть всегда.
+        hasSync: true,
+      ));
+    }
+    return hits;
+  }
+
+  /// Достаёт текст ровно выбранной записи по её id и ключу.
+  Future<Lyrics> fetchHit(LyricsTrackHit hit) async {
+    final String? key = hit.accessKey;
+    if (hit.id.trim().isEmpty || key == null || key.isEmpty) {
+      return Lyrics.none;
+    }
+    return _download(hit.id, key, match: hit.match);
   }
 
   Future<Lyrics> _download(
