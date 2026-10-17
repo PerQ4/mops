@@ -283,14 +283,10 @@ class _M3ESeekBar extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
-    // Волна — только у стиля «Волнистый». «Обычный» и «С кружком» — это
-    // штатный Slider Material 3 (как и написано в описании стилей): раньше
-    // волной рисовались все, кроме «обычного», и полоса перемотки с кружком
-    // выглядела волнистой вопреки настройке.
     // Как в ArchiveTune (`PlayerComponents.kt`, ветки `SliderStyle`): у всех
     // стилей, кроме «Обычного», дорожка идёт выразительным слайдером M3E —
-    // только у «Волнистого» ползунка нет, а у «С кружком» он есть. Заменять
-    // это на штатный Material-слайдер нельзя: пропадают выразительные формы.
+    // только у «Волнистого» ползунка нет, а у «С кружком» он есть. Ползунки
+    // берём готовые из пакета: свои формы рисовать не нужно.
     final bool wavy = style != ProgressBarStyle.standard;
     // Параметры волны — из `WavySliderExpressive` (ArchiveTune): штрих 6,
     // длина волны 36 (`strokeWidth * 6`), а волна заметна, только пока идёт
@@ -313,8 +309,7 @@ class _M3ESeekBar extends StatelessWidget {
             // резервируем (иначе дорожка уходила в отступ по краям).
             thumbLength: style == ProgressBarStyle.wavy ? 0 : 24,
             // Ползунок есть только у «с кружком»; у «волнистого» его нет.
-            thumbBuilder:
-                style == ProgressBarStyle.wavy ? _noThumb : _circleThumb,
+            thumbBuilder: style == ProgressBarStyle.wavy ? _noThumb : null,
           )
         : m3e.M3ESlider(
             value: value,
@@ -341,29 +336,6 @@ class _M3ESeekBar extends StatelessWidget {
     required bool pressed,
   }) =>
       const SizedBox.shrink();
-
-  /// Ползунок для «с кружком» — КРУГ, как в `WavySliderExpressive`
-  /// (ArchiveTune): `thumbRadius = 8.dp`, а при перетаскивании круг
-  /// вытягивается в вертикальную линию 6x24 (`thumbLineHeightWhenInteracting`).
-  ///
-  /// У пакета ползунок-плашка, поэтому форму задаём сами: иначе «с кружком»
-  /// не отличался бы от «Обычного» — и стиль терял бы смысл названия.
-  static Widget _circleThumb({
-    required BuildContext context,
-    required m3e.M3ESliderColors colors,
-    required bool pressed,
-  }) {
-    return AnimatedContainer(
-      duration: const Duration(milliseconds: 120),
-      curve: Curves.easeOut,
-      width: pressed ? 6 : 16,
-      height: pressed ? 24 : 16,
-      decoration: BoxDecoration(
-        color: colors.thumb,
-        borderRadius: BorderRadius.circular(99),
-      ),
-    );
-  }
 }
 
 /// Кэш тем `material_3_expressive` по яркости и цвету акцента.
