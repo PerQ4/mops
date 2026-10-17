@@ -223,6 +223,12 @@ class DiscordPresenceService {
         // Подсказка на обложке — альбом (как в Spotify): название трека уже
         // стоит в `details`, дублировать его здесь незачем.
         'large_text': _truncate(album ?? track.title, 128),
+        // Значок приложения в углу обложки. Это ключ ассета из портала
+        // (Rich Presence → Art Assets, имя `mops`): внешние ссылки Discord для
+        // маленькой картинки не принимает. Если ассет не загружен, в углу
+        // просто ничего не появится — на остальное это не влияет.
+        'small_image': 'mops',
+        'small_text': 'YouTube Music',
       },
       'buttons': _buttons(track),
     };

@@ -744,6 +744,79 @@ List<InlineSpan> _highlightSpans(
 
 /// Обычный текст: прокручиваемый блок без выделения строк, но с подсветкой
 /// найденного запроса и переходом к совпадению.
+/// Строка текста с обратным отсчётом: за три секунды до начала пения справа
+/// над строкой появляются цифры 3 → 2 → 1.
+///
+/// Отсчёт рисуется поверх, а не отдельным элементом колонки: иначе текст
+/// дёргался бы, когда цифры появляются и исчезают.
+class _LeadInLine extends StatelessWidget {
+  const _LeadInLine({
+    super.key,
+    required this.index,
+    required this.leadIn,
+    required this.child,
+  });
+
+  final int index;
+  final ValueNotifier<({int index, int seconds})?> leadIn;
+  final Widget child;
+
+  @override
+  Widget build(BuildContext context) {
+    return ValueListenableBuilder<({int index, int seconds})?>(
+      valueListenable: leadIn,
+      builder: (
+        BuildContext context,
+        ({int index, int seconds})? value,
+        Widget? _,
+      ) {
+        final int? seconds =
+            (value != null && value.index == index) ? value.seconds : null;
+        if (seconds == null) return child;
+        return Stack(
+          clipBehavior: Clip.none,
+          children: <Widget>[
+            child,
+            // Над строкой, справа: строки выключены влево, и цифра не
+            // перекрывает текст.
+            Positioned(
+              top: -14,
+              right: 0,
+              child: _CountdownBadge(seconds: seconds),
+            ),
+          ],
+        );
+      },
+    );
+  }
+}
+
+/// Цифра обратного отсчёта перед началом строки.
+class _CountdownBadge extends StatelessWidget {
+  const _CountdownBadge({required this.seconds});
+
+  final int seconds;
+
+  @override
+  Widget build(BuildContext context) {
+    final ColorScheme scheme = Theme.of(context).colorScheme;
+    return Container(
+      padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 1),
+      decoration: BoxDecoration(
+        color: scheme.primaryContainer,
+        borderRadius: BorderRadius.circular(999),
+      ),
+      child: Text(
+        '$seconds',
+        style: Theme.of(context).textTheme.labelMedium?.copyWith(
+              color: scheme.onPrimaryContainer,
+              fontWeight: FontWeight.w700,
+            ),
+      ),
+    );
+  }
+}
+
 /// Маркер инструментальной вставки внутри текста: «♪ Проигрыш».
 ///
 /// Стоит ровно на месте паузы — вступление или промежуток между строками — и
@@ -986,6 +1059,12 @@ class _SyncedLyricsState extends ConsumerState<_SyncedLyrics>
   /// `INSTRUMENTAL_INTRO_START_MS` у ArchiveTune.
   static const int _introStartMs = 1000;
 
+  /// Обратный отсчёт перед началом строки: за сколько до неё показывать цифры.
+  final ValueNotifier<({int index, int seconds})?> _leadIn =
+      ValueNotifier<({int index, int seconds})?>(null);
+
+  static const int _leadInWindowMs = 3000;
+
   /// С какой паузы между строками считать её инструментальной вставкой.
   static const int _interludeMinGapMs = 5000;
 
@@ -1046,6 +1125,7 @@ class _SyncedLyricsState extends ConsumerState<_SyncedLyrics>
     _positionMs.dispose();
     _activeIndex.dispose();
     _interludeGap.dispose();
+    _leadIn.dispose();
     super.dispose();
   }
 
@@ -1176,6 +1256,9 @@ class _SyncedLyricsState extends ConsumerState<_SyncedLyrics>
 
     final int? gap = _activeGapBefore(rounded + _leadMs);
     if (_interludeGap.value != gap) _interludeGap.value = gap;
+
+    final ({int index, int seconds})? lead = _leadInFor(rounded + _leadMs);
+    if (_leadIn.value != lead) _leadIn.value = lead;
     // Прокручиваем при смене строки, а также один раз после первой раскладки
     // (`_lastScrolledIndex` обновляется только после удачной прокрутки).
     if (_canAutoScroll && index >= 0 && _lastScrolledIndex != index) {
@@ -1311,6 +1394,41 @@ class _SyncedLyricsState extends ConsumerState<_SyncedLyrics>
     return (positionMs >= sungEnd && positionMs < nextStart) ? index : null;
   }
 
+  /// Обратный отсчёт перед строкой: `index` — какая строка вот-вот начнётся,
+  /// `seconds` — сколько до неё осталось (1–3). `null` — отсчитывать нечего.
+  ///
+  /// Считаем только в тишине: если предыдущая строка ещё поётся, ждать нечего,
+  /// иначе цифры мелькали бы перед каждой строкой и мешали читать.
+  ({int index, int seconds})? _leadInFor(int positionMs) {
+    // Строки отсортированы по времени — двоичным поиском ищем первую, что
+    // начинается позже позиции.
+    int low = 0;
+    int high = widget.lines.length - 1;
+    int next = -1;
+    while (low <= high) {
+      final int mid = (low + high) ~/ 2;
+      if (widget.lines[mid].time.inMilliseconds > positionMs) {
+        next = mid;
+        high = mid - 1;
+      } else {
+        low = mid + 1;
+      }
+    }
+    if (next < 0) return null;
+
+    final int remaining =
+        widget.lines[next].time.inMilliseconds - positionMs;
+    if (remaining <= 0 || remaining > _leadInWindowMs) return null;
+
+    if (next > 0) {
+      if (positionMs < _sungEndMs(next - 1)) return null;
+    } else if (positionMs < _introStartMs) {
+      return null;
+    }
+
+    return (index: next, seconds: (remaining / 1000).ceil().clamp(1, 3));
+  }
+
   /// Маркер вставки в тексте; подсвечивается, когда вставка идёт.
   Widget _interludeMarker(int beforeIndex) {
     return ValueListenableBuilder<int?>(
@@ -1407,23 +1525,27 @@ class _SyncedLyricsState extends ConsumerState<_SyncedLyrics>
                   // Инструментальная вставка — прямо в тексте, на своём месте:
                   // вступление (перед первой строкой) или пауза между строками.
                   if (_hasGapBefore(i)) _interludeMarker(i - 1),
-                  _LyricLine(
+                  _LeadInLine(
                     key: _keys[i],
                     index: i,
-                    line: widget.lines[i],
-                    active: i == active,
-                    // До первой строки активной нет (active == -1): тогда
-                    // расстояние считаем от «минус первой», чтобы строки не
-                    // гасли все разом, а читались как близкие/дальние.
-                    distance: (i - active).abs(),
-                    manualScrolling: _manualScrolling,
-                    blurVisible: i >= _firstVisible && i <= _lastVisible,
-                    step: _lineStep,
-                    positionMs: _positionMs,
-                    words: _wordTimings(i),
-                    baseSize: baseSize,
-                    search: widget.search,
-                    romanized: widget.romanized[i],
+                    leadIn: _leadIn,
+                    child: _LyricLine(
+                      index: i,
+                      line: widget.lines[i],
+                      active: i == active,
+                      // До первой строки активной нет (active == -1): тогда
+                      // расстояние считаем от «минус первой», чтобы строки не
+                      // гасли все разом, а читались как близкие/дальние.
+                      distance: (i - active).abs(),
+                      manualScrolling: _manualScrolling,
+                      blurVisible: i >= _firstVisible && i <= _lastVisible,
+                      step: _lineStep,
+                      positionMs: _positionMs,
+                      words: _wordTimings(i),
+                      baseSize: baseSize,
+                      search: widget.search,
+                      romanized: widget.romanized[i],
+                    ),
                   ),
                 ],
               ],
@@ -1468,7 +1590,6 @@ class _SyncedLyricsState extends ConsumerState<_SyncedLyrics>
 /// пословной разметкой рисуется «караоке».
 class _LyricLine extends StatelessWidget {
   const _LyricLine({
-    super.key,
     required this.index,
     required this.line,
     required this.active,
