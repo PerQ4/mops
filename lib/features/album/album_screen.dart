@@ -124,6 +124,12 @@ class _AlbumBody extends ConsumerWidget {
                   size: 52,
                   onPressed: hasTracks ? () => _enqueueAll(ref) : null,
                 ),
+                // Сохранение в библиотеку: ключ состояния — browse-id
+                // страницы, а мутации нужен звуковой id плейлиста альбома.
+                HeroSaveButton(
+                  stateId: album.id,
+                  playlistId: album.audioPlaylistId,
+                ),
               ],
             ),
           ),

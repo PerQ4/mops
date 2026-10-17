@@ -158,6 +158,7 @@ class Album {
     this.trackCount,
     this.duration,
     this.description,
+    this.audioPlaylistId,
   });
 
   final String id;
@@ -169,6 +170,13 @@ class Album {
   final int? trackCount;
   final Duration? duration;
   final String? description;
+
+  /// Звуковой id плейлиста альбома (`OLAK5uy_…`).
+  ///
+  /// Нужен для сохранения альбома в библиотеку: YouTube принимает там
+  /// `target.playlistId`, а не browse-идентификатор страницы (`MPREb_…`).
+  /// `null`, если YouTube не вернул кнопку «слушать» — тогда сохранить нельзя.
+  final String? audioPlaylistId;
 
   String get artistLine => artists.map((ArtistRef a) => a.name).join(', ');
   String? get artwork => thumbnails.best;

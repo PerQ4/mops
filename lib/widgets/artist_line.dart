@@ -103,16 +103,11 @@ class _ArtistLineState extends State<ArtistLine> {
 
   @override
   Widget build(BuildContext context) {
-    final ColorScheme scheme = Theme.of(context).colorScheme;
-    // Навигабельный исполнитель обязан ВЫГЛЯДЕТЬ ссылкой: цвет акцента и
-    // подчёркивание. Без этого он не отличался от обычного текста, и нажатие
-    // читалось как «кнопка не работает». Ненавигабельный остаётся без стиля.
-    final TextStyle linkStyle = (widget.style ?? const TextStyle()).copyWith(
-      color: scheme.primary,
-      decoration: TextDecoration.underline,
-      decorationColor: scheme.primary.withValues(alpha: 0.6),
-    );
-
+    // Ссылка намеренно НЕ отличается от остального текста: ни цветом, ни
+    // подчёркиванием. Так исполнитель выглядит одинаково во всех местах —
+    // в карточке, в строке трека и в плеере, — а о кликабельности говорит
+    // только курсор. Раньше имя подсвечивалось акцентом, и подписи карточек
+    // выделялись на фоне остального интерфейса.
     final List<InlineSpan> spans = <InlineSpan>[];
     int linkCount = 0;
     if (widget.artists.isEmpty) {
@@ -127,11 +122,7 @@ class _ArtistLineState extends State<ArtistLine> {
           recognizer.onTap = () => widget.onArtistTap != null
               ? widget.onArtistTap!(artist)
               : AppRoutes.artist(context, artist.id!);
-          spans.add(TextSpan(
-            text: name,
-            style: linkStyle,
-            recognizer: recognizer,
-          ));
+          spans.add(TextSpan(text: name, recognizer: recognizer));
         } else {
           spans.add(TextSpan(text: name));
         }

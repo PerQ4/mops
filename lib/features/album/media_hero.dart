@@ -1,9 +1,13 @@
 import 'package:flutter/material.dart';
+import 'package:flutter_riverpod/flutter_riverpod.dart';
 
 import '../../core/theme/layout.dart';
 import '../../data/models/models.dart';
+import '../../state/auth_controller.dart';
+import '../../state/library_providers.dart';
 import '../../widgets/artwork.dart';
 import '../../widgets/artist_line.dart';
+import '../../widgets/async_views.dart';
 
 /// «Герой» страницы медиа: альбом, исполнитель, плейлист.
 ///
@@ -317,6 +321,74 @@ class HeroCircleButton extends StatelessWidget {
         ),
       ),
     );
+  }
+}
+
+/// Кнопка «В библиотеку» / «В библиотеке» в ряду действий героя.
+///
+/// Одна на странице альбома и странице плейлиста: состояние общее
+/// ([savedIdsProvider]), как и у подписки на исполнителя. Иконка показывает,
+/// сохранено ли уже, нажатие меняет состояние сразу, а при ошибке состояние
+/// откатывается и показывается сообщение.
+///
+/// [stateId] — browse-id страницы: по нему кнопка сверяется со списком
+/// библиотеки. [playlistId] — id для самой мутации: у плейлиста он совпадает
+/// с [stateId], у альбома это звуковой id плейлиста (`OLAK5uy_…`). Если
+/// `null` (YouTube не отдал id) — сохранить нельзя, кнопка неактивна.
+class HeroSaveButton extends ConsumerWidget {
+  const HeroSaveButton({
+    super.key,
+    required this.stateId,
+    required this.playlistId,
+  });
+
+  final String stateId;
+  final String? playlistId;
+
+  @override
+  Widget build(BuildContext context, WidgetRef ref) {
+    final bool signedIn = ref.watch(
+      authControllerProvider.select((AuthState s) => s.isSignedIn),
+    );
+    final bool saved = ref.watch(
+      savedIdsProvider.select((Set<String> ids) => ids.contains(stateId)),
+    );
+
+    final IconData icon = saved ? Icons.library_add_check : Icons.library_add;
+    final String tooltip = saved ? 'В библиотеке' : 'В библиотеку';
+    final String? target = playlistId;
+
+    // Без входа сохранять некуда, а без id для мутации — нечего: тогда
+    // кнопка только показывает состояние, но не нажимается.
+    if (!signedIn || target == null || target.isEmpty) {
+      return HeroCircleButton(icon: icon, tooltip: tooltip, size: 52);
+    }
+
+    return HeroCircleButton(
+      icon: icon,
+      tooltip: tooltip,
+      size: 52,
+      onPressed: () => _toggle(context, ref, target),
+    );
+  }
+
+  /// Переключает состояние; ошибку показывает сообщением, как кнопка подписки.
+  Future<void> _toggle(
+    BuildContext context,
+    WidgetRef ref,
+    String playlistId,
+  ) async {
+    try {
+      await ref
+          .read(savedIdsProvider.notifier)
+          .toggle(id: stateId, playlistId: playlistId);
+    } on Object catch (error) {
+      if (context.mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(content: Text(describeError(error))),
+        );
+      }
+    }
   }
 }
 

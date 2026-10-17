@@ -30,6 +30,7 @@ class LibrarySource {
 
   // BrowseId разделов библиотеки YouTube Music.
   static const String _browseLikedPlaylists = 'FEmusic_liked_playlists';
+  static const String _browseLikedAlbums = 'FEmusic_liked_albums';
   static const String _browseLikedSongs = 'VLLM';
   static const String _browseLibrarySongs = 'FEmusic_liked_videos';
   static const String _browseLibraryArtists =
@@ -87,6 +88,20 @@ class LibrarySource {
       authenticated: true,
     );
     return _playlistsFromResponse(res);
+  }
+
+  /// Альбомы, сохранённые в библиотеке.
+  ///
+  /// Отдельный раздел: YouTube хранит альбомы не вместе с плейлистами, и без
+  /// него кнопка «В библиотеке» не находила бы подтверждения сервера после
+  /// сохранения альбома. Отдаём именно страницы альбомов (`MPREb_…`) — по
+  /// этому id кнопка на странице альбома и сверяется со списком.
+  Future<List<Album>> likedAlbums() async {
+    final Map<String, dynamic> res = await _client.browse(
+      _browseLikedAlbums,
+      authenticated: true,
+    );
+    return _albumsFromResponse(res);
   }
 
   /// `browseId` плейлиста «Мне нравится».
@@ -300,6 +315,20 @@ class LibrarySource {
     return playlists;
   }
 
+  /// Альбомы из раздела библиотеки: плитки `musicTwoRowItemRenderer`.
+  ///
+  /// Разбор общий с каталогом ([BrowseParser.twoRowItem]): у альбома
+  /// browse-идентификатор начинается с `MPRE`, по нему тип и определяется.
+  List<Album> _albumsFromResponse(Map<String, dynamic> res) {
+    final List<Album> albums = <Album>[];
+    for (final dynamic renderer
+        in traverseList(res, <String>['musicTwoRowItemRenderer'])) {
+      final BrowseItem? item = BrowseParser.twoRowItem(renderer);
+      if (item is AlbumItem) albums.add(item.album);
+    }
+    return albums;
+  }
+
   // --------------------------------------------------------------- мутации
 
   /// Ставит или снимает лайк.
@@ -328,6 +357,28 @@ class LibrarySource {
       subscribed ? 'subscription/subscribe' : 'subscription/unsubscribe',
       <String, dynamic>{
         'channelIds': <String>[channelId],
+      },
+    );
+  }
+
+  /// Сохраняет плейлист или альбом в библиотеку (или убирает из неё).
+  ///
+  /// YouTube Music не различает эти случаи: «добавить в библиотеку» — та же
+  /// мутация, что и лайк, только `target` не `videoId`, а `playlistId`.
+  /// [playlistId] — то, что принимает сервер: у плейлиста его собственный id,
+  /// у альбома звуковой id плейлиста (`OLAK5uy_…`), а не browse-идентификатор
+  /// страницы (`MPREb_…`) — последний сервер не понимает.
+  Future<void> setSaved({required String playlistId, required bool saved}) {
+    // У плейлистов `Playlist.id` — это browse-идентификатор страницы с
+    // префиксом `VL` (`VLPL…`, `VLLM`), а мутация принимает «сырой» id, как и
+    // очередь (ср. `likedPlaylistQueueId`). Снимаем префикс — тем же способом,
+    // каким `_editPlaylist` ниже его добавляет.
+    final String target =
+        playlistId.startsWith('VL') ? playlistId.substring(2) : playlistId;
+    return _client.mutate(
+      saved ? 'like/like' : 'like/removelike',
+      <String, dynamic>{
+        'target': <String, dynamic>{'playlistId': target},
       },
     );
   }

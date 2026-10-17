@@ -724,6 +724,53 @@ class BrowseParser {
     return fromHeader.isEmpty ? _thumbnails(response) : fromHeader;
   }
 
+  /// Звуковой id плейлиста альбома (`OLAK5uy_…`) со страницы альбома.
+  ///
+  /// Под этим id альбом сохраняется в библиотеку и собирается в очередь:
+  /// browse-идентификатор страницы (`MPREb_…`) сервер в мутации не понимает.
+  /// YouTube кладёт его в кнопку «слушать» шапки, и у двух разметок она
+  /// лежит в разных местах: у новой (`musicResponsiveHeaderRenderer`) —
+  /// в `buttons[].musicPlayButtonRenderer`, у старой
+  /// (`musicDetailHeaderRenderer`) — в `menu.topLevelButtons[].buttonRenderer`.
+  /// Внутри самой кнопки id тоже бывает двух видов — `watchPlaylistEndpoint`
+  /// и `watchEndpoint` (A/B-тест YouTube), поэтому пробуем оба.
+  static String? albumAudioPlaylistId(dynamic response) {
+    final Map<dynamic, dynamic>? header = _responsiveHeader(response);
+    if (header != null) {
+      final String? id = _audioPlaylistIdFromButtons(header['buttons']);
+      if (id != null) return id;
+    }
+
+    final dynamic detail =
+        traverse(response, <String>['header', 'musicDetailHeaderRenderer']);
+    if (detail is Map) {
+      return _audioPlaylistIdFromButtons(
+        traverse(detail, <String>['menu', 'topLevelButtons']),
+      );
+    }
+    return null;
+  }
+
+  /// Ищет id плейлиста в списке кнопок шапки: подходит и `musicPlayButtonRenderer`,
+  /// и старый `buttonRenderer`.
+  static String? _audioPlaylistIdFromButtons(dynamic buttons) {
+    if (buttons is! List) return null;
+    for (final dynamic entry in buttons) {
+      if (entry is! Map) continue;
+      final dynamic play =
+          entry['musicPlayButtonRenderer'] ?? entry['buttonRenderer'];
+      if (play is! Map) continue;
+      final String? id = _firstString(play, <List<String>>[
+        <String>['playNavigationEndpoint', 'watchPlaylistEndpoint', 'playlistId'],
+        <String>['playNavigationEndpoint', 'watchEndpoint', 'playlistId'],
+        <String>['navigationEndpoint', 'watchPlaylistEndpoint', 'playlistId'],
+        <String>['navigationEndpoint', 'watchEndpoint', 'playlistId'],
+      ]);
+      if (id != null) return id;
+    }
+    return null;
+  }
+
   /// Разбирает страницу плейлиста: заголовок, автор, обложки и треки.
   static Playlist parsePlaylistPage(dynamic response, {required String playlistId}) {
     final String title = _firstString(response, <List<String>>[

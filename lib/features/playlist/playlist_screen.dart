@@ -123,6 +123,14 @@ class _PlaylistBody extends ConsumerWidget {
                 size: 52,
                 onPressed: hasTracks ? () => _enqueueAll(ref) : null,
               ),
+              // Сохранение в библиотеку. У плейлиста ключ состояния и id для
+              // мутации совпадают; «Мне нравится» сохранять нечего — это уже
+              // библиотека, поэтому кнопка неактивна.
+              HeroSaveButton(
+                stateId: playlist.id,
+                playlistId:
+                    LibrarySource.isLikedPlaylist(playlist.id) ? null : playlist.id,
+              ),
             ],
           ),
         ),

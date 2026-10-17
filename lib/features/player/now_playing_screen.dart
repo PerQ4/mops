@@ -4,6 +4,7 @@ import 'package:flutter_riverpod/flutter_riverpod.dart';
 import '../../core/theme/app_theme.dart';
 import '../../core/theme/layout.dart';
 import '../common/navigation.dart';
+import '../shell/content_navigator.dart';
 import '../../core/utils/artwork_urls.dart';
 import '../../core/utils/format.dart';
 import '../../data/local/app_settings.dart';
@@ -604,12 +605,15 @@ class _InfoRow extends ConsumerWidget {
                               style: text.titleMedium?.copyWith(
                                 color: scheme.onSurfaceVariant,
                               ),
-                              // Плеер живёт в корневом навигаторе, поэтому
-                              // исполнителя открываем там же: во вложенном
-                              // навигаторе страница ушла бы ПОД плеер, и
-                              // нажатие выглядело бы как «ничего не открылось».
-                              onArtistTap: (ArtistRef artist) =>
-                                  AppRoutes.artist(context, artist.id!, root: true),
+                              // Сначала сворачиваем плеер, и только потом
+                              // открываем исполнителя в основном экране: если
+                              // открыть сразу, страница окажется под плеером
+                              // или ляжет поверх него вторым слоем.
+                              onArtistTap: (ArtistRef artist) async {
+                                await rootNavigatorKey.currentState?.maybePop();
+                                if (!context.mounted) return;
+                                await AppRoutes.artist(context, artist.id!);
+                              },
                             ),
                     ),
                     const SizedBox(width: 8),
@@ -637,14 +641,6 @@ class _InfoRow extends ConsumerWidget {
                 : Icons.repeat,
             selected: player.repeat != PlayerRepeatMode.off,
             onPressed: controller.cycleRepeat,
-          ),
-          const SizedBox(width: 10),
-          // Клип трека: наш плеер звук-only, поэтому видео открывается во
-          // встроенном браузере отдельным экраном поверх плеера.
-          _PlayerActionButton(
-            tooltip: 'Смотреть клип',
-            icon: Icons.play_circle_outline,
-            onPressed: () => AppRoutes.clip(context, track),
           ),
           const SizedBox(width: 10),
           // «…» открывает то же меню, что и из островка: исполнитель, альбом,

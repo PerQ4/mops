@@ -283,7 +283,11 @@ class _M3ESeekBar extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
-    final bool wavy = style != ProgressBarStyle.standard;
+    // Волна — только у стиля «Волнистый». «Обычный» и «С кружком» — это
+    // штатный Slider Material 3 (как и написано в описании стилей): раньше
+    // волной рисовались все, кроме «обычного», и полоса перемотки с кружком
+    // выглядела волнистой вопреки настройке.
+    final bool wavy = style == ProgressBarStyle.wavy;
     // Параметры волны — из `WavySliderExpressive` (ArchiveTune): штрих 6,
     // длина волны 36 (`strokeWidth * 6`), а волна заметна, только пока идёт
     // воспроизведение (`waveAmplitudeWhenPlaying`). Живая амплитуда приходит

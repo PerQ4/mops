@@ -30,6 +30,18 @@ final FutureProvider<List<Playlist>> likedPlaylistsProvider =
   return ref.watch(librarySourceProvider).likedPlaylists();
 });
 
+/// Альбомы, сохранённые в библиотеке.
+///
+/// Отдельный раздел YouTube Music (`FEmusic_liked_albums`): вместе с
+/// [likedPlaylistsProvider] он и составляет список «сохранённого» — без него
+/// сохранённый альбом не подтверждался бы сервером, и кнопка на его странице
+/// считала бы, что альбома в библиотеке нет.
+final FutureProvider<List<Album>> likedAlbumsProvider =
+    FutureProvider<List<Album>>((ref) async {
+  if (!_signedIn(ref)) return const <Album>[];
+  return ref.watch(librarySourceProvider).likedAlbums();
+});
+
 /// Лайкнутые треки.
 final FutureProvider<List<Track>> likedSongsProvider =
     FutureProvider<List<Track>>((ref) async {
@@ -214,6 +226,99 @@ final NotifierProvider<SubscribedIdsController, Set<String>>
   SubscribedIdsController.new,
 );
 
+/// Сохранённые в библиотеке плейлисты и альбомы: одно состояние на приложение.
+///
+/// «Добавить в библиотеку» и у плейлиста, и у альбома — одна мутация
+/// (`like/like` с `target.playlistId`), поэтому и состояние одно: кнопка на
+/// обеих страницах показывает одно и то же и реагирует сразу, как у подписок.
+///
+/// Серверный список собирается из двух разделов библиотеки: плейлисты лежат
+/// в `FEmusic_liked_playlists`, альбомы — в `FEmusic_liked_albums`. Смотрим
+/// оба: если учесть только плейлисты, сохранённый альбом не подтверждался бы
+/// сервером и кнопка «слетала» бы обратно после перезагрузки списка.
+///
+/// Ключ состояния — browse-id страницы (у альбома `MPREb_…`, у плейлиста его
+/// собственный id): он есть и на странице, и в списке библиотеки. Для самой
+/// мутации у альбома нужен другой id — звуковой (`OLAK5uy_…`), поэтому
+/// [toggle] принимает его отдельно.
+class SavedIdsController extends Notifier<Set<String>> {
+  /// Локальные правки, ещё не подтверждённые сервером: `id → сохранён`.
+  final Map<String, bool> _overrides = <String, bool>{};
+
+  /// Последний серверный список — чтобы повторная загрузка не гасила уже
+  /// показанное «в библиотеке».
+  Set<String> _lastServer = <String>{};
+
+  @override
+  Set<String> build() {
+    if (!_signedIn(ref)) {
+      _overrides.clear();
+      _lastServer = <String>{};
+      return <String>{};
+    }
+
+    final List<Playlist>? playlists = ref.watch(likedPlaylistsProvider).value;
+    final List<Album>? albums = ref.watch(likedAlbumsProvider).value;
+
+    // Ждём оба раздела: пока хоть один не загружен, прошлый список остаётся,
+    // иначе подтверждённое «в библиотеке» мигало бы пустым на каждой загрузке.
+    if (playlists != null && albums != null) {
+      _lastServer = <String>{
+        ...playlists.map((Playlist p) => p.id),
+        ...albums.map((Album a) => a.id),
+      };
+    }
+
+    _overrides.removeWhere(
+      (String id, bool saved) => _lastServer.contains(id) == saved,
+    );
+
+    final Set<String> ids = <String>{..._lastServer};
+    _overrides.forEach((String id, bool saved) {
+      if (saved) {
+        ids.add(id);
+      } else {
+        ids.remove(id);
+      }
+    });
+    return ids;
+  }
+
+  /// Сохраняет в библиотеку или убирает из неё, меняя состояние оптимистично.
+  ///
+  /// [id] — ключ состояния (browse-id страницы), [playlistId] — то, что
+  /// принимает сервер (у альбома это звуковой id плейлиста).
+  Future<void> toggle({
+    required String id,
+    required String playlistId,
+  }) async {
+    final Set<String> before = state;
+    final bool saved = !before.contains(id);
+
+    _overrides[id] = saved;
+    state = saved
+        ? <String>{...before, id}
+        : <String>{...before}..remove(id);
+
+    try {
+      await ref
+          .read(librarySourceProvider)
+          .setSaved(playlistId: playlistId, saved: saved);
+      // Оба раздела библиотеки устарели: перечитываем, чтобы списки совпали.
+      ref.invalidate(likedPlaylistsProvider);
+      ref.invalidate(likedAlbumsProvider);
+    } on Object {
+      // Не вышло — возвращаем как было, иначе кнопка соврёт.
+      _overrides.remove(id);
+      state = before;
+      rethrow;
+    }
+  }
+}
+
+final NotifierProvider<SavedIdsController, Set<String>> savedIdsProvider =
+    NotifierProvider<SavedIdsController, Set<String>>(SavedIdsController.new);
+
 /// Все сохранённые треки (включая добавленные вручную).
 final FutureProvider<List<Track>> librarySongsProvider =
     FutureProvider<List<Track>>((ref) async {
@@ -242,6 +347,7 @@ final FutureProvider<List<Artist>> subscriptionsProvider =
 /// изменения на других устройствах подтягивались только после перезапуска.
 void refreshLibrary(WidgetRef ref) {
   ref.invalidate(likedPlaylistsProvider);
+  ref.invalidate(likedAlbumsProvider);
   ref.invalidate(likedSongsProvider);
   ref.invalidate(likedSongsPlaylistProvider);
   ref.invalidate(librarySongsProvider);

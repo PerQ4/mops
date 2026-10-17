@@ -168,7 +168,27 @@ class CatalogSource {
       trackCount: tracks.isEmpty ? null : tracks.length,
       duration: _totalDuration(tracks),
       description: BrowseParser.pageDescription(res),
+      // Звуковой id плейлиста альбома — по нему альбом сохраняется
+      // в библиотеку (см. `LibrarySource.setSaved`).
+      audioPlaylistId: _audioPlaylistId(res, tracks),
     );
+  }
+
+  /// Звуковой id плейлиста альбома (`OLAK5uy_…`).
+  ///
+  /// Основной источник — кнопка «слушать» в шапке страницы. Запасной — строки
+  /// треков: у них тот же id лежит в кнопке воспроизведения. Запасной берём
+  /// только с ожидаемым префиксом: иначе туда мог бы попасть чужой id
+  /// (например, радио), и мутация «сохранить» ушла бы не туда.
+  String? _audioPlaylistId(Map<String, dynamic> res, List<Track> tracks) {
+    final String? fromHeader = BrowseParser.albumAudioPlaylistId(res);
+    if (fromHeader != null && fromHeader.isNotEmpty) return fromHeader;
+
+    for (final Track track in tracks) {
+      final String? id = track.playlistId;
+      if (id != null && id.startsWith('OLAK5')) return id;
+    }
+    return null;
   }
 
   /// Подставляет трекам исполнителя и обложку из шапки страницы, если у самих
