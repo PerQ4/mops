@@ -342,6 +342,17 @@ class CatalogSource {
     return tracks;
   }
 
+  /// Альбом, к которому относится трек (для клика по его названию).
+  ///
+  /// В карточках главной у трека нет данных об альбоме — подпись это
+  /// исполнители. Альбом лежит в ответе `next` рядом с байлайном трека,
+  /// поэтому спрашиваем его отдельно. `null` — YouTube альбом не сообщил
+  /// (клип, редкая запись): вызывающий тогда запускает трек.
+  Future<AlbumRef?> trackAlbum(String videoId) async {
+    final Map<String, dynamic> res = await _client.next(videoId);
+    return BrowseParser.trackAlbum(res, videoId: videoId);
+  }
+
   Track? _panelTrack(dynamic renderer) {
     if (renderer is! Map) return null;
     final String? videoId = traverseString(renderer, <String>['videoId']);

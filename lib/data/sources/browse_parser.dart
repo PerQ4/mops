@@ -215,8 +215,10 @@ class BrowseParser {
         id: videoId,
         title: title,
         artists: _artistsFromByline(subtitleRuns, subtitle),
-        // Альбом из подписи: без него нажатие на подпись карточки уводило к
-        // исполнителю, хотя рядом лежит ссылка на альбом этого трека.
+        // Альбом берём из подписи, только если там есть настоящая ссылка на
+        // альбом (`_albumFromRuns`). Обычно в подписи карточки — исполнители,
+        // и тогда альбом разрешается позже, по ответу `next` (см.
+        // `CatalogSource.trackAlbum` и `openBrowseItem`).
         album: _albumFromRuns(subtitleRuns),
         thumbnails: thumbnails,
         duration: _durationFromSubtitle(subtitle) ?? Duration.zero,
@@ -229,6 +231,37 @@ class BrowseParser {
       author: subtitle.isEmpty ? null : subtitle,
       thumbnails: thumbnails,
     ));
+  }
+
+  /// Альбом трека из ответа `next`.
+  ///
+  /// У карточки трека в подписи стоят исполнители, а не альбом, поэтому из
+  /// разметки карточки альбом узнать нельзя. Зато в ответе `next` у элемента
+  /// очереди (`playlistPanelVideoRenderer`) рядом с байлайном лежит ссылка на
+  /// альбом (`MPRE…`, `pageType = MUSIC_PAGE_TYPE_ALBUM`) — её и берём.
+  ///
+  /// Панель выбираем именно запрошенного трека: у соседей по очереди альбомы
+  /// свои, и первый элемент не всегда совпадает с запрошенным.
+  static AlbumRef? trackAlbum(dynamic response, {required String videoId}) {
+    final List<dynamic> panels =
+        traverseList(response, <String>['playlistPanelVideoRenderer']);
+    dynamic panel;
+    for (final dynamic candidate in panels) {
+      if (candidate is! Map) continue;
+      if ('${candidate['videoId']}' == videoId) {
+        panel = candidate;
+        break;
+      }
+    }
+    panel ??= panels.isEmpty ? null : panels.first;
+    if (panel is! Map) return null;
+
+    // Байлайн: `longBylineText` — полный, `shortBylineText` — запасной.
+    final List<dynamic> runs = <dynamic>[
+      ...traverseList(panel, <String>['longBylineText', 'runs']),
+      ...traverseList(panel, <String>['shortBylineText', 'runs']),
+    ];
+    return _albumFromRuns(runs);
   }
 
   /// Разбирает `musicShelfRenderer` / `musicCarouselShelfRenderer` в секцию.
@@ -943,10 +976,12 @@ class BrowseParser {
   static AlbumRef? _albumFromColumns(List<dynamic> columns) =>
       _albumFromRuns(_runsOfColumn(columns, 1));
 
-  /// Альбом из набора runs: ищем ссылку на страницу альбома.
+  /// Альбом из набора runs: только настоящий альбом.
   ///
-  /// Альбомы YouTube Music имеют префикс `MPRE`, по нему и отличаем ссылку на
-  /// альбом от ссылки на исполнителя или плейлист.
+  /// Признак альбома — префикс идентификатора `MPRE…` либо тип страницы
+  /// `ALBUM`. Ссылка на исполнителя (`UC…`, `MUSIC_PAGE_TYPE_ARTIST`) альбомом
+  /// не считается: у карточки трека подпись — это исполнители, и раньше в
+  /// «альбом» мог попасть кто угодно из подписи.
   static AlbumRef? _albumFromRuns(List<dynamic> runs) {
     for (final dynamic run in runs) {
       if (run is! Map) continue;
@@ -955,10 +990,24 @@ class BrowseParser {
         'browseEndpoint',
         'browseId',
       ]);
-      if (browseId == null) continue;
-      if (!browseId.startsWith('MPRE')) continue;
+      if (browseId == null || browseId.isEmpty) continue;
+
+      final String pageType = traverseString(run, <String>[
+            'navigationEndpoint',
+            'browseEndpoint',
+            'browseEndpointContextSupportedConfigs',
+            'browseEndpointContextMusicConfig',
+            'pageType',
+          ]) ??
+          '';
+      // Если тип страницы известен — он решает; иначе смотрим на префикс.
+      final bool isAlbum = pageType.isEmpty
+          ? browseId.startsWith('MPRE')
+          : pageType.contains('ALBUM');
+      if (!isAlbum) continue;
+
       final String? name = textOf(run);
-      if (name == null) continue;
+      if (name == null || name.trim().isEmpty) continue;
       return AlbumRef(name: name.trim(), id: browseId);
     }
     return null;

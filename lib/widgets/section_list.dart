@@ -64,23 +64,14 @@ Future<void> playBrowseItem(
 }
 
 /// Открывает страницу элемента — нажатие на подпись под обложкой.
-void openBrowseItem(
+Future<void> openBrowseItem(
   BuildContext context,
   WidgetRef ref,
   BrowseItem item,
-) {
+) async {
   switch (item) {
     case TrackItem(:final Track track):
-      // Нажатие на подпись карточки трека ведёт на страницу альбома (сингл —
-      // та же страница альбома). Раньше подпись запускала трек: альбом и
-      // исполнитель были доступны только из меню «…».
-      final AlbumRef? album = track.album;
-      if (album != null && album.isNavigable) {
-        AppRoutes.album(context, album.id!);
-      } else {
-        // Альбома нет — тогда, как и раньше, запускаем трек.
-        ref.read(playerControllerProvider.notifier).playTrack(track);
-      }
+      await _openTrackAlbum(context, ref, track);
     case AlbumItem(:final Album album):
       AppRoutes.album(context, album.id);
     case ArtistItem(:final Artist artist):
@@ -92,6 +83,43 @@ void openBrowseItem(
         AppRoutes.playlist(context, playlist.id);
       }
   }
+}
+
+/// Нажатие на название трека в карточке ведёт на страницу его альбома.
+///
+/// В карточках главной и поиска альбома у трека нет: подпись там —
+/// исполнители. Поэтому альбом разрешаем по сети через [trackAlbumProvider]
+/// (он кэширует ответ по `videoId`, так что повторный клик уже без сети).
+/// Запускаем трек только если альбома нет вовсе — так ведут себя клипы и
+/// редкие записи, у которых страницы альбома не существует.
+Future<void> _openTrackAlbum(
+  BuildContext context,
+  WidgetRef ref,
+  Track track,
+) async {
+  // Настоящий альбом, уже известный из разбора (например, со страницы
+  // альбома) — открываем сразу, без сети.
+  final AlbumRef? known = track.album;
+  if (known != null && known.isNavigable) {
+    AppRoutes.album(context, known.id!);
+    return;
+  }
+
+  // Контроллер читаем до ожидания: после `await` ref может быть уже мёртв.
+  final PlayerController controller =
+      ref.read(playerControllerProvider.notifier);
+  try {
+    final AlbumRef? album =
+        await ref.read(trackAlbumProvider(track.id).future);
+    if (!context.mounted) return;
+    if (album != null && album.isNavigable) {
+      AppRoutes.album(context, album.id!);
+      return;
+    }
+  } on Object {
+    // Сеть подвела — не оставляем пользователя без реакции.
+  }
+  controller.playTrack(track);
 }
 
 /// Все треки внутри одной секции — контекст воспроизведения.

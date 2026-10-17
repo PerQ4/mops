@@ -182,6 +182,16 @@ final playlistProvider =
   return ref.watch(catalogSourceProvider).playlist(playlistId);
 });
 
+/// Альбом трека по его `videoId` — для клика по названию в карточке.
+///
+/// `FutureProvider.family` кэширует ответ по ключу: повторные клики по тому
+/// же треку не бьют по сети. `null` — YouTube альбом не сообщил (клип,
+/// редкая запись), и клик тогда запускает трек, как раньше.
+final trackAlbumProvider =
+    FutureProvider.family<AlbumRef?, String>((ref, videoId) async {
+  return ref.watch(catalogSourceProvider).trackAlbum(videoId);
+});
+
 /// Результаты поиска с учётом фильтра.
 ///
 /// В ключ входит и запрос, и фильтр, поэтому переключение вкладок
