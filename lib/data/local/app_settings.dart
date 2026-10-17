@@ -93,35 +93,6 @@ enum LyricsSource {
       );
 }
 
-/// Языки, для которых показываем романизацию (латиницу под оригиналом) —
-/// как `ROMANIZATION_LANGUAGES` в BetterLyrics.
-///
-/// `code` служит и исходным языком (`sl`), и основой для целевого
-/// (`tl=<code>-Latn`): так сервис не переводит текст, а записывает его
-/// произношение латиницей. Перевода мы не делаем намеренно.
-enum RomanizationLanguage {
-  japanese('ja', 'Японский'),
-  korean('ko', 'Корейский'),
-  chineseSimplified('zh-CN', 'Китайский (упрощённый)'),
-  chineseTraditional('zh-TW', 'Китайский (традиционный)'),
-  hindi('hi', 'Хинди'),
-  russian('ru', 'Русский'),
-  thai('th', 'Тайский'),
-  arabic('ar', 'Арабский'),
-  greek('el', 'Греческий');
-
-  const RomanizationLanguage(this.code, this.label);
-
-  final String code;
-  final String label;
-
-  static RomanizationLanguage fromName(String? name) =>
-      RomanizationLanguage.values.firstWhere(
-        (RomanizationLanguage v) => v.name == name,
-        orElse: () => RomanizationLanguage.japanese,
-      );
-}
-
 /// Порядок источников текста по умолчанию — как `DefaultLyricsProviderOrder`
 /// в ArchiveTune. Первый в списке — приоритетный.
 /// Порядок подобран по тому, что реально отвечает и что даёт подробнее
@@ -330,8 +301,13 @@ class AppSettings {
     this.lyricsLineSpacing = 1.35,
     this.lyricsLineBlur = true,
     this.lyricsProviderOrder = kDefaultLyricsOrder,
-    this.romanizationEnabled = false,
-    this.romanizationLanguage = RomanizationLanguage.japanese,
+    // Романизация: пять отдельных переключателей как `LyricsRomanize*Key`
+    // в ArchiveTune. Язык по тексту определяется сам, выбирать его не нужно.
+    this.romanizeJapanese = true,
+    this.romanizeKorean = true,
+    this.romanizeChinese = true,
+    this.romanizeHindi = true,
+    this.romanizeOther = true,
     this.autoPlayNext = true,
     this.searchSource = SearchSource.online,
     this.miniSwipeSensitivity = SwipeSensitivity.normal,
@@ -403,11 +379,21 @@ class AppSettings {
   /// в ArchiveTune. Первый источник в списке — приоритетный.
   final List<LyricsSource> lyricsProviderOrder;
 
-  /// Показывать романизацию — латиницу под оригинальной строкой.
-  final bool romanizationEnabled;
+  /// Романизация японского текста (кана, `々`, `〆`).
+  final bool romanizeJapanese;
 
-  /// Язык, для которого запрашивается романизация.
-  final RomanizationLanguage romanizationLanguage;
+  /// Романизация корейского текста (слоги хангыля).
+  final bool romanizeKorean;
+
+  /// Романизация китайского текста (иероглифы без каны и хангыля).
+  final bool romanizeChinese;
+
+  /// Романизация текста на хинди (деванагари).
+  final bool romanizeHindi;
+
+  /// Романизация остальных нелатинских письменностей (тайский, арабский,
+  /// кириллица, греческий и другие).
+  final bool romanizeOther;
 
   final bool autoPlayNext;
 
@@ -510,8 +496,11 @@ class AppSettings {
     double? lyricsLineSpacing,
     bool? lyricsLineBlur,
     List<LyricsSource>? lyricsProviderOrder,
-    bool? romanizationEnabled,
-    RomanizationLanguage? romanizationLanguage,
+    bool? romanizeJapanese,
+    bool? romanizeKorean,
+    bool? romanizeChinese,
+    bool? romanizeHindi,
+    bool? romanizeOther,
     bool? autoPlayNext,
     SearchSource? searchSource,
     SwipeSensitivity? miniSwipeSensitivity,
@@ -556,9 +545,11 @@ class AppSettings {
       lyricsLineSpacing: lyricsLineSpacing ?? this.lyricsLineSpacing,
       lyricsLineBlur: lyricsLineBlur ?? this.lyricsLineBlur,
       lyricsProviderOrder: lyricsProviderOrder ?? this.lyricsProviderOrder,
-      romanizationEnabled: romanizationEnabled ?? this.romanizationEnabled,
-      romanizationLanguage:
-          romanizationLanguage ?? this.romanizationLanguage,
+      romanizeJapanese: romanizeJapanese ?? this.romanizeJapanese,
+      romanizeKorean: romanizeKorean ?? this.romanizeKorean,
+      romanizeChinese: romanizeChinese ?? this.romanizeChinese,
+      romanizeHindi: romanizeHindi ?? this.romanizeHindi,
+      romanizeOther: romanizeOther ?? this.romanizeOther,
       autoPlayNext: autoPlayNext ?? this.autoPlayNext,
       searchSource: searchSource ?? this.searchSource,
       miniSwipeSensitivity: miniSwipeSensitivity ?? this.miniSwipeSensitivity,
@@ -608,8 +599,11 @@ class AppSettings {
         'lyricsLineBlur': lyricsLineBlur,
         'lyricsProviderOrder':
             lyricsProviderOrder.map((LyricsSource s) => s.name).join(','),
-        'romanizationEnabled': romanizationEnabled,
-        'romanizationLanguage': romanizationLanguage.name,
+        'romanizeJapanese': romanizeJapanese,
+        'romanizeKorean': romanizeKorean,
+        'romanizeChinese': romanizeChinese,
+        'romanizeHindi': romanizeHindi,
+        'romanizeOther': romanizeOther,
         'autoPlayNext': autoPlayNext,
         'searchSource': searchSource.name,
         'miniSwipeSensitivity': miniSwipeSensitivity.name,
@@ -662,10 +656,11 @@ class AppSettings {
       lyricsProviderOrder: _parseLyricsOrder(
         json['lyricsProviderOrder'] as String?,
       ),
-      romanizationEnabled: json['romanizationEnabled'] as bool? ?? false,
-      romanizationLanguage: RomanizationLanguage.fromName(
-        json['romanizationLanguage'] as String?,
-      ),
+      romanizeJapanese: json['romanizeJapanese'] as bool? ?? true,
+      romanizeKorean: json['romanizeKorean'] as bool? ?? true,
+      romanizeChinese: json['romanizeChinese'] as bool? ?? true,
+      romanizeHindi: json['romanizeHindi'] as bool? ?? true,
+      romanizeOther: json['romanizeOther'] as bool? ?? true,
       autoPlayNext: json['autoPlayNext'] as bool? ?? true,
       searchSource: SearchSource.fromName(json['searchSource'] as String?),
       miniSwipeSensitivity:

@@ -176,13 +176,23 @@ class SettingsController extends Notifier<AppSettings> {
   Future<void> setLyricsProviderOrder(List<LyricsSource> order) =>
       update((AppSettings s) => s.copyWith(lyricsProviderOrder: order));
 
-  /// Романизация текста: латиница под оригинальной строкой.
-  Future<void> setRomanizationEnabled(bool value) =>
-      update((AppSettings s) => s.copyWith(romanizationEnabled: value));
+  /// Романизация текста: латиница под оригинальной строкой. Пять отдельных
+  /// переключателей как `LyricsRomanize*Key` в ArchiveTune — язык определяется
+  /// по самому тексту, поэтому выбирать его вручную не нужно.
+  Future<void> setRomanizeJapanese(bool value) =>
+      update((AppSettings s) => s.copyWith(romanizeJapanese: value));
 
-  /// Язык, для которого запрашивается романизация.
-  Future<void> setRomanizationLanguage(RomanizationLanguage language) =>
-      update((AppSettings s) => s.copyWith(romanizationLanguage: language));
+  Future<void> setRomanizeKorean(bool value) =>
+      update((AppSettings s) => s.copyWith(romanizeKorean: value));
+
+  Future<void> setRomanizeChinese(bool value) =>
+      update((AppSettings s) => s.copyWith(romanizeChinese: value));
+
+  Future<void> setRomanizeHindi(bool value) =>
+      update((AppSettings s) => s.copyWith(romanizeHindi: value));
+
+  Future<void> setRomanizeOther(bool value) =>
+      update((AppSettings s) => s.copyWith(romanizeOther: value));
 
   Future<void> setAutoPlayNext(bool value) =>
       update((AppSettings s) => s.copyWith(autoPlayNext: value));
@@ -294,30 +304,30 @@ final Provider<RomanizationService> romanizationServiceProvider =
   return service;
 });
 
-/// Запрос романизации: трек, язык и строки текста.
+/// Запрос романизации: трек, включённые языки и строки текста.
 ///
 /// Строки входят в ключ, чтобы результат пересчитался при смене текста
 /// (например, выбран другой источник) и не смешался со старым.
 class RomanizationQuery {
   const RomanizationQuery({
     required this.videoId,
-    required this.language,
+    required this.options,
     required this.lines,
   });
 
   final String videoId;
-  final RomanizationLanguage language;
+  final RomanizationOptions options;
   final List<String> lines;
 
   @override
   bool operator ==(Object other) =>
       other is RomanizationQuery &&
       other.videoId == videoId &&
-      other.language == language &&
+      other.options == options &&
       _sameLines(other.lines, lines);
 
   @override
-  int get hashCode => Object.hash(videoId, language, Object.hashAll(lines));
+  int get hashCode => Object.hash(videoId, options, Object.hashAll(lines));
 
   static bool _sameLines(List<String> a, List<String> b) {
     if (a.length != b.length) return false;
@@ -331,14 +341,14 @@ class RomanizationQuery {
 /// Романизация строк текста: `Map` «номер строки → латиница».
 ///
 /// Провайдер кэширует будущее по аргументам, а сервис — по треку: пока текст
-/// не сменился, в сеть уходит ровно один запрос. `autoDispose` — чтобы после
-/// ухода с трека будущее не висело в памяти: повторный запрос всё равно
+/// не сменился, в сеть уходит ровно один запрос на язык. `autoDispose` — чтобы
+/// после ухода с трека будущее не висело в памяти: повторный запрос всё равно
 /// возьмётся из кэша сервиса.
 final romanizationProvider =
     FutureProvider.autoDispose.family<Map<int, String>?, RomanizationQuery>(
   (ref, query) => ref.watch(romanizationServiceProvider).romanize(
         videoId: query.videoId,
-        language: query.language,
+        options: query.options,
         lines: query.lines,
       ),
 );

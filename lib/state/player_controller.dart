@@ -270,7 +270,10 @@ class PlayerController extends Notifier<PlayerUiState> {
     if (index < state.index) {
       newIndex = state.index - 1;
     } else if (removedCurrent) {
-      newIndex = state.index.clamp(0, queue.length - 1);
+      // Убрали последний оставшийся трек: clamp по пустому списку бросил бы
+      // ArgumentError (диапазон 0..-1), поэтому индекс сбрасываем сами —
+      // ниже он всё равно станет -1.
+      newIndex = queue.isEmpty ? -1 : state.index.clamp(0, queue.length - 1);
     }
     state = state.copyWith(queue: queue, index: queue.isEmpty ? -1 : newIndex);
 

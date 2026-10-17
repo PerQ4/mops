@@ -70,6 +70,18 @@ class AuthState {
 class AuthController extends Notifier<AuthState> {
   OAuthDeviceFlow? _flow;
 
+  /// Сессия, которая сейчас применена.
+  ///
+  /// Нужна потому, что `initialSessionProvider` хранит значение, прочитанное
+  /// при запуске. При пересборке провайдера (смена региона или языка
+  /// пересоздаёт клиент InnerTube) состояние откатывалось бы к запуску: вход
+  /// терялся бы, а выход «возвращал» аккаунт, которого уже нет.
+  AuthSession? _session;
+
+  /// Был ли `build` уже выполнен хотя бы раз: только первый раз сессию берём
+  /// из хранилища, дальше — из [_session] (она может быть и пустой).
+  bool _sessionResolved = false;
+
   @override
   AuthState build() {
     final AuthSession? initial = ref.watch(initialSessionProvider);
@@ -77,9 +89,12 @@ class AuthController extends Notifier<AuthState> {
     // Клиент может пересоздаться при смене региона — тогда авторизацию
     // нужно применить к новому экземпляру.
     final InnerTubeClient client = ref.watch(innerTubeProvider);
-    _applyAuth(client, initial);
+    final AuthSession? session = _sessionResolved ? _session : initial;
+    _sessionResolved = true;
+    _session = session;
+    _applyAuth(client, session);
 
-    if (initial != null) {
+    if (session != null) {
       // Обновляем токен в фоне. Обязательно после build(): внутри него
       // `state` ещё не готов, и чтение состояния роняет провайдер
       // («depending on itself»).
@@ -91,7 +106,7 @@ class AuthController extends Notifier<AuthState> {
 
     ref.onDispose(() => _flow?.dispose());
 
-    return AuthState(session: initial);
+    return AuthState(session: session);
   }
 
   // ------------------------------------------------------- вход через OAuth
@@ -219,6 +234,7 @@ class AuthController extends Notifier<AuthState> {
     await ref.read(tokenStoreProvider).clear();
     _flow?.dispose();
     _flow = null;
+    _session = null;
 
     state = const AuthState();
     _applyAuth(ref.read(innerTubeProvider), null);
@@ -237,6 +253,9 @@ class AuthController extends Notifier<AuthState> {
   // -------------------------------------------------------------- private
 
   Future<void> _persist(AuthSession session) async {
+    // Запоминаем сессию до записи на диск: именно её восстановит `build()`
+    // при пересборке провайдера.
+    _session = session;
     await ref.read(tokenStoreProvider).write(session);
     _applyAuth(ref.read(innerTubeProvider), session);
   }

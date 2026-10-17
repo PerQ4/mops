@@ -79,9 +79,20 @@ class _BackGestureState extends State<BackGesture>
     rootNavigatorKey.currentState?.maybePop();
   }
 
+  void _onPanZoomStart(PointerPanZoomStartEvent event) {
+    // Новый жест начинается с нуля; незаконченный «возврат» отменяем.
+    _settle.stop();
+    _panDx = 0;
+    _settle.value = 0;
+  }
+
   void _onPanZoomUpdate(PointerPanZoomUpdateEvent event) {
     _panDx += event.panDelta.dx;
-    debugPrint('ВРЕМЕННО: panZoom dx=$_panDx');
+    // Пока жест идёт, верхний экран едет за пальцем: прогресс 0..1 ведёт
+    // `_settle`, а его слушатель отдаёт значение в `backGestureProgress` —
+    // его читает `PredictiveBack`. Раньше прогресс никто не выставлял, и
+    // экран сдвигался «молча», хотя контроллер `_settle` уже был заведён.
+    _settle.value = (_panDx / BackGesture.swipeThreshold).clamp(0.0, 1.0);
   }
 
   void _onPanZoomEnd(PointerPanZoomEndEvent event) {
@@ -89,7 +100,16 @@ class _BackGestureState extends State<BackGesture>
     _panDx = 0;
     // Свайп вправо — назад. Влево не трогаем: там «вперёд» нет, а случайный
     // жест в обратную сторону не должен ничего закрывать.
-    if (dx >= BackGesture.swipeThreshold) _goBack();
+    if (dx >= BackGesture.swipeThreshold) {
+      // Порог набран — маршрут закрывается; прогресс гасим, иначе следующий
+      // экран открылся бы уже сдвинутым.
+      _settle.value = 0;
+      _goBack();
+      return;
+    }
+    // Порог не добрали — плавно возвращаем экран на место (как и задумано
+    // в комментарии к `_settle`).
+    _settle.animateTo(0, curve: Curves.easeOutCubic);
   }
 
   /// Alt + ← и кнопка «назад» на клавиатуре.
@@ -113,13 +133,14 @@ class _BackGestureState extends State<BackGesture>
       // `opaque`: жест двумя пальцами начинается и над пустым местом, и над
       // кнопкой — обработчик должен получать его в любом случае.
       behavior: HitTestBehavior.opaque,
-      onPointerPanZoomStart: (PointerPanZoomStartEvent event) => _panDx = 0,
+      onPointerPanZoomStart: _onPanZoomStart,
       onPointerPanZoomUpdate: _onPanZoomUpdate,
       onPointerPanZoomEnd: _onPanZoomEnd,
       onPointerDown: (PointerDownEvent event) {
         // Кнопка «назад» на мыши: Flutter присылает её как нажатие с
-        // соответствующим битом, а не как отдельный жест.
-        if (event.buttons == kBackMouseButton) _goBack();
+        // соответствующим битом, а не как отдельный жест. Проверяем бит, а не
+        // равенство: вместе с «назад» может быть зажата и другая кнопка.
+        if (event.buttons & kBackMouseButton != 0) _goBack();
       },
       child: widget.child,
     );

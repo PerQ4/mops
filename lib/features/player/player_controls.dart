@@ -314,11 +314,14 @@ class _M3ESeekBar extends StatelessWidget {
           );
 
     // Пакет — отдельная тема. Собираем её из цвета акцента приложения:
-    // иначе дорожка и ползунок будут стандартными лиловыми.
+    // иначе дорожка и ползунок будут стандартными лиловыми. Тему берём из
+    // кэша: полоса перестраивается на каждом тике позиции, а построение схемы
+    // из seed-цвета — не бесплатное.
     final ColorScheme scheme = Theme.of(context).colorScheme;
-    final m3e.M3EThemeData data = Theme.of(context).brightness == Brightness.dark
-        ? m3e.M3EThemeData.dark(seedColor: scheme.primary)
-        : m3e.M3EThemeData.light(seedColor: scheme.primary);
+    final m3e.M3EThemeData data = _m3eThemeFor(
+      Theme.of(context).brightness,
+      scheme.primary,
+    );
     return m3e.M3ETheme(data: data, child: slider);
   }
 
@@ -329,6 +332,31 @@ class _M3ESeekBar extends StatelessWidget {
     required bool pressed,
   }) =>
       const SizedBox.shrink();
+}
+
+/// Кэш тем `material_3_expressive` по яркости и цвету акцента.
+///
+/// `M3EThemeData.dark/light` строит полную цветовую схему из seed-цвета
+/// (`M3EColorScheme.fromSeed`) — это заметная работа, а `_M3ESeekBar`
+/// перестраивается на каждом обновлении позиции. Цвет акцента меняется редко
+/// (при смене трека/темы), поэтому тему достаточно построить один раз.
+final Map<(Brightness, int), m3e.M3EThemeData> _m3eThemeCache =
+    <(Brightness, int), m3e.M3EThemeData>{};
+
+m3e.M3EThemeData _m3eThemeFor(Brightness brightness, Color primary) {
+  final (Brightness, int) key = (brightness, primary.toARGB32());
+  final m3e.M3EThemeData? cached = _m3eThemeCache[key];
+  if (cached != null) return cached;
+
+  final m3e.M3EThemeData data = brightness == Brightness.dark
+      ? m3e.M3EThemeData.dark(seedColor: primary)
+      : m3e.M3EThemeData.light(seedColor: primary);
+  // Кэш ограничен: при палитре из обложки акцент меняется с каждым треком.
+  if (_m3eThemeCache.length >= 16) {
+    _m3eThemeCache.remove(_m3eThemeCache.keys.first);
+  }
+  _m3eThemeCache[key] = data;
+  return data;
 }
 
 /// Отметка качества потока — как у ArchiveTune (OPUS и битрейт).
@@ -718,9 +746,11 @@ class PlayerVolumeControl extends ConsumerWidget {
               ? _M3ESeekBar(
                   style: style,
                   value: volume.clamp(0.0, 1.0),
-                  // Амплитуда волны: у громкости она постоянная, уровня звука
-                  // у движка нет.
-                  waveAmplitude: 0.5,
+                  // Волны у громкости нет: она показывает уровень, а не ход
+                  // воспроизведения, и «живой» амплитуды у неё взяться неоткуда
+                  // (у движка нет уровня сигнала). Нулевая амплитуда оставляет
+                  // ровную дорожку той же толщины, что и выбранный стиль.
+                  waveAmplitude: 0,
                   onChanged: controller.setVolume,
                   onChangeEnd: (_) {},
                 )

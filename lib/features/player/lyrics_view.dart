@@ -11,6 +11,7 @@ import 'package:flutter_riverpod/flutter_riverpod.dart';
 
 import '../../data/local/app_settings.dart';
 import '../../data/models/models.dart';
+import '../../data/sources/romanization.dart';
 import '../../state/catalog_providers.dart';
 import '../../state/lyrics_edits.dart';
 import '../../state/player_controller.dart';
@@ -271,26 +272,27 @@ class _LyricsViewState extends ConsumerState<LyricsView> {
       jumpSeq: _jumpSeq,
     );
 
-    // Романизацию спрашиваем только при включённой настройке: выключенная
-    // настройка не должна тянуть сеть. Один запрос на весь текст, результат —
+    // Романизацию спрашиваем только при включённых переключателях: выключенные
+    // не должны тянуть сеть. Язык определяется по строкам в сервисе, результат —
     // соответствие «строка → латиница».
-    final bool romanizationEnabled = ref.watch(
+    final RomanizationOptions romanization = ref.watch(
       settingsControllerProvider.select(
-        (AppSettings s) => s.romanizationEnabled,
-      ),
-    );
-    final RomanizationLanguage romanizationLanguage = ref.watch(
-      settingsControllerProvider.select(
-        (AppSettings s) => s.romanizationLanguage,
+        (AppSettings s) => RomanizationOptions(
+          japanese: s.romanizeJapanese,
+          korean: s.romanizeKorean,
+          chinese: s.romanizeChinese,
+          hindi: s.romanizeHindi,
+          other: s.romanizeOther,
+        ),
       ),
     );
     Map<int, String> romanized = const <int, String>{};
-    if (romanizationEnabled && lineTexts.isNotEmpty) {
+    if (romanization.isEnabled && lineTexts.isNotEmpty) {
       romanized = ref.watch(
             romanizationProvider(
               RomanizationQuery(
                 videoId: widget.videoId,
-                language: romanizationLanguage,
+                options: romanization,
                 lines: lineTexts,
               ),
             ),
@@ -742,29 +744,35 @@ List<InlineSpan> _highlightSpans(
 
 /// Обычный текст: прокручиваемый блок без выделения строк, но с подсветкой
 /// найденного запроса и переходом к совпадению.
-/// Плашка «Проигрыш»: показывается, когда в треке идёт длинная пауза между
-/// строками и петь пока нечего.
-class _InterludeBadge extends StatelessWidget {
-  const _InterludeBadge();
+/// Маркер инструментальной вставки внутри текста: «♪ Проигрыш».
+///
+/// Стоит ровно на месте паузы — вступление или промежуток между строками — и
+/// подсвечивается, пока она идёт. Так видно, что текст не «встал», а в песне
+/// играет проигрыш, и видно, сколько ещё ждать до следующей строки.
+class _InterludeMarker extends StatelessWidget {
+  const _InterludeMarker({required this.active});
+
+  /// Пауза идёт прямо сейчас.
+  final bool active;
 
   @override
   Widget build(BuildContext context) {
     final ColorScheme scheme = Theme.of(context).colorScheme;
-    return Container(
-      padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 6),
-      decoration: BoxDecoration(
-        color: scheme.surfaceContainerHighest.withValues(alpha: 0.9),
-        borderRadius: BorderRadius.circular(999),
-      ),
+    final Color color = active
+        ? scheme.primary
+        : scheme.onSurfaceVariant.withValues(alpha: 0.45);
+    return Padding(
+      padding: const EdgeInsets.symmetric(vertical: 4),
       child: Row(
         mainAxisSize: MainAxisSize.min,
         children: <Widget>[
-          Icon(Icons.music_note, size: 16, color: scheme.onSurfaceVariant),
+          Icon(Icons.music_note, size: 14, color: color),
           const SizedBox(width: 6),
           Text(
             'Проигрыш',
             style: Theme.of(context).textTheme.labelMedium?.copyWith(
-                  color: scheme.onSurfaceVariant,
+                  color: color,
+                  fontWeight: active ? FontWeight.w600 : FontWeight.w500,
                 ),
           ),
         ],
@@ -969,9 +977,14 @@ class _SyncedLyricsState extends ConsumerState<_SyncedLyrics>
   /// на каждом тике позиции.
   final ValueNotifier<int> _activeIndex = ValueNotifier<int>(-1);
 
-  /// Идёт инструментальная вставка: строку уже пропели, следующая ещё далеко.
-  /// По этому признаку показывается «♪» — иначе казалось бы, что текст встал.
-  final ValueNotifier<bool> _interlude = ValueNotifier<bool>(false);
+  /// Идёт инструментальная вставка: индекс строки ПЕРЕД паузой (`-1` —
+  /// вступление), либо `null`, если паузы сейчас нет. По нему подсвечивается
+  /// маркер «♪», стоящий в тексте на месте паузы.
+  final ValueNotifier<int?> _interludeGap = ValueNotifier<int?>(null);
+
+  /// С какого момента считать вступление паузой — как
+  /// `INSTRUMENTAL_INTRO_START_MS` у ArchiveTune.
+  static const int _introStartMs = 1000;
 
   /// С какой паузы между строками считать её инструментальной вставкой.
   static const int _interludeMinGapMs = 5000;
@@ -1032,7 +1045,7 @@ class _SyncedLyricsState extends ConsumerState<_SyncedLyrics>
     _controller.dispose();
     _positionMs.dispose();
     _activeIndex.dispose();
-    _interlude.dispose();
+    _interludeGap.dispose();
     super.dispose();
   }
 
@@ -1161,8 +1174,8 @@ class _SyncedLyricsState extends ConsumerState<_SyncedLyrics>
       _activeIndex.value = index;
     }
 
-    final bool gap = _inLongGap(rounded + _leadMs);
-    if (_interlude.value != gap) _interlude.value = gap;
+    final int? gap = _activeGapBefore(rounded + _leadMs);
+    if (_interludeGap.value != gap) _interludeGap.value = gap;
     // Прокручиваем при смене строки, а также один раз после первой раскладки
     // (`_lastScrolledIndex` обновляется только после удачной прокрутки).
     if (_canAutoScroll && index >= 0 && _lastScrolledIndex != index) {
@@ -1259,20 +1272,52 @@ class _SyncedLyricsState extends ConsumerState<_SyncedLyrics>
     return start + 4000;
   }
 
-  /// Долгая пауза между строками — инструментальная вставка.
+  /// Длина паузы после строки: от конца её пропевания до начала следующей.
   ///
-  /// Границы считаем по концу пропевания строки: у пословного текста это конец
-  /// последнего слова, у построчного — начало плюс запас. Если до следующей
-  /// строки остаётся больше [_interludeMinGapMs] и позиция уже внутри этой
-  /// паузы — значит поют не сейчас.
-  bool _inLongGap(int positionMs) {
-    final int index = _activeIndex.value;
-    if (index < 0 || index + 1 >= widget.lines.length) return false;
-
+  /// Конец пропевания считаем по последнему слову у пословного текста и по
+  /// началу плюс запас у построчного — точнее база не знает.
+  int _gapAfterMs(int index) {
+    if (index < 0 || index + 1 >= widget.lines.length) return 0;
     final int nextStart = widget.lines[index + 1].time.inMilliseconds;
+    return nextStart - _sungEndMs(index);
+  }
+
+  /// Длина паузы перед первой строкой — вступление.
+  int _introGapMs() {
+    if (widget.lines.isEmpty) return 0;
+    return widget.lines.first.time.inMilliseconds - _introStartMs;
+  }
+
+  /// Стоит ли перед строкой [index] маркер инструментальной вставки.
+  bool _hasGapBefore(int index) {
+    if (index == 0) return _introGapMs() >= _interludeMinGapMs;
+    return _gapAfterMs(index - 1) >= _interludeMinGapMs;
+  }
+
+  /// Какая вставка идёт прямо сейчас: индекс строки ПЕРЕД паузой (`-1` —
+  /// вступление) или `null`, если поют.
+  int? _activeGapBefore(int positionMs) {
+    if (_hasGapBefore(0)) {
+      final int firstStart = widget.lines.first.time.inMilliseconds;
+      if (positionMs >= _introStartMs && positionMs < firstStart) return -1;
+    }
+
+    final int index = _activeIndex.value;
+    if (index < 0 || index + 1 >= widget.lines.length) return null;
+    if (_gapAfterMs(index) < _interludeMinGapMs) return null;
+
     final int sungEnd = _sungEndMs(index);
-    if (nextStart - sungEnd < _interludeMinGapMs) return false;
-    return positionMs >= sungEnd && positionMs < nextStart;
+    final int nextStart = widget.lines[index + 1].time.inMilliseconds;
+    return (positionMs >= sungEnd && positionMs < nextStart) ? index : null;
+  }
+
+  /// Маркер вставки в тексте; подсвечивается, когда вставка идёт.
+  Widget _interludeMarker(int beforeIndex) {
+    return ValueListenableBuilder<int?>(
+      valueListenable: _interludeGap,
+      builder: (BuildContext context, int? active, Widget? _) =>
+          _InterludeMarker(active: active == beforeIndex),
+    );
   }
 
   /// Конец пропевания строки.
@@ -1358,7 +1403,10 @@ class _SyncedLyricsState extends ConsumerState<_SyncedLyrics>
                 child: Column(
               crossAxisAlignment: CrossAxisAlignment.start,
               children: <Widget>[
-                for (int i = 0; i < widget.lines.length; i++)
+                for (int i = 0; i < widget.lines.length; i++) ...<Widget>[
+                  // Инструментальная вставка — прямо в тексте, на своём месте:
+                  // вступление (перед первой строкой) или пауза между строками.
+                  if (_hasGapBefore(i)) _interludeMarker(i - 1),
                   _LyricLine(
                     key: _keys[i],
                     index: i,
@@ -1377,6 +1425,7 @@ class _SyncedLyricsState extends ConsumerState<_SyncedLyrics>
                     search: widget.search,
                     romanized: widget.romanized[i],
                   ),
+                ],
               ],
                 ),
               ),
@@ -1396,22 +1445,6 @@ class _SyncedLyricsState extends ConsumerState<_SyncedLyrics>
         child: Stack(
           children: <Widget>[
             list,
-            // Инструментальная вставка: строк нет, но трек играет — говорим
-            // об этом прямо, иначе текст выглядит «зависшим».
-            ValueListenableBuilder<bool>(
-              valueListenable: _interlude,
-              builder: (BuildContext context, bool gap, Widget? _) {
-                if (!gap || _manualScrolling || widget.search.isActive) {
-                  return const SizedBox.shrink();
-                }
-                return const Positioned(
-                  left: 0,
-                  right: 0,
-                  bottom: 16,
-                  child: Center(child: _InterludeBadge()),
-                );
-              },
-            ),
             if (_manualScrolling && !widget.search.isActive)
               Positioned(
                 left: 0,
@@ -1492,6 +1525,10 @@ class _LyricLine extends StatelessWidget {
   /// платить за невидимое незачем.
   double get _blur {
     if (active || !blurVisible) return 0;
+    // Ручная прокрутка — размытие снимаем: человек ушёл от активной строки и
+    // читает то, что перед ним. Размывать по расстоянию от строки, которая
+    // осталась выше, значит гасить именно то, за чем он листал.
+    if (manualScrolling) return 0;
     return tableValue(_blurTable, distance / step);
   }
 

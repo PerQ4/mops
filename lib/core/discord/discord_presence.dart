@@ -140,10 +140,14 @@ class DiscordPresenceService {
 
   /// Соединение разорвано — планируем переподключение.
   void _handleDrop() {
+    final DiscordIpcClient? client = _client;
     _client = null;
     _clientAppId = null;
     _keepAliveTimer?.cancel();
     _keepAliveTimer = null;
+    // Транспорт уже мёртв, но дескриптор пайпа (Windows) или сокет остались
+    // бы открытыми до перезапуска приложения — закрываем их здесь.
+    if (client != null) unawaited(client.close());
     if (_disposed) return;
     _failures++;
     _scheduleRetry();
@@ -204,37 +208,57 @@ class DiscordPresenceService {
 
   Map<String, dynamic> _buildActivity(DiscordPresenceInput input) {
     final Track track = input.track!;
-    final int positionMs = max(0, input.position.inMilliseconds);
-    final int startMs = DateTime.now().millisecondsSinceEpoch - positionMs;
+    final String? album = track.album?.name;
+    // Вторая строка — исполнитель, как в Spotify. Если его нет, показываем
+    // альбом: пустая строка в профиле выглядит как недогруженная карточка.
+    final String subtitle =
+        track.artistLine.trim().isNotEmpty ? track.artistLine : (album ?? '');
 
-    final Map<String, dynamic> timestamps;
+    final Map<String, dynamic> activity = <String, dynamic>{
+      'type': 2, // Listening — «слушает».
+      'details': _truncate(track.title, 128),
+      if (subtitle.isNotEmpty) 'state': _truncate(subtitle, 128),
+      'assets': <String, dynamic>{
+        'large_image': _coverUrl(track),
+        // Подсказка на обложке — альбом (как в Spotify): название трека уже
+        // стоит в `details`, дублировать его здесь незачем.
+        'large_text': _truncate(album ?? track.title, 128),
+      },
+      'buttons': _buttons(track),
+    };
+
+    // Таймстемпы — только у играющего трека. На паузе их не отправляем:
+    // Discord считает время от `start` и продолжает тикать, поэтому
+    // «замерший» счётчик на деле уезжал вперёд.
     if (input.isPlaying && input.duration > Duration.zero) {
-      timestamps = <String, dynamic>{
+      final int positionMs = max(0, input.position.inMilliseconds);
+      final int startMs = DateTime.now().millisecondsSinceEpoch - positionMs;
+      activity['timestamps'] = <String, dynamic>{
         'start': startMs,
         'end': startMs + input.duration.inMilliseconds,
       };
-    } else {
-      // На паузе конца нет: счётчик показывает позицию и «замирает».
-      timestamps = <String, dynamic>{'start': startMs};
     }
+    return activity;
+  }
 
-    final String cover = _coverUrl(track);
-    return <String, dynamic>{
-      'type': 2, // Listening — «слушает».
-      'details': _truncate(track.title, 128),
-      'state': _truncate(track.artistLine, 128),
-      'timestamps': timestamps,
-      'assets': <String, dynamic>{
-        'large_image': cover,
-        'large_text': _truncate(track.title, 128),
+  /// Кнопки под активностью — до двух, как разрешает Discord: сам трек и
+  /// канал исполнителя (ссылки на месте, ничего искать не надо).
+  List<Map<String, dynamic>> _buttons(Track track) {
+    final List<Map<String, dynamic>> buttons = <Map<String, dynamic>>[
+      <String, dynamic>{
+        'label': 'Слушать в YouTube Music',
+        'url': 'https://music.youtube.com/watch?v=${track.id}',
       },
-      'buttons': <Map<String, dynamic>>[
-        <String, dynamic>{
-          'label': 'Слушать в YouTube Music',
-          'url': 'https://music.youtube.com/watch?v=${track.id}',
-        },
-      ],
-    };
+    ];
+    final String? artistId =
+        track.artists.isEmpty ? null : track.artists.first.id;
+    if (artistId != null && artistId.isNotEmpty) {
+      buttons.add(<String, dynamic>{
+        'label': 'Канал исполнителя',
+        'url': 'https://music.youtube.com/channel/$artistId',
+      });
+    }
+    return buttons;
   }
 
   /// Обложка для Discord. Предпочитаем `i.ytimg.com` — там картинка доступна
@@ -289,7 +313,14 @@ final Provider<DiscordPresenceInput> discordPresenceInputProvider =
 
   ref.watch(
     playerControllerProvider.select(
-      (PlayerUiState s) => (s.current?.id, s.isPlaying),
+      (PlayerUiState s) => (
+        s.current?.id,
+        s.isPlaying,
+        // Пересчёт раз в 15 секунд: после перемотки полоса в профиле
+        // поправляется сразу, а при обычном воспроизведении обновление ничего
+        // не сдвигает — таймстемпы абсолютные, счётчик идёт сам.
+        s.playback.position.inSeconds ~/ 15,
+      ),
     ),
   );
   final PlayerUiState player = ref.read(playerControllerProvider);

@@ -593,9 +593,21 @@ class BrowseParser {
   /// Достаёт длительность из подписи вида «Исполнитель • 3:20».
   ///
   /// У клипов YouTube Music длительность приходит только в подписи, отдельного
-  /// поля с ней нет.
+  /// поля с ней нет. Сначала пробуем формат с часами (`1:02:33`): без него
+  /// от часового клипа осталось бы только «1:02», то есть 1 минута 2 секунды.
   static Duration? _durationFromSubtitle(String? subtitle) {
     if (subtitle == null) return null;
+
+    final RegExpMatch? long =
+        RegExp(r'(?:^|\D)(\d{1,2}):(\d{2}):(\d{2})(?:\D|$)').firstMatch(subtitle);
+    if (long != null) {
+      return Duration(
+        hours: int.parse(long.group(1)!),
+        minutes: int.parse(long.group(2)!),
+        seconds: int.parse(long.group(3)!),
+      );
+    }
+
     final RegExpMatch? match =
         RegExp(r'(?:^|\D)(\d{1,2}):(\d{2})(?:\D|$)').firstMatch(subtitle);
     if (match == null) return null;

@@ -1,4 +1,3 @@
-import 'package:flutter/gestures.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 
@@ -25,6 +24,11 @@ import 'sidebar.dart';
 /// На Windows окно безрамочное, а своя заголовочная панель живёт **выше**
 /// навигатора (в `MaterialApp.builder`) — иначе её перекрывали бы диалоги,
 /// шторки и полноэкранный плеер.
+///
+/// Возврат назад (кнопка мыши, Alt+←, свайп тачпада) обрабатывает [BackGesture]
+/// в `MaterialApp.builder`: он оборачивает навигатор целиком, поэтому получает
+/// события и от подэкранов, и от полноэкранного плеера. Свой слушатель здесь
+/// не нужен — он закрывал бы экран дважды на одно нажатие.
 class AppShell extends ConsumerWidget {
   const AppShell({super.key});
 
@@ -79,65 +83,36 @@ class AppShell extends ConsumerWidget {
       // как самостоятельная панель поверх библиотеки (как в Spotify Desktop).
       return Scaffold(
         backgroundColor: scheme.surfaceContainer,
-        body: _MouseBackListener(
-          child: Row(
-            children: <Widget>[
-              const LibrarySidebar(),
-              Expanded(
-                child: ClipRRect(
-                  // Скруглены углы, примыкающие к панелям: слева — к
-                  // библиотеке, справа — к плееру, но только когда панель
-                  // действительно раскрыта.
-                  borderRadius: BorderRadius.horizontal(
-                    left: const Radius.circular(AppLayout.contentPanelRadius),
-                    right: Radius.circular(
-                      panelOpen ? AppLayout.contentPanelRadius : 0,
-                    ),
-                  ),
-                  child: ColoredBox(
-                    color: scheme.surface,
-                    child: content,
+        body: Row(
+          children: <Widget>[
+            const LibrarySidebar(),
+            Expanded(
+              child: ClipRRect(
+                // Скруглены углы, примыкающие к панелям: слева — к
+                // библиотеке, справа — к плееру, но только когда панель
+                // действительно раскрыта.
+                borderRadius: BorderRadius.horizontal(
+                  left: const Radius.circular(AppLayout.contentPanelRadius),
+                  right: Radius.circular(
+                    panelOpen ? AppLayout.contentPanelRadius : 0,
                   ),
                 ),
+                child: ColoredBox(
+                  color: scheme.surface,
+                  child: content,
+                ),
               ),
-              // Панель плеера отнимает ширину у содержимого (оно сужается
-              // плавно), а док остаётся видимым — он лежит внутри содержимого.
-              if (rightPanel) PlayerRightPanelSlot(open: panelOpen),
-            ],
-          ),
+            ),
+            // Панель плеера отнимает ширину у содержимого (оно сужается
+            // плавно), а док остаётся видимым — он лежит внутри содержимого.
+            if (rightPanel) PlayerRightPanelSlot(open: panelOpen),
+          ],
         ),
       );
     }
 
     // Узкая раскладка: навигация живёт в том же плавающем островке
     // (см. [FloatingDock]), поэтому отдельная нижняя панель не нужна.
-    return Scaffold(body: _MouseBackListener(child: content));
-  }
-}
-
-/// Возврат назад кнопкой мыши (XBUTTON1).
-///
-/// Flutter присылает её как [kBackMouseButton]. Сначала закрываем подэкран
-/// вложенного навигатора (альбом, исполнитель, плейлист), иначе — маршрут
-/// корневого (полноэкранный плеер).
-class _MouseBackListener extends StatelessWidget {
-  const _MouseBackListener({required this.child});
-
-  final Widget child;
-
-  @override
-  Widget build(BuildContext context) {
-    return Listener(
-      onPointerDown: (PointerDownEvent event) {
-        if (event.buttons & kBackMouseButton == 0) return;
-        final NavigatorState? content = contentNavigatorKey.currentState;
-        if (content != null && content.canPop()) {
-          content.maybePop();
-          return;
-        }
-        Navigator.of(context, rootNavigator: true).maybePop();
-      },
-      child: child,
-    );
+    return Scaffold(body: content);
   }
 }

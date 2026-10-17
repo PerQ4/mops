@@ -11,15 +11,29 @@ import 'package:mops/data/sources/lyrics_match.dart';
 import 'package:mops/data/sources/unison_source.dart';
 import 'package:mops/data/sources/youly_plus_source.dart';
 
-const String title = 'Shape of You';
-const String artist = 'Ed Sheeran';
-const String videoId = 'JGwWNGJdvx8';
-const Duration duration = Duration(seconds: 233);
+/// Название, исполнитель и длительность можно задать аргументами:
+/// `dart run tool/_lyrics_probe.dart "Название" "Исполнитель" 200`
+String title = 'Shape of You';
+String artist = 'Ed Sheeran';
+String videoId = 'JGwWNGJdvx8';
+Duration duration = const Duration(seconds: 233);
+
+void applyArgs(List<String> args) {
+  if (args.length >= 2) {
+    title = args[0];
+    artist = args[1];
+  }
+  if (args.length >= 3) {
+    final int? seconds = int.tryParse(args[2]);
+    if (seconds != null && seconds > 0) duration = Duration(seconds: seconds);
+  }
+  if (args.length >= 4) videoId = args[3];
+}
 
 Future<void> timed(String name, Future<dynamic> Function() f) async {
   final Stopwatch sw = Stopwatch()..start();
   try {
-    final dynamic l = await f().timeout(const Duration(seconds: 12));
+    final dynamic l = await f().timeout(const Duration(seconds: 30));
     final int t = (l.timed as List?)?.length ?? -1;
     final int p = (l.plain as String?)?.length ?? -1;
     final int words = ((l.timed as List?) ?? <dynamic>[])
@@ -59,7 +73,9 @@ Future<void> probeMirror(String mirror, String path) async {
   await stdout.flush();
 }
 
-Future<void> main() async {
+Future<void> main(List<String> args) async {
+  applyArgs(args);
+  stdout.writeln('Трек: $artist — $title (${duration.inSeconds} с)');
   const List<String> mirrors = <String>[
     'https://lyricsplus.binimum.org',
     'https://lyricsplus.prjktla.my.id',

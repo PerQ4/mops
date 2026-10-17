@@ -26,10 +26,19 @@ final Map<String, AppSchemes> _artworkSchemeCache = <String, AppSchemes>{};
 
 /// Палитра из выбранного пользователем акцентного цвета.
 final Provider<AppSchemes> seedSchemesProvider = Provider<AppSchemes>((ref) {
-  final settings = ref.watch(settingsControllerProvider);
-  final Color seed = kSeedColors[settings.safeSeedIndex].color;
-  final bool expressive = settings.useMaterialExpressive;
-  final PaletteStylePreference style = settings.paletteStyle;
+  // Следим только за полями палитры: `watch` всего объекта пересобирал бы
+  // обе схемы на любое изменение настроек — например, на каждое движение
+  // ползунка громкости, — а вслед за ними перестраивалось бы всё приложение
+  // (тема лежит в `MaterialApp`).
+  final (Color seed, bool expressive, PaletteStylePreference style) = ref.watch(
+    settingsControllerProvider.select(
+      (AppSettings s) => (
+        kSeedColors[s.safeSeedIndex].color,
+        s.useMaterialExpressive,
+        s.paletteStyle,
+      ),
+    ),
+  );
 
   return AppSchemes(
     light: AppTheme.schemeFromSeed(
@@ -53,8 +62,19 @@ final Provider<AppSchemes> seedSchemesProvider = Provider<AppSchemes>((ref) {
 /// или из обложки не удалось собрать цвета.
 final FutureProvider<AppSchemes?> artworkSchemesProvider =
     FutureProvider<AppSchemes?>((ref) async {
-  final settings = ref.watch(settingsControllerProvider);
-  if (settings.colorSource != ColorSource.artwork) return null;
+  // Как и у палитры из акцента: только нужные поля, иначе схема из обложки
+  // пересчитывалась бы на каждое изменение любой настройки.
+  final (ColorSource source, bool expressive, PaletteStylePreference style) =
+      ref.watch(
+    settingsControllerProvider.select(
+      (AppSettings s) => (
+        s.colorSource,
+        s.useMaterialExpressive,
+        s.paletteStyle,
+      ),
+    ),
+  );
+  if (source != ColorSource.artwork) return null;
 
   final Track? track = ref.watch(currentTrackProvider);
   final String? url = track?.thumbnails.sized(512) ?? track?.artwork;
@@ -63,8 +83,6 @@ final FutureProvider<AppSchemes?> artworkSchemesProvider =
   final AppSchemes? cached = _artworkSchemeCache[url];
   if (cached != null) return cached;
 
-  final bool expressive = settings.useMaterialExpressive;
-  final PaletteStylePreference style = settings.paletteStyle;
   try {
     final ImageProvider provider = artworkProvider(url);
     // Параллельно строим обе схемы — так переключение темы не ждёт сеть.

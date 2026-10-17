@@ -1,16 +1,18 @@
 import 'dart:convert';
 import 'dart:io';
-
-import '../local/app_settings.dart';
+import 'dart:math';
 
 /// Романизация текста — латиница для песен на японском, корейском, китайском,
 /// хинди и других языках с нелатинской письменностью.
 ///
 /// Перевод при этом НЕ делается: нужен именно «слепок» произношения, чтобы
-/// читать незнакомый текст, а не подмена смысла. Механизм повторяет BetterLyrics
-/// (`src/core/constants.ts`): тот же публичный эндпоинт Google Translate, где
-/// `dt=rm` просит транслитерацию, а `sl == tl` (с суффиксом `-Latn`) не даёт
-/// сервису перевести текст вместо транслитерации.
+/// читать незнакомый текст, а не подмена смысла. Механизм повторяет ArchiveTune
+/// (`lyrics/LyricsUtils.kt`): язык определяется по самому тексту, а не выбирается
+/// пользователем, и романизация считается по строке, а не по всему тексту.
+///
+/// Готового офлайн-транслитератора в Dart нет, поэтому строку отправляем
+/// публичному эндпоинту Google Translate с `dt=rm` (транслитерация) и
+/// `tl=<язык>-Latn`. Так сервис не переводит текст, а записывает произношение.
 class RomanizationService {
   RomanizationService({HttpClient? client}) : _client = client ?? HttpClient();
 
@@ -30,16 +32,17 @@ class RomanizationService {
   /// Предел кэша: помним романизацию последних треков.
   static const int _maxCacheEntries = 32;
 
-  /// Романизирует непустые строки и возвращает соответствие
-  /// «номер строки → романизация».
+  final Random _random = Random();
+
+  /// Романизирует строки и возвращает соответствие «номер строки → латиница».
   ///
-  /// Запрос один на весь текст (строки склеены `\n`), а не по строке: у сервиса
-  /// заметная задержка, а строк в песне десятки. Если сервис недоступен или
-  /// вернул другое число строк — отдаём `null`, и текст показывается без
-  /// романизации. Ничего не ломаем и не выдумываем.
+  /// Строки группируются по цели (язык/письменность), и на каждую группу уходит
+  /// один запрос: по одному запросу на строку сервис упёрся бы в лимит уже на
+  /// пятидесяти строках. Если сервис недоступен или ничего не романизировалось —
+  /// отдаём `null`, и текст показывается без романизации.
   Future<Map<int, String>?> romanize({
     required String videoId,
-    required RomanizationLanguage language,
+    required RomanizationOptions options,
     required List<String> lines,
   }) async {
     // Пустые строки в запрос не отправляем: сервис схлопывает их сам, и
@@ -50,17 +53,40 @@ class RomanizationService {
     ];
     if (indexes.isEmpty) return null;
 
-    final String text = indexes.map((int i) => lines[i]).join('\n');
-    final String key = '$videoId|${language.name}';
-    final int signature = Object.hash(text, text.length);
+    // Ключ включает и текст, и набор включённых языков: при смене настроек
+    // результат пересчитывается, а не берётся из старого кэша.
+    final String key = '$videoId|${options.cacheKey}';
+    final int signature = Object.hash(Object.hashAll(lines), lines.length);
     final _CacheEntry? cached = _cache[key];
     if (cached != null && cached.signature == signature) return cached.value;
 
-    final String? romanized = await _request(text, language.code);
-    if (romanized == null) return null;
+    // Группируем строки по цели: у каждой группы свой `sl`/`tl`, поэтому одним
+    // запросом их не объединить.
+    final Map<RomanizationTarget, List<int>> groups =
+        <RomanizationTarget, List<int>>{};
+    for (final int i in indexes) {
+      final RomanizationTarget? target = detectRomanizationTarget(lines[i]);
+      if (target == null || !options.allows(target.group)) continue;
+      groups.putIfAbsent(target, () => <int>[]).add(i);
+    }
+    if (groups.isEmpty) return null;
 
-    final Map<int, String>? mapped = _mapToLines(romanized, indexes);
-    if (mapped == null) return null;
+    final Map<int, String> mapped = <int, String>{};
+    for (final MapEntry<RomanizationTarget, List<int>> group in groups.entries) {
+      final List<int> groupIndexes = group.value;
+      final List<String> groupLines = <String>[
+        for (final int i in groupIndexes) lines[i],
+      ];
+      final List<String?> parts = await _romanizeGroup(group.key, groupLines);
+      for (int i = 0; i < groupIndexes.length; i++) {
+        final String? part = parts[i];
+        if (part != null && part.isNotEmpty) mapped[groupIndexes[i]] = part;
+      }
+    }
+
+    // Совсем ничего не вышло — не кэшируем: сервис мог просто не ответить, и
+    // следующий показ текста честно попробует снова.
+    if (mapped.isEmpty) return null;
 
     // Ограничиваем кэш: за долгую сессию треков много, а хранить романизацию
     // всех незачем — она восстанавливается одним запросом.
@@ -71,24 +97,63 @@ class RomanizationService {
     return mapped;
   }
 
-  /// Просит транслитерацию. Для кодов вида `zh-CN` сервис иногда ждёт базовый
-  /// `zh` — тогда повторяем запрос с ним, прежде чем сдаться.
-  Future<String?> _request(String text, String code) async {
-    final String? primary = await _ask(text, code);
-    if (primary != null) return primary;
+  /// Романизация одной группы строк. Обычно хватает одного запроса, но если
+  /// сервис вернул не то число частей — спрашиваем строки поштучно.
+  Future<List<String?>> _romanizeGroup(
+    RomanizationTarget target,
+    List<String> lines,
+  ) async {
+    if (lines.length == 1) {
+      final String? single = await _ask(lines.first, target);
+      return <String?>[single?.trim()];
+    }
 
-    final String base = code.split('-').first;
-    if (base == code) return null;
-    return _ask(text, base);
+    final String separator = _uniqueSeparator(lines);
+    final String? joined = await _ask(lines.join(separator), target);
+    if (joined != null) {
+      final List<String> parts = joined.split(separator);
+      // Число частей совпало — границы строк сервис не склеил, раскладываем.
+      if (parts.length == lines.length) {
+        return <String?>[for (final String part in parts) part.trim()];
+      }
+    }
+
+    // Единственный допустимый откат: сервис мог изменить границы строк, и
+    // сдвинутая романизация хуже, чем её отсутствие. Проходим поштучно.
+    final List<String?> fallback = List<String?>.filled(lines.length, null);
+    for (int i = 0; i < lines.length; i++) {
+      fallback[i] = await _ask(lines[i], target);
+    }
+    return fallback;
   }
 
-  Future<String?> _ask(String text, String lang) async {
+  /// Разделитель, которого нет ни в одной строке группы: иначе разбить ответ
+  /// обратно по строкам было бы нельзя.
+  String _uniqueSeparator(List<String> lines) {
+    while (true) {
+      final String separator = '<<<SEP-${_randomToken()}>>>';
+      if (!lines.any((String line) => line.contains(separator))) {
+        return separator;
+      }
+    }
+  }
+
+  String _randomToken() {
+    final StringBuffer buffer = StringBuffer();
+    for (int i = 0; i < 32; i++) {
+      buffer.write(_random.nextInt(16).toRadixString(16));
+    }
+    return buffer.toString();
+  }
+
+  /// Просит транслитерацию одной порции текста.
+  Future<String?> _ask(String text, RomanizationTarget target) async {
     try {
       final Uri uri = Uri.parse(_host).replace(
         queryParameters: <String, dynamic>{
           'client': 'gtx',
-          'sl': lang,
-          'tl': '$lang-Latn',
+          'sl': target.source,
+          'tl': target.target,
           // `dt` повторяется: `t` — сам ответ, `rm` — транслитерация.
           'dt': <String>['t', 'rm'],
           'q': text,
@@ -127,18 +192,210 @@ class RomanizationService {
     }
   }
 
-  /// Раскладывает ответ обратно по строкам. Если число строк не совпало —
-  /// романизацию не показываем: сдвинутые строки хуже, чем их отсутствие.
-  Map<int, String>? _mapToLines(String romanized, List<int> indexes) {
-    final List<String> parts = romanized.split('\n');
-    if (parts.length != indexes.length) return null;
-    return <int, String>{
-      for (int i = 0; i < indexes.length; i++) indexes[i]: parts[i],
-    };
-  }
-
   void dispose() => _client.close(force: true);
 }
+
+/// Вид романизации — по нему берётся переключатель в настройках.
+///
+/// Пять групп ровно как `LyricsRomanize*Key` в ArchiveTune
+/// (`lyrics/LyricsUtils.kt`).
+enum RomanizationGroup { japanese, korean, chinese, hindi, other }
+
+/// Включённые виды романизации.
+///
+/// Отдельный класс с равенством по значению: так набор переключателей можно
+/// положить в ключ провайдера, и повторная отрисовка не тянет сеть заново.
+class RomanizationOptions {
+  const RomanizationOptions({
+    this.japanese = true,
+    this.korean = true,
+    this.chinese = true,
+    this.hindi = true,
+    this.other = true,
+  });
+
+  final bool japanese;
+  final bool korean;
+  final bool chinese;
+  final bool hindi;
+  final bool other;
+
+  /// Хоть что-то включено — иначе запрос к сервису не нужен.
+  bool get isEnabled => japanese || korean || chinese || hindi || other;
+
+  bool allows(RomanizationGroup group) => switch (group) {
+        RomanizationGroup.japanese => japanese,
+        RomanizationGroup.korean => korean,
+        RomanizationGroup.chinese => chinese,
+        RomanizationGroup.hindi => hindi,
+        RomanizationGroup.other => other,
+      };
+
+  /// Подпись набора для кэша сервиса.
+  String get cacheKey => <String>[
+        if (japanese) 'ja',
+        if (korean) 'ko',
+        if (chinese) 'zh',
+        if (hindi) 'hi',
+        if (other) 'other',
+      ].join(',');
+
+  @override
+  bool operator ==(Object other) =>
+      other is RomanizationOptions &&
+      other.japanese == japanese &&
+      other.korean == korean &&
+      other.chinese == chinese &&
+      other.hindi == hindi &&
+      other.other == this.other;
+
+  @override
+  int get hashCode => Object.hash(japanese, korean, chinese, hindi, other);
+}
+
+/// Цель романизации строки: к какой группе относится и с какими кодами идти
+/// в сервис.
+///
+/// `source` — исходный язык (`sl`), `target` — куда транслитерировать (`tl`).
+class RomanizationTarget {
+  const RomanizationTarget(this.group, this.source, this.target);
+
+  final RomanizationGroup group;
+  final String source;
+  final String target;
+
+  @override
+  bool operator ==(Object other) =>
+      other is RomanizationTarget &&
+      other.group == group &&
+      other.source == source &&
+      other.target == target;
+
+  @override
+  int get hashCode => Object.hash(group, source, target);
+}
+
+/// Определяет по тексту строки, что и как романизировать.
+///
+/// Порядок проверок как в ArchiveTune (`shouldRomanizeLyricsLine`): японский →
+/// корейский → хинди → китайский → прочие. Именно такой порядок важен: строка с
+/// каной и иероглифами — японская, а не китайская, хотя иероглифы есть в обеих.
+/// `null` — романизировать нечего (латиница, цифры, неизвестная письменность).
+RomanizationTarget? detectRomanizationTarget(String text) {
+  bool hasKana = false;
+  bool hasHangul = false;
+  bool hasHan = false;
+  bool hasDevanagari = false;
+  String? otherCode;
+
+  for (final int rune in text.runes) {
+    if (_isKana(rune) || rune == 0x3005 /* 々 */ || rune == 0x3006 /* 〆 */) {
+      hasKana = true;
+      continue;
+    }
+    if (rune >= 0xAC00 && rune <= 0xD7A3) {
+      hasHangul = true;
+      continue;
+    }
+    if (rune >= 0x0900 && rune <= 0x097F) {
+      hasDevanagari = true;
+      continue;
+    }
+    if (_isHan(rune)) {
+      hasHan = true;
+      continue;
+    }
+    // «Прочие» — письменности вне исключённого набора. Язык берём по письменности;
+    // если её нет в списке поддерживаемых — романизации для строки нет.
+    otherCode ??= _otherLanguageCode(rune);
+  }
+
+  if (hasKana) {
+    return const RomanizationTarget(RomanizationGroup.japanese, 'ja', 'ja-Latn');
+  }
+  if (hasHangul) {
+    return const RomanizationTarget(RomanizationGroup.korean, 'ko', 'ko-Latn');
+  }
+  if (hasDevanagari) {
+    return const RomanizationTarget(RomanizationGroup.hindi, 'hi', 'hi-Latn');
+  }
+  // Китайский — только иероглифы без каны и хангыля (иначе это японский).
+  if (hasHan) {
+    // ВАЖНО: цель `zh-Latn`, а не `zh-CN-Latn`: второй вариант заставляет
+    // сервис переводить текст вместо транслитерации.
+    return const RomanizationTarget(RomanizationGroup.chinese, 'zh-CN', 'zh-Latn');
+  }
+  if (otherCode == null) return null;
+  return RomanizationTarget(
+    RomanizationGroup.other,
+    otherCode,
+    '$otherCode-Latn',
+  );
+}
+
+/// Хирагана и катакана (вместе с фонетическими расширениями).
+bool _isKana(int rune) =>
+    (rune >= 0x3040 && rune <= 0x309F) ||
+    (rune >= 0x30A0 && rune <= 0x30FF) ||
+    (rune >= 0x31F0 && rune <= 0x31FF);
+
+/// Иероглифы Han (CJK) — общие для китайского и японского.
+bool _isHan(int rune) =>
+    (rune >= 0x4E00 && rune <= 0x9FFF) ||
+    (rune >= 0x3400 && rune <= 0x4DBF) ||
+    (rune >= 0xF900 && rune <= 0xFAFF) ||
+    (rune >= 0x20000 && rune <= 0x2A6DF) ||
+    (rune >= 0x2F800 && rune <= 0x2FA1F);
+
+/// Язык по письменности для группы «прочие».
+///
+/// Поддерживаются те языки, у которых Google Translate умеет `*-Latn`
+/// (проверено вживую). Неизвестная письменность возвращает `null`.
+String? _otherLanguageCode(int rune) {
+  if (_inRange(rune, 0x0E00, 0x0E7F)) return 'th'; // тайский
+  if (_inRange(rune, 0x0E80, 0x0EFF)) return 'lo'; // лаосский
+  if (_inRange(rune, 0x1780, 0x17FF) || _inRange(rune, 0x19E0, 0x19FF)) {
+    return 'km'; // кхмерский
+  }
+  if (_inRange(rune, 0x1000, 0x109F) || _inRange(rune, 0xAA60, 0xAA7F)) {
+    return 'my'; // бирманский
+  }
+  if (_inRange(rune, 0x0D80, 0x0DFF)) return 'si'; // сингальский
+  if (_inRange(rune, 0x0A00, 0x0A7F)) return 'pa'; // панджаби (гурмукхи)
+  if (_inRange(rune, 0x0A80, 0x0AFF)) return 'gu'; // гуджарати
+  if (_inRange(rune, 0x0980, 0x09FF)) return 'bn'; // бенгальский
+  if (_inRange(rune, 0x0B80, 0x0BFF)) return 'ta'; // тамильский
+  if (_inRange(rune, 0x0C00, 0x0C7F)) return 'te'; // телугу
+  if (_inRange(rune, 0x0C80, 0x0CFF)) return 'kn'; // каннада
+  if (_inRange(rune, 0x0D00, 0x0D7F)) return 'ml'; // малаялам
+  if (_inRange(rune, 0x0590, 0x05FF) || _inRange(rune, 0xFB1D, 0xFB4F)) {
+    return 'he'; // иврит
+  }
+  if (_inRange(rune, 0x0600, 0x06FF) ||
+      _inRange(rune, 0x0750, 0x077F) ||
+      _inRange(rune, 0x08A0, 0x08FF) ||
+      _inRange(rune, 0xFB50, 0xFDFF) ||
+      _inRange(rune, 0xFE70, 0xFEFF)) {
+    return 'ar'; // арабский
+  }
+  if (_inRange(rune, 0x0370, 0x03FF) || _inRange(rune, 0x1F00, 0x1FFF)) {
+    return 'el'; // греческий
+  }
+  if (_inRange(rune, 0x0400, 0x04FF) ||
+      _inRange(rune, 0x0500, 0x052F) ||
+      _inRange(rune, 0x2DE0, 0x2DFF) ||
+      _inRange(rune, 0xA640, 0xA69F)) {
+    return 'ru'; // кириллица
+  }
+  if (_inRange(rune, 0x10A0, 0x10FF) ||
+      _inRange(rune, 0x1C90, 0x1CBF) ||
+      _inRange(rune, 0x2D00, 0x2D2F)) {
+    return 'ka'; // грузинский
+  }
+  return null;
+}
+
+bool _inRange(int rune, int start, int end) => rune >= start && rune <= end;
 
 /// Сигнатура закэшированного текста и его романизация.
 class _CacheEntry {

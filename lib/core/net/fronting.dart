@@ -83,9 +83,15 @@ class FrontedHttpClient implements HttpClient {
   /// Устанавливает подмену глобально, для всех HTTP-клиентов приложения.
   ///
   /// Возвращает функцию отката к прежнему состоянию.
+  ///
+  /// Прежнее состояние нужно сохранять, а не обнулять: приложение ставит свои
+  /// глобальные настройки обхода (подмена хоста, прокси), и проверка связи,
+  /// обнулив их, оставила бы все клиенты, созданные после неё (обложки, тексты,
+  /// резолвер потока), без обхода.
   static void Function() install(FrontingConfig config) {
+    final HttpOverrides? previous = HttpOverrides.current;
     HttpOverrides.global = FrontedHttpOverrides(config);
-    return () => HttpOverrides.global = null;
+    return () => HttpOverrides.global = previous;
   }
 
   Uri _rewrite(Uri url) {

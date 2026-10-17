@@ -138,24 +138,44 @@ class SettingsScreen extends ConsumerWidget {
                   onTap: () =>
                       _pickLyricsTextScale(context, controller, settings),
                 ),
+                // Пять отдельных переключателей как группа `romanization`
+                // в ArchiveTune: язык определяется по тексту сам, поэтому
+                // ручного выбора языка больше нет.
                 SettingsSwitchRow(
                   icon: Icons.translate,
-                  title: 'Романизация',
-                  subtitle: 'Латиница под строкой — для японского, корейского, '
-                      'китайского и других языков',
-                  value: settings.romanizationEnabled,
-                  onChanged: controller.setRomanizationEnabled,
+                  title: 'Романизация: японский',
+                  subtitle: 'Латиница под японским текстом',
+                  value: settings.romanizeJapanese,
+                  onChanged: controller.setRomanizeJapanese,
                 ),
-                // Язык имеет смысл выбирать только при включённой романизации:
-                // без неё запрос к сервису не уходит.
-                if (settings.romanizationEnabled)
-                  SettingsRow(
-                    icon: Icons.language,
-                    title: 'Язык романизации',
-                    subtitle: settings.romanizationLanguage.label,
-                    onTap: () =>
-                        _pickRomanizationLanguage(context, controller, settings),
-                  ),
+                SettingsSwitchRow(
+                  icon: Icons.translate,
+                  title: 'Романизация: корейский',
+                  subtitle: 'Латиница под корейским текстом',
+                  value: settings.romanizeKorean,
+                  onChanged: controller.setRomanizeKorean,
+                ),
+                SettingsSwitchRow(
+                  icon: Icons.translate,
+                  title: 'Романизация: китайский',
+                  subtitle: 'Латиница под китайским текстом',
+                  value: settings.romanizeChinese,
+                  onChanged: controller.setRomanizeChinese,
+                ),
+                SettingsSwitchRow(
+                  icon: Icons.translate,
+                  title: 'Романизация: хинди',
+                  subtitle: 'Латиница под текстом на хинди',
+                  value: settings.romanizeHindi,
+                  onChanged: controller.setRomanizeHindi,
+                ),
+                SettingsSwitchRow(
+                  icon: Icons.translate,
+                  title: 'Романизация: прочие языки',
+                  subtitle: 'Латиница для остальных нелатинских языков',
+                  value: settings.romanizeOther,
+                  onChanged: controller.setRomanizeOther,
+                ),
               ],
             ),
             const SizedBox(height: SettingsDims.sectionSpacing),
@@ -839,22 +859,6 @@ class SettingsScreen extends ConsumerWidget {
       label: (double v) => '${(v * 100).round()}%',
     );
     if (result != null) await controller.setLyricsTextScale(result);
-  }
-
-  Future<void> _pickRomanizationLanguage(
-    BuildContext context,
-    SettingsController controller,
-    AppSettings settings,
-  ) async {
-    final RomanizationLanguage? result =
-        await _showChoice<RomanizationLanguage>(
-      context,
-      title: 'Язык романизации',
-      current: settings.romanizationLanguage,
-      values: RomanizationLanguage.values,
-      label: (RomanizationLanguage v) => v.label,
-    );
-    if (result != null) await controller.setRomanizationLanguage(result);
   }
 
   Future<void> _pickSwipeSensitivity(
