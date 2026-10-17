@@ -78,8 +78,6 @@ enum LyricsSource {
   youlyPlus('YouLy+', 'Зеркала Lyricify — TTML или LRC'),
   lrclib('LRCLIB', 'Открытая база — текст с временами'),
   kugou('KuGou', 'Внешняя база — текст с временами'),
-  megalobiz('Megalobiz', 'Внешняя база — текст с временами'),
-  simpmusic('SimpMusic', 'Индекс по id видео — текст с временами'),
   unison('Unison', 'Внешняя база — текст с временами'),
   musixmatch('Paxsenix', 'Apple Music и Musixmatch — нужен ключ в настройках');
 
@@ -127,8 +125,9 @@ enum RomanizationLanguage {
 /// Порядок источников текста по умолчанию — как `DefaultLyricsProviderOrder`
 /// в ArchiveTune. Первый в списке — приоритетный.
 /// Порядок подобран по тому, что реально отвечает и что даёт подробнее
-/// разметку. Megalobiz и SimpMusic из списка убраны: их хосты недоступны,
-/// и они лишь держали поиск открытым до таймаута, ничего не принося.
+/// разметку. Хосты отброшенных источников недоступны из этой сети: они лишь
+/// держали поиск открытым до таймаута, ничего не принося, поэтому из проекта
+/// они удалены целиком.
 const List<LyricsSource> kDefaultLyricsOrder = <LyricsSource>[
   LyricsSource.youlyPlus,
   LyricsSource.betterLyrics,
@@ -139,6 +138,11 @@ const List<LyricsSource> kDefaultLyricsOrder = <LyricsSource>[
 ];
 
 /// Разбирает сохранённый порядок источников; при мусоре — порядок по умолчанию.
+///
+/// Имена, которых больше нет в [LyricsSource] (например, удалённые источники),
+/// молча пропускаются: у пользователя в сохранённых настройках они могут
+/// остаться, и это не должно ни ронять разбор, ни терять остальной порядок.
+/// Если после фильтрации не осталось ничего — берётся [kDefaultLyricsOrder].
 List<LyricsSource> _parseLyricsOrder(String? raw) {
   if (raw == null || raw.trim().isEmpty) return kDefaultLyricsOrder;
   final List<LyricsSource> parsed = <LyricsSource>[];
@@ -328,7 +332,6 @@ class AppSettings {
     this.lyricsProviderOrder = kDefaultLyricsOrder,
     this.romanizationEnabled = false,
     this.romanizationLanguage = RomanizationLanguage.japanese,
-    this.crossfadeSeconds = 0,
     this.autoPlayNext = true,
     this.searchSource = SearchSource.online,
     this.miniSwipeSensitivity = SwipeSensitivity.normal,
@@ -405,12 +408,6 @@ class AppSettings {
 
   /// Язык, для которого запрашивается романизация.
   final RomanizationLanguage romanizationLanguage;
-
-  /// Кроссфейд между треками в секундах. `0` — выключен.
-  ///
-  /// Значение хранится, но движок воспроизведения (вне этого модуля) пока
-  /// не умеет накладывать треки — см. отчёт.
-  final int crossfadeSeconds;
 
   final bool autoPlayNext;
 
@@ -515,7 +512,6 @@ class AppSettings {
     List<LyricsSource>? lyricsProviderOrder,
     bool? romanizationEnabled,
     RomanizationLanguage? romanizationLanguage,
-    int? crossfadeSeconds,
     bool? autoPlayNext,
     SearchSource? searchSource,
     SwipeSensitivity? miniSwipeSensitivity,
@@ -563,7 +559,6 @@ class AppSettings {
       romanizationEnabled: romanizationEnabled ?? this.romanizationEnabled,
       romanizationLanguage:
           romanizationLanguage ?? this.romanizationLanguage,
-      crossfadeSeconds: crossfadeSeconds ?? this.crossfadeSeconds,
       autoPlayNext: autoPlayNext ?? this.autoPlayNext,
       searchSource: searchSource ?? this.searchSource,
       miniSwipeSensitivity: miniSwipeSensitivity ?? this.miniSwipeSensitivity,
@@ -615,7 +610,6 @@ class AppSettings {
             lyricsProviderOrder.map((LyricsSource s) => s.name).join(','),
         'romanizationEnabled': romanizationEnabled,
         'romanizationLanguage': romanizationLanguage.name,
-        'crossfadeSeconds': crossfadeSeconds,
         'autoPlayNext': autoPlayNext,
         'searchSource': searchSource.name,
         'miniSwipeSensitivity': miniSwipeSensitivity.name,
@@ -672,7 +666,6 @@ class AppSettings {
       romanizationLanguage: RomanizationLanguage.fromName(
         json['romanizationLanguage'] as String?,
       ),
-      crossfadeSeconds: (json['crossfadeSeconds'] as num?)?.toInt() ?? 0,
       autoPlayNext: json['autoPlayNext'] as bool? ?? true,
       searchSource: SearchSource.fromName(json['searchSource'] as String?),
       miniSwipeSensitivity:

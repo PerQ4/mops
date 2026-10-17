@@ -6,6 +6,7 @@ import '../../core/net/anti_dpi.dart';
 import '../../core/theme/seed_colors.dart';
 import '../../core/theme/ui_scaler.dart';
 import '../../data/local/app_settings.dart';
+import '../../data/sources/paxsenix_source.dart';
 import '../../state/auth_controller.dart';
 import '../../core/theme/layout.dart';
 import '../../state/providers.dart';
@@ -115,7 +116,7 @@ class SettingsScreen extends ConsumerWidget {
                   subtitle: settings.musixmatchApiKey.isEmpty
                       ? 'Не задан — источник Musixmatch выключен'
                       : 'Задан',
-                  onTap: () => _editMusixmatchKey(context, controller, settings),
+                  onTap: () => _editMusixmatchKey(context, ref, controller, settings),
                 ),
                 SettingsRow(
                   icon: Icons.reorder,
@@ -580,6 +581,126 @@ class SettingsScreen extends ConsumerWidget {
   }
 
   /// Ключ Paxsenix: через него работает источник Musixmatch.
+  Future<void> _editMusixmatchKey(
+    BuildContext context,
+    WidgetRef ref,
+    SettingsController controller,
+    AppSettings settings,
+  ) async {
+    final TextEditingController field =
+        TextEditingController(text: settings.musixmatchApiKey);
+    // Состояние проверки живёт внутри диалога: он не закрывается и не теряет
+    // введённый ключ, пока пользователь не нажмёт «Сохранить»/«Отмена».
+    PaxsenixKeyStatus? status;
+    bool checking = false;
+
+    final String? result = await showDialog<String>(
+      context: context,
+      builder: (BuildContext dialogContext) => StatefulBuilder(
+        builder: (BuildContext context, StateSetter setState) {
+          final ColorScheme scheme = Theme.of(context).colorScheme;
+
+          Future<void> runCheck() async {
+            final String key = field.text;
+            setState(() {
+              checking = true;
+              status = null;
+            });
+            // Сбрасываем кэш, чтобы повторное нажатие снова сходило в сеть.
+            ref.invalidate(paxsenixKeyCheckProvider(key));
+            final PaxsenixKeyStatus value =
+                await ref.read(paxsenixKeyCheckProvider(key).future);
+            if (!dialogContext.mounted) return;
+            setState(() {
+              checking = false;
+              status = value;
+            });
+          }
+
+          return AlertDialog(
+            title: const Text('Ключ Paxsenix (Musixmatch)'),
+            content: Column(
+              mainAxisSize: MainAxisSize.min,
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: <Widget>[
+                TextField(
+                  controller: field,
+                  autofocus: true,
+                  decoration:
+                      const InputDecoration(hintText: 'Bearer-ключ Paxsenix'),
+                ),
+                const SizedBox(height: 12),
+                const Text(
+                  'Ключ выдаётся на lyrics.paxsenix.org — как в ArchiveTune. '
+                  'Без ключа источник Musixmatch пропускается.',
+                  style: TextStyle(fontSize: 12),
+                ),
+                const SizedBox(height: 12),
+                Row(
+                  children: <Widget>[
+                    OutlinedButton.icon(
+                      onPressed: checking ? null : runCheck,
+                      icon: checking
+                          ? const SizedBox(
+                              width: 16,
+                              height: 16,
+                              child: CircularProgressIndicator(strokeWidth: 2),
+                            )
+                          : const Icon(Icons.verified_outlined, size: 18),
+                      label: Text(checking ? 'Проверка…' : 'Проверить ключ'),
+                    ),
+                  ],
+                ),
+                if (status != null)
+                  Padding(
+                    padding: const EdgeInsets.only(top: 8),
+                    child: Row(
+                      children: <Widget>[
+                        Icon(
+                          status!.ok
+                              ? Icons.check_circle_outline
+                              : Icons.error_outline,
+                          size: 18,
+                          color: status!.ok ? scheme.tertiary : scheme.error,
+                        ),
+                        const SizedBox(width: 6),
+                        Text(
+                          status!.title,
+                          style: TextStyle(
+                            fontSize: 12,
+                            color: status!.ok ? scheme.tertiary : scheme.error,
+                          ),
+                        ),
+                      ],
+                    ),
+                  ),
+              ],
+            ),
+            actions: <Widget>[
+              TextButton(
+                onPressed: () => launchUrl(
+                  Uri.parse('https://lyrics.paxsenix.org/'),
+                  mode: LaunchMode.externalApplication,
+                ),
+                child: const Text('Получить ключ'),
+              ),
+              TextButton(
+                onPressed: () => Navigator.pop(dialogContext),
+                child: const Text('Отмена'),
+              ),
+              FilledButton(
+                onPressed: () => Navigator.pop(dialogContext, field.text),
+                child: const Text('Сохранить'),
+              ),
+            ],
+          );
+        },
+      ),
+    );
+    field.dispose();
+    if (result != null) await controller.setMusixmatchApiKey(result);
+  }
+
   /// Порядок источников текста: первый — приоритетный (как в ArchiveTune).
   Future<void> _pickLyricsOrder(
     BuildContext context,
@@ -646,57 +767,6 @@ class SettingsScreen extends ConsumerWidget {
       ),
     );
     if (result != null) await controller.setLyricsProviderOrder(result);
-  }
-
-  Future<void> _editMusixmatchKey(
-    BuildContext context,
-    SettingsController controller,
-    AppSettings settings,
-  ) async {
-    final TextEditingController field =
-        TextEditingController(text: settings.musixmatchApiKey);
-    final String? result = await showDialog<String>(
-      context: context,
-      builder: (BuildContext dialogContext) => AlertDialog(
-        title: const Text('Ключ Paxsenix (Musixmatch)'),
-        content: Column(
-          mainAxisSize: MainAxisSize.min,
-          crossAxisAlignment: CrossAxisAlignment.start,
-          children: <Widget>[
-            TextField(
-              controller: field,
-              autofocus: true,
-              decoration: const InputDecoration(hintText: 'Bearer-ключ Paxsenix'),
-            ),
-            const SizedBox(height: 12),
-            const Text(
-              'Ключ выдаётся на lyrics.paxsenix.org — как в ArchiveTune. '
-              'Без ключа источник Musixmatch пропускается.',
-              style: TextStyle(fontSize: 12),
-            ),
-          ],
-        ),
-        actions: <Widget>[
-          TextButton(
-            onPressed: () => launchUrl(
-              Uri.parse('https://lyrics.paxsenix.org/'),
-              mode: LaunchMode.externalApplication,
-            ),
-            child: const Text('Получить ключ'),
-          ),
-          TextButton(
-            onPressed: () => Navigator.pop(dialogContext),
-            child: const Text('Отмена'),
-          ),
-          FilledButton(
-            onPressed: () => Navigator.pop(dialogContext, field.text),
-            child: const Text('Сохранить'),
-          ),
-        ],
-      ),
-    );
-    field.dispose();
-    if (result != null) await controller.setMusixmatchApiKey(result);
   }
 
   /// Application ID приложения Discord: без него presence не отправляется.

@@ -8,8 +8,6 @@ import 'package:mops/data/sources/better_lyrics_source.dart';
 import 'package:mops/data/sources/kugou_source.dart';
 import 'package:mops/data/sources/lrclib_source.dart';
 import 'package:mops/data/sources/lyrics_match.dart';
-import 'package:mops/data/sources/megalobiz_source.dart';
-import 'package:mops/data/sources/simpmusic_source.dart';
 import 'package:mops/data/sources/unison_source.dart';
 import 'package:mops/data/sources/youly_plus_source.dart';
 
@@ -84,9 +82,6 @@ Future<void> main() async {
       () => LrclibSource().fetch(title: title, artist: artist, duration: duration));
   await timed('kugou',
       () => KugouSource().fetch(title: title, artist: artist, duration: duration));
-  await timed('megalobiz', () => MegalobizSource().fetch(title: title, artist: artist));
-  await timed('simpmusic',
-      () => SimpMusicSource().fetch(videoId: videoId, duration: duration));
   await timed('unison',
       () => UnisonSource().fetch(videoId: videoId, title: title, artist: artist, duration: duration));
 

@@ -6,6 +6,22 @@ import '../models/models.dart';
 import 'lyrics_format.dart';
 import 'lyrics_match.dart';
 
+/// Результат проверки ключа Paxsenix — то, что показывает экран настроек.
+///
+/// `title` — короткая подпись для пользователя, `ok` — удалось ли
+/// подтвердить ключ (для выбора цвета в UI).
+enum PaxsenixKeyStatus {
+  empty('Ключ не задан', false),
+  valid('Ключ работает', true),
+  rejected('Ключ не принят', false),
+  unavailable('Сервис недоступен', false);
+
+  const PaxsenixKeyStatus(this.title, this.ok);
+
+  final String title;
+  final bool ok;
+}
+
 /// Тексты через Paxsenix (`api.paxsenix.org`) — как в ArchiveTune.
 ///
 /// Почему он: закрытые базы (Apple Music, Musixmatch) не отдают текст напрямую,
@@ -42,6 +58,60 @@ class PaxsenixSource {
     if (!musix.isEmpty) return musix;
 
     return _lrcget(title.trim(), artist.trim(), key);
+  }
+
+  /// Лёгкая проверка ключа: один запрос к базе lrcget с заведомо известным
+  /// треком. Исключения наружу не выходят — только понятный статус, чтобы
+  /// настройки могли объяснить, принят ключ или нет.
+  Future<PaxsenixKeyStatus> checkKey(String apiKey) async {
+    final String key = apiKey.trim();
+    if (key.isEmpty) return PaxsenixKeyStatus.empty;
+
+    try {
+      final Uri uri = Uri.parse('$_host/lyrics/lrcget').replace(
+        queryParameters: <String, String>{'q': 'radiohead creep'},
+      );
+      final HttpClientRequest request = await _client.getUrl(uri);
+      request.headers.set(HttpHeaders.authorizationHeader, 'Bearer $key');
+      request.headers.set(
+        HttpHeaders.acceptHeader,
+        'application/json, text/plain, */*',
+      );
+      final HttpClientResponse response =
+          await request.close().timeout(const Duration(seconds: 12));
+      final String body = await response.transform(utf8.decoder).join();
+
+      // 401/403 — ключ не принят; остальные не-200 — сервис недоступен.
+      if (response.statusCode == HttpStatus.unauthorized ||
+          response.statusCode == HttpStatus.forbidden) {
+        return PaxsenixKeyStatus.rejected;
+      }
+      if (response.statusCode != HttpStatus.ok) {
+        return PaxsenixKeyStatus.unavailable;
+      }
+
+      // Даже при 200 сервис может вернуть ошибку ключа в теле.
+      final dynamic decoded = _tryDecode(body);
+      if (decoded is Map) {
+        final dynamic error = decoded['error'];
+        if (error is String && _isKeyError(error)) {
+          return PaxsenixKeyStatus.rejected;
+        }
+      }
+      // Любой неошибочный ответ означает, что ключ принят.
+      return PaxsenixKeyStatus.valid;
+    } on Object {
+      return PaxsenixKeyStatus.unavailable;
+    }
+  }
+
+  /// Похоже ли сообщение об ошибке на отказ по ключу.
+  bool _isKeyError(String error) {
+    final String value = error.toLowerCase();
+    return value.contains('key_required') ||
+        value.contains('key_invalid') ||
+        value.contains('invalid_key') ||
+        value.contains('unauthorized');
   }
 
   // --- Apple Music ---------------------------------------------------------

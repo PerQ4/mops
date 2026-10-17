@@ -9,6 +9,7 @@ import '../core/net/anti_dpi.dart';
 import '../core/theme/seed_colors.dart';
 import '../core/theme/ui_scaler.dart';
 import '../data/local/app_settings.dart';
+import '../data/sources/paxsenix_source.dart';
 import '../data/sources/romanization.dart';
 import '../data/sources/stream_downloader.dart';
 import '../data/sources/stream_proxy.dart';
@@ -102,10 +103,6 @@ class SettingsController extends Notifier<AppSettings> {
   /// Множитель размера текста песни.
   Future<void> setLyricsTextScale(double scale) =>
       update((AppSettings s) => s.copyWith(lyricsTextScale: scale));
-
-  /// Кроссфейд между треками в секундах (`0` — выключен).
-  Future<void> setCrossfadeSeconds(int seconds) =>
-      update((AppSettings s) => s.copyWith(crossfadeSeconds: seconds));
 
   /// Где искать: онлайн или только в библиотеке.
   Future<void> setSearchSource(SearchSource source) =>
@@ -261,6 +258,28 @@ class SettingsController extends Notifier<AppSettings> {
 
 final NotifierProvider<SettingsController, AppSettings> settingsControllerProvider =
     NotifierProvider<SettingsController, AppSettings>(SettingsController.new);
+
+/// ---------------------------------------------------------------------------
+/// Проверка ключа Paxsenix
+/// ---------------------------------------------------------------------------
+
+/// Отдельный источник для проверки ключа: у проверки свой HTTP-клиент, чтобы
+/// не мешать источнику текста, который занят поиском по треку.
+final Provider<PaxsenixSource> paxsenixKeyCheckerProvider =
+    Provider<PaxsenixSource>((ref) {
+  final PaxsenixSource source = PaxsenixSource();
+  ref.onDispose(source.dispose);
+  return source;
+});
+
+/// Статус ключа Paxsenix для введённого значения.
+///
+/// Без `autoDispose`: результат нужен целиком, пока открыт диалог, иначе
+/// отменённый при закрытии запрос показал бы «сервис недоступен» на пустом месте.
+final paxsenixKeyCheckProvider =
+    FutureProvider.family<PaxsenixKeyStatus, String>(
+  (ref, key) => ref.watch(paxsenixKeyCheckerProvider).checkKey(key),
+);
 
 /// ---------------------------------------------------------------------------
 /// Романизация текста

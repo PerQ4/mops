@@ -12,9 +12,7 @@ import '../data/sources/library_source.dart';
 import '../data/sources/kugou_source.dart';
 import '../data/sources/lrclib_source.dart';
 import '../data/sources/lyrics_match.dart';
-import '../data/sources/megalobiz_source.dart';
 import '../data/sources/paxsenix_source.dart';
-import '../data/sources/simpmusic_source.dart';
 import '../data/sources/unison_source.dart';
 import '../data/sources/youly_plus_source.dart';
 import '../core/utils/format.dart';
@@ -277,20 +275,6 @@ final betterLyricsSourceProvider = Provider<BetterLyricsSource>((ref) {
 /// YouLy+: несколько зеркал с TTML/LRC.
 final youlyPlusSourceProvider = Provider<YouLyPlusSource>((ref) {
   final YouLyPlusSource source = YouLyPlusSource();
-  ref.onDispose(source.dispose);
-  return source;
-});
-
-/// Megalobiz: текст с временами разбирается прямо из HTML.
-final megalobizSourceProvider = Provider<MegalobizSource>((ref) {
-  final MegalobizSource source = MegalobizSource();
-  ref.onDispose(source.dispose);
-  return source;
-});
-
-/// SimpMusic: база индексируется по id видео YouTube.
-final simpmusicSourceProvider = Provider<SimpMusicSource>((ref) {
-  final SimpMusicSource source = SimpMusicSource();
   ref.onDispose(source.dispose);
   return source;
 });
@@ -631,8 +615,6 @@ final lyricsProvider =
   final YouLyPlusSource youlyPlus = ref.watch(youlyPlusSourceProvider);
   final LrclibSource lrclib = ref.watch(lrclibSourceProvider);
   final KugouSource kugou = ref.watch(kugouSourceProvider);
-  final MegalobizSource megalobiz = ref.watch(megalobizSourceProvider);
-  final SimpMusicSource simpmusic = ref.watch(simpmusicSourceProvider);
   final UnisonSource unison = ref.watch(unisonSourceProvider);
   final PaxsenixSource paxsenix = ref.watch(paxsenixSourceProvider);
   final LyricsCache cache = ref.watch(lyricsCacheProvider);
@@ -658,13 +640,8 @@ final lyricsProvider =
         return bounded(catalog.lyrics(request.videoId));
       case LyricsSource.subtitles:
         return bounded(catalog.subtitleLyrics(request.videoId));
-      // SimpMusic и Unison индексируются по id видео и в метаданных не
-      // нуждаются — их пробуем всегда.
-      case LyricsSource.simpmusic:
-        return bounded(simpmusic.fetch(
-          videoId: request.videoId,
-          duration: duration,
-        ));
+      // Unison индексируется по id видео и в метаданных не нуждается —
+      // его пробуем всегда.
       case LyricsSource.unison:
         return bounded(unison.fetch(
           videoId: request.videoId,
@@ -707,9 +684,6 @@ final lyricsProvider =
           artist: artist!,
           duration: duration,
         ));
-      case LyricsSource.megalobiz:
-        if (!externalOk) return Future<Lyrics>.value(Lyrics.none);
-        return bounded(megalobiz.fetch(title: title!, artist: artist!));
       case LyricsSource.musixmatch:
         // Paxsenix требует ключ; без ключа — пропуск.
         if (!externalOk || musixmatchKey.isEmpty) {
