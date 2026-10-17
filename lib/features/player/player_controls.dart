@@ -287,35 +287,40 @@ class _M3ESeekBar extends StatelessWidget {
     // штатный Slider Material 3 (как и написано в описании стилей): раньше
     // волной рисовались все, кроме «обычного», и полоса перемотки с кружком
     // выглядела волнистой вопреки настройке.
-    final bool wavy = style == ProgressBarStyle.wavy;
     // Параметры волны — из `WavySliderExpressive` (ArchiveTune): штрих 6,
     // длина волны 36 (`strokeWidth * 6`), а волна заметна, только пока идёт
     // воспроизведение (`waveAmplitudeWhenPlaying`). Живая амплитуда приходит
     // параметром и меняется вместе с громкостью/позицией.
-    final Widget slider = wavy
-        ? m3e.M3ESlider.wavy(
-            value: value,
-            onChanged: onChanged,
-            onChangeEnd: onChangeEnd,
-            amplitude: waveAmplitude.clamp(0.0, 1.0),
-            wavelength: 36,
-            // Толщина волны — не как у обычной дорожки: у `SquigglySlider`
-            // штрих 6 (`strokeWidth = 6.dp`), иначе волна выходит втрое
-            // жирнее оригинала.
-            trackThickness: 6,
-            // Ползунок «с кружком» — прямоугольник 6x24 из `SquigglySlider`
-            // (`height = strokeWidth * 4`), а не высокая ручка Material 3.
-            // У «волнистого» рычажка нет, поэтому и места под него не
-            // резервируем (иначе дорожка уходила в отступ по краям).
-            thumbLength: style == ProgressBarStyle.wavy ? 0 : 24,
-            // Ползунок есть только у «с кружком»; у «волнистого» его нет.
-            thumbBuilder: style == ProgressBarStyle.wavy ? _noThumb : null,
-          )
-        : m3e.M3ESlider(
-            value: value,
-            onChanged: onChanged,
-            onChangeEnd: onChangeEnd,
-          );
+    final Widget slider = switch (style) {
+      // «Волнистый» — тонкая дорожка-синусоида без ползунка.
+      ProgressBarStyle.wavy => m3e.M3ESlider.wavy(
+          value: value,
+          onChanged: onChanged,
+          onChangeEnd: onChangeEnd,
+          amplitude: waveAmplitude.clamp(0.0, 1.0),
+          wavelength: 36,
+          trackThickness: 6,
+          // У «волнистого» рычажка нет, поэтому и места под него не
+          // резервируем (иначе дорожка уходила в отступ по краям).
+          thumbLength: 0,
+          thumbBuilder: _noThumb,
+        ),
+      // «С кружком» — штатный Material-слайдер: у него КРУГЛЫЙ ползунок
+      // (форма задана в теме приложения), и именно этим он отличается от
+      // «Обычного», где ползунок — плашка из M3E. Раньше он шёл волнистым
+      // вопреки названию, а после отмены волны стал неотличим от «Обычного».
+      ProgressBarStyle.circular => Slider(
+          value: value,
+          onChanged: onChanged,
+          onChangeEnd: onChangeEnd,
+        ),
+      // «Обычный» — слайдер M3E с ползунком-плашкой.
+      _ => m3e.M3ESlider(
+          value: value,
+          onChanged: onChanged,
+          onChangeEnd: onChangeEnd,
+        ),
+    };
 
     // Пакет — отдельная тема. Собираем её из цвета акцента приложения:
     // иначе дорожка и ползунок будут стандартными лиловыми. Тему берём из
