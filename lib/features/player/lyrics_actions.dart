@@ -750,8 +750,69 @@ class _HitResults extends ConsumerWidget {
   }
 }
 
-/// Карточка найденного трека: источник, метаданные и подсказка о синхронизации.
-class _HitCard extends StatelessWidget {
+/// Первые непустые строки текста — предпросмотр в карточке.
+///
+/// Берём до трёх строк, а показываем две: этого хватает, чтобы отличить
+/// нужную запись по содержимому, а не только по названию.
+String _lyricsPreview(Lyrics lyrics) {
+  final List<String> lines;
+  final List<TimedLyric>? timed = lyrics.timed;
+  if (timed != null && timed.isNotEmpty) {
+    lines = timed.map((TimedLyric line) => line.text).toList();
+  } else {
+    lines = (lyrics.plain ?? '').split('\n');
+  }
+  return lines
+      .map((String line) => line.trim())
+      .where((String line) => line.isNotEmpty)
+      .take(3)
+      .join('\n');
+}
+
+/// Честная подпись вместо пустого места, когда текста у записи нет.
+Widget _previewMissing(TextTheme text, ColorScheme scheme) => Text(
+      'Текста нет',
+      style: text.bodySmall?.copyWith(color: scheme.onSurfaceVariant),
+      maxLines: 1,
+      overflow: TextOverflow.ellipsis,
+    );
+
+/// Заглушка предпросмотра: серые полоски на время загрузки текста.
+class _PreviewPlaceholder extends StatelessWidget {
+  const _PreviewPlaceholder();
+
+  @override
+  Widget build(BuildContext context) {
+    final Color color = Theme.of(context)
+        .colorScheme
+        .onSurfaceVariant
+        .withValues(alpha: 0.25);
+    return Column(
+      crossAxisAlignment: CrossAxisAlignment.start,
+      mainAxisSize: MainAxisSize.min,
+      children: <Widget>[
+        _bar(color, 0.75),
+        const SizedBox(height: 6),
+        _bar(color, 0.45),
+      ],
+    );
+  }
+
+  Widget _bar(Color color, double factor) => FractionallySizedBox(
+        alignment: Alignment.centerLeft,
+        widthFactor: factor,
+        child: Container(
+          height: 8,
+          decoration: BoxDecoration(
+            color: color,
+            borderRadius: BorderRadius.circular(4),
+          ),
+        ),
+      );
+}
+
+/// Карточка найденного трека: метаданные, предпросмотр текста и источник.
+class _HitCard extends ConsumerWidget {
   const _HitCard({
     required this.hit,
     required this.selected,
@@ -763,7 +824,7 @@ class _HitCard extends StatelessWidget {
   final VoidCallback onTap;
 
   @override
-  Widget build(BuildContext context) {
+  Widget build(BuildContext context, WidgetRef ref) {
     final ColorScheme scheme = Theme.of(context).colorScheme;
     final TextTheme text = Theme.of(context).textTheme;
 
@@ -781,6 +842,11 @@ class _HitCard extends StatelessWidget {
       if (hit.duration != null && hit.duration! > Duration.zero)
         formatDuration(hit.duration),
     ].join(' · ');
+
+    // Текст тянем отдельным autoDispose-провайдером: он срабатывает только
+    // для построенных карточек, то есть запросы уходят лишь за видимыми
+    // строками списка, а не за всеми найденными записями.
+    final AsyncValue<Lyrics> preview = ref.watch(lyricsHitPreviewProvider(hit));
 
     return Card(
       margin: const EdgeInsets.only(bottom: 8),
@@ -814,7 +880,33 @@ class _HitCard extends StatelessWidget {
                         maxLines: 2,
                         overflow: TextOverflow.ellipsis,
                       ),
-                    const SizedBox(height: 4),
+                    const SizedBox(height: 6),
+                    // Место под превью резервируем заранее: иначе карточка
+                    // прыгала бы по высоте, когда текст догрузится.
+                    ConstrainedBox(
+                      constraints: const BoxConstraints(minHeight: 34),
+                      child: preview.when(
+                        loading: () => const _PreviewPlaceholder(),
+                        // Ошибка — это просто «нет текста», не пустое место.
+                        error: (Object error, StackTrace stack) =>
+                            _previewMissing(text, scheme),
+                        data: (Lyrics lyrics) {
+                          final String sample = _lyricsPreview(lyrics);
+                          if (sample.isEmpty) {
+                            return _previewMissing(text, scheme);
+                          }
+                          return Text(
+                            sample,
+                            style: text.bodySmall?.copyWith(
+                              color: scheme.onSurfaceVariant,
+                            ),
+                            maxLines: 2,
+                            overflow: TextOverflow.ellipsis,
+                          );
+                        },
+                      ),
+                    ),
+                    const SizedBox(height: 6),
                     Row(
                       children: <Widget>[
                         Flexible(

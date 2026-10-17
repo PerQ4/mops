@@ -774,6 +774,69 @@ int _hitScore(
   return score;
 }
 
+/// Текст ровно выбранной записи — общий путь и для применения выбора, и для
+/// предпросмотра в списке. Источники передаются явно: у вызывающих они уже
+/// прочитаны из ref, а читать ref вне его времени жизни нельзя.
+Future<Lyrics> _fetchHit(
+  LyricsTrackHit hit, {
+  required LrclibSource lrclib,
+  required KugouSource kugou,
+  required UnisonSource unison,
+  required PaxsenixSource paxsenix,
+  required String musixmatchKey,
+}) {
+  switch (hit.source) {
+    case LyricsSource.lrclib:
+      return lrclib.fetchHit(hit);
+    case LyricsSource.kugou:
+      return kugou.fetchHit(hit);
+    case LyricsSource.unison:
+      return unison.fetchHit(hit);
+    case LyricsSource.musixmatch:
+      return paxsenix.fetchHit(hit, apiKey: musixmatchKey);
+    case LyricsSource.auto:
+    case LyricsSource.music:
+    case LyricsSource.subtitles:
+    case LyricsSource.betterLyrics:
+    case LyricsSource.youlyPlus:
+      // Эти источники списком не ищут — выбранной записи у них не бывает.
+      return Future<Lyrics>.value(Lyrics.none);
+  }
+}
+
+/// Предпросмотр текста найденной записи — первые строки прямо в карточке.
+///
+/// `autoDispose` обязателен: записей в списке бывает 10–20, и грузить текст
+/// для всех сразу — это столько же сетевых запросов впустую. С `autoDispose`
+/// и `ListView.builder` запрос уходит только за теми карточками, что реально
+/// построены (то есть видны на экране).
+final lyricsHitPreviewProvider =
+    FutureProvider.autoDispose.family<Lyrics, LyricsTrackHit>((ref, hit) async {
+  final LrclibSource lrclib = ref.watch(lrclibSourceProvider);
+  final KugouSource kugou = ref.watch(kugouSourceProvider);
+  final UnisonSource unison = ref.watch(unisonSourceProvider);
+  final PaxsenixSource paxsenix = ref.watch(paxsenixSourceProvider);
+  final String musixmatchKey = ref.watch(
+    settingsControllerProvider.select((AppSettings s) => s.musixmatchApiKey),
+  );
+
+  try {
+    // Бюджет тот же, что у поиска: молчащая база не должна держать карточку
+    // в «загрузке». Ошибка и пустой ответ одинаково означают «текста нет» —
+    // карточка покажет это подписью, а не исключением.
+    return await _fetchHit(
+      hit,
+      lrclib: lrclib,
+      kugou: kugou,
+      unison: unison,
+      paxsenix: paxsenix,
+      musixmatchKey: musixmatchKey,
+    ).timeout(_lyricsSourceBudget, onTimeout: () => Lyrics.none);
+  } on Object {
+    return Lyrics.none;
+  }
+});
+
 /// id треков, для которых текст уже найден.
 ///
 /// Отметка в списках появляется только после того, как текст реально получен
@@ -953,25 +1016,14 @@ final lyricsProvider =
   }
 
   // Текст ровно выбранной записи: источник знает, как её скачать.
-  Future<Lyrics> fetchHit(LyricsTrackHit hit) {
-    switch (hit.source) {
-      case LyricsSource.lrclib:
-        return bounded(lrclib.fetchHit(hit));
-      case LyricsSource.kugou:
-        return bounded(kugou.fetchHit(hit));
-      case LyricsSource.unison:
-        return bounded(unison.fetchHit(hit));
-      case LyricsSource.musixmatch:
-        return bounded(paxsenix.fetchHit(hit, apiKey: musixmatchKey));
-      case LyricsSource.auto:
-      case LyricsSource.music:
-      case LyricsSource.subtitles:
-      case LyricsSource.betterLyrics:
-      case LyricsSource.youlyPlus:
-        // Эти источники списком не ищут — выбранной записи у них не бывает.
-        return Future<Lyrics>.value(Lyrics.none);
-    }
-  }
+  Future<Lyrics> fetchHit(LyricsTrackHit hit) => bounded(_fetchHit(
+        hit,
+        lrclib: lrclib,
+        kugou: kugou,
+        unison: unison,
+        paxsenix: paxsenix,
+        musixmatchKey: musixmatchKey,
+      ));
 
   controller.add(const LyricsSearchState(loading: true));
 
