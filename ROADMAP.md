@@ -68,6 +68,14 @@
 | Жест «назад» (тачпад, кнопка мыши, Alt+влево) | `lib/widgets/back_gesture.dart` | ✅ |
 | Служебные проверки сети и текстов | `tool/**` | ✅ |
 | Golden-тесты интерфейса | `test/goldens/**`, `test/ui_smoke_test.dart` | ✅ |
+| Подписки на исполнителей: кнопка на странице и общее состояние | `lib/state/library_providers.dart` (`SubscribedIdsController`), `lib/features/artist/artist_screen.dart` | ✅ |
+| Сохранение альбомов и плейлистов в библиотеку | `lib/data/sources/library_source.dart` (`setSaved`, `likedAlbums`), `lib/features/album/media_hero.dart` (`HeroSaveButton`) | ✅ |
+| Просмотр клипов во встроенном браузере (пауза своего звука, запасной путь в браузер) | `lib/features/player/clip_screen.dart`, `lib/features/common/navigation.dart` | ✅ |
+| Клик по названию трека открывает альбом (альбом разрешается по `next` и кэшируется) | `lib/data/sources/catalog_source.dart` (`trackAlbum`), `lib/widgets/section_list.dart` | ✅ |
+| Ручной поиск текста списком: метаданные, пометка синхронизации, предпросмотр | `lib/features/player/lyrics_actions.dart`, `lib/state/catalog_providers.dart` (`lyricsHitPreviewProvider`) | ✅ |
+| Вставка-пауза отдельной строкой списка с заливающейся снизу нотой | `lib/features/player/lyrics_view.dart` | ✅ |
+| Романизация как в ArchiveTune: автоопределение языка по тексту и пять переключателей | `lib/data/sources/romanization.dart`, `lib/features/settings/settings_screen.dart` | ✅ |
+| Масштаб интерфейса с привязкой к сетке пикселей | `lib/core/theme/ui_scaler.dart` | ✅ |
 
 ### Что есть у нас, но чего нет в ArchiveTune
 
@@ -109,7 +117,7 @@
 - [ ] 1.2 Восстановление очереди и позиции между запусками
 - [ ] 1.3 Скорость и питч в плеере
 - [ ] 1.4 Копировать ссылку и «поделиться» треком
-- [ ] 1.5 Клик по строке текста — перемотка к ней
+- [x] 1.5 Клик по строке текста — перемотка к ней
 - [ ] 1.6 Поделиться текстом картинкой
 - [ ] 1.7 Экспорт и импорт настроек (резервная копия)
 - [ ] 1.8 Настройки содержимого: скрыть explicit и видео, длина топа
@@ -591,7 +599,7 @@
 
 - [ ] 5.1 Last.fm: скробблинг **[LIVE]**
 - [ ] 5.2 ListenBrainz: скробблинг **[LIVE]**
-- [ ] 5.3 Discord: кнопки, таймстампы, состояние паузы
+- [x] 5.3 Discord: кнопки, таймстампы, состояние паузы
 
 #### 5.1 Last.fm: скробблинг
 - **Зачем:** вести статистику прослушивания в Last.fm, как в оригинале.
