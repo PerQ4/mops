@@ -2,8 +2,11 @@ import 'dart:async';
 import 'dart:convert';
 import 'dart:io';
 
+import 'package:flutter/foundation.dart';
+
 import '../models/models.dart';
 import 'lyrics_format.dart';
+import 'lyrics_match.dart';
 
 /// Тексты из YouLy+ (`lyricsplus.*`).
 ///
@@ -111,11 +114,16 @@ class YouLyPlusSource {
 
     final String? body = await _getText(uri);
     if (body == null) return Lyrics.none;
-    return _decode(body);
+    return _decode(body, title, artist);
   }
 
   /// Разбирает ответ зеркала: TTML, JSON со строками или обычный LRC.
-  Lyrics _decode(String body) {
+  ///
+  /// Заодно проверяет, что сервис отдал текст ИМЕННО этого трека: зеркала
+  /// ищут по метаданным и на редких записях подсовывают кавер или одноимённую
+  /// песню. Если в ответе есть название или исполнитель и ни одно из них не
+  /// совпало с запросом — результат отбрасываем, а не показываем чужой текст.
+  Lyrics _decode(String body, String title, String artist) {
     final String trimmed = body.trim();
     if (trimmed.isEmpty) return Lyrics.none;
 
@@ -130,27 +138,44 @@ class YouLyPlusSource {
       return lyricsFromText(trimmed, 'YouLy+');
     }
 
+    final _ResponseMeta meta = _readMeta(decoded);
+    if (!_metaMatches(meta, title, artist)) {
+      debugPrint('[YouLy+] ответ не о том треке: «${meta.title}» / '
+          '«${meta.artist}» вместо «$title» / «$artist»');
+      return Lyrics.none;
+    }
+
     final String? ttml = _findString(decoded, 'ttml');
     if (ttml != null) {
-      final Lyrics synced = _fromTtml(ttml);
+      final Lyrics synced = _fromTtml(ttml, meta: meta);
       if (!synced.isEmpty) return synced;
     }
 
     final dynamic lyricsNode = _findValue(decoded, 'lyrics');
     if (lyricsNode is String) {
-      return lyricsFromText(lyricsNode, 'YouLy+');
+      // TTML приходит и строкой внутри JSON — тогда разбираем его как TTML.
+      if (_looksLikeTtml(lyricsNode)) {
+        final Lyrics synced = _fromTtml(lyricsNode, meta: meta);
+        if (!synced.isEmpty) return synced;
+      }
+      return lyricsFromText(lyricsNode, 'YouLy+', match: meta.toMatch());
     }
     if (lyricsNode is List) {
-      return _fromLineList(lyricsNode, decoded);
+      return _fromLineList(lyricsNode, decoded, meta);
     }
     return Lyrics.none;
   }
 
   /// Собирает [Lyrics] из TTML, отметив наличие перевода (для оценки).
-  Lyrics _fromTtml(String ttml) => lyricsFromTimed(
+  Lyrics _fromTtml(String ttml, {_ResponseMeta? meta}) => lyricsFromTimed(
         parseTtml(ttml),
         'YouLy+',
-        match: LyricsMatch(hasTranslation: ttmlHasTranslation(ttml)),
+        match: LyricsMatch(
+          title: meta?.title,
+          artist: meta?.artist,
+          duration: meta?.duration,
+          hasTranslation: ttmlHasTranslation(ttml),
+        ),
       );
 
   /// Собирает текст из списка строк вида `{time, text, syllabus:[...]}`.
@@ -158,7 +183,7 @@ class YouLyPlusSource {
   /// `syllabus` — разметка по словам: именно она делает текст караоке. Тип
   /// ответа (`type: "Word"`) означает, что времена пословные, и брать из строки
   /// только текст было бы потерей.
-  Lyrics _fromLineList(List<dynamic> node, dynamic root) {
+  Lyrics _fromLineList(List<dynamic> node, dynamic root, _ResponseMeta meta) {
     final bool wordTimed =
         _findString(root, 'type')?.toLowerCase() == 'word';
 
@@ -185,12 +210,72 @@ class YouLyPlusSource {
 
     if (timed.isNotEmpty) {
       timed.sort((TimedLyric a, TimedLyric b) => a.time.compareTo(b.time));
-      return lyricsFromTimed(timed, 'YouLy+');
+      return lyricsFromTimed(timed, 'YouLy+', match: meta.toMatch());
     }
     if (plain.isNotEmpty) {
-      return Lyrics(plain: plain.join('\n'), source: 'YouLy+');
+      return Lyrics(
+        plain: plain.join('\n'),
+        source: 'YouLy+',
+        match: meta.toMatch(),
+      );
     }
     return Lyrics.none;
+  }
+
+  /// Метаданные ответа: зеркала кладут их в `metadata` (v2) или в
+  /// `selectedSongMetadata` (v1).
+  _ResponseMeta _readMeta(dynamic root) {
+    final dynamic node =
+        _findValue(root, 'metadata') ?? _findValue(root, 'selectedSongMetadata');
+    if (node is! Map) return const _ResponseMeta();
+
+    return _ResponseMeta(
+      title: _string(node['title']) ?? _string(node['song']),
+      artist: _string(node['artist']) ?? _string(node['singer']),
+      duration: _durationOf(node['duration']),
+    );
+  }
+
+  String? _string(dynamic value) {
+    if (value is! String) return null;
+    final String trimmed = value.trim();
+    return trimmed.isEmpty ? null : trimmed;
+  }
+
+  /// Длительность из ответа: короткие числа — секунды, длинные — миллисекунды.
+  Duration? _durationOf(dynamic value) {
+    if (value is! num || value <= 0) return null;
+    return value < 10000
+        ? Duration(seconds: value.toInt())
+        : Duration(milliseconds: value.toInt());
+  }
+
+  /// Совпадает ли ответ с запросом.
+  ///
+  /// Молчание метаданных не считаем несовпадением: сервис отдаёт их не всегда,
+  /// и терять из-за этого верный текст нельзя. Достаточно совпадения по
+  /// названию ИЛИ по исполнителю: у каверов другое имя исполнителя, у
+  /// ремиксов — наоборот.
+  bool _metaMatches(_ResponseMeta meta, String title, String artist) {
+    if (meta.title == null && meta.artist == null) return true;
+    final bool titleOk = meta.title == null || _similar(meta.title!, title);
+    final bool artistOk = meta.artist == null || _similar(meta.artist!, artist);
+    return titleOk || artistOk;
+  }
+
+  /// Похожи ли строки: сравниваем нормализованный текст по вхождению, а затем
+  /// по словам — так «Shape of You (Official Video)» совпадает с «Shape of You».
+  bool _similar(String a, String b) {
+    final String na = normalizeMatchText(a);
+    final String nb = normalizeMatchText(b);
+    if (na.isEmpty || nb.isEmpty) return false;
+    if (na == nb || na.contains(nb) || nb.contains(na)) return true;
+
+    final Set<String> ta = na.split(' ').toSet();
+    final Set<String> tb = nb.split(' ').toSet();
+    final Set<String> smaller = ta.length <= tb.length ? ta : tb;
+    final Set<String> larger = identical(smaller, ta) ? tb : ta;
+    return smaller.isNotEmpty && smaller.every(larger.contains);
   }
 
   /// Слова одной строки из `syllabus`.
@@ -274,4 +359,19 @@ class YouLyPlusSource {
   }
 
   void dispose() => _client.close(force: true);
+}
+
+/// Метаданные ответа зеркала — по ним проверяем, тот ли это трек.
+///
+/// Заодно уходят в общий поиск (`LyricsMatch`): по ним оценка совместимости
+/// сверяет название, исполнителя и длительность с запросом.
+class _ResponseMeta {
+  const _ResponseMeta({this.title, this.artist, this.duration});
+
+  final String? title;
+  final String? artist;
+  final Duration? duration;
+
+  LyricsMatch toMatch() =>
+      LyricsMatch(title: title, artist: artist, duration: duration);
 }

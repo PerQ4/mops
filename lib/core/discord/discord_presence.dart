@@ -4,6 +4,7 @@ import 'dart:math';
 import 'package:flutter/foundation.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 
+import '../utils/artwork_urls.dart';
 import '../../data/local/app_settings.dart';
 import '../../data/models/models.dart';
 import '../../state/player_controller.dart';
@@ -267,13 +268,38 @@ class DiscordPresenceService {
     return buttons;
   }
 
-  /// Обложка для Discord. Предпочитаем `i.ytimg.com` — там картинка доступна
-  /// без токенов; если её нет, собираем адрес из videoId.
+  /// Обложка для Discord.
+  ///
+  /// Discord рисует её в КВАДРАТНОЙ рамке, а превью видео на `i.ytimg.com`
+  /// всегда широкие (16:9 или 4:3) — в квадрате они встают с чёрными полосами
+  /// сверху и снизу. Поэтому сначала ищем обложку альбома
+  /// (`googleusercontent`/`ggpht`): у неё размер задан в адресе, и квадратную
+  /// копию отдаёт сам Google. Широкое превью видео — только запасной путь.
   String _coverUrl(Track track) {
+    final Thumbnail? square = _squareArtwork(track.thumbnails);
+    if (square != null) return upgradeArtwork(square.url, 1024);
+
     for (final String url in track.artworkFallbacks(1024)) {
       if (url.contains('i.ytimg.com')) return url;
     }
     return 'https://i.ytimg.com/vi/${track.id}/hqdefault.jpg';
+  }
+
+  /// Первая квадратная обложка из списка: у альбомных картинок ширина равна
+  /// высоте, у превью видео — нет.
+  Thumbnail? _squareArtwork(List<Thumbnail> thumbnails) {
+    Thumbnail? fallback;
+    for (final Thumbnail thumb in thumbnails) {
+      final String url = thumb.url;
+      final bool albumArt =
+          url.contains('googleusercontent.com') || url.contains('ggpht.com');
+      if (!albumArt) continue;
+      final int? width = thumb.width;
+      final int? height = thumb.height;
+      if (width != null && height != null && width == height) return thumb;
+      fallback ??= thumb;
+    }
+    return fallback;
   }
 
   String _truncate(String value, int maxLength) =>
