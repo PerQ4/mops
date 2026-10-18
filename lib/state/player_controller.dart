@@ -339,6 +339,29 @@ class PlayerController extends Notifier<PlayerUiState> {
     await playQueue(list, startIndex: index);
   }
 
+  /// Запускает «радио» от трека: сам трек встаёт первым, дальше — похожие
+  /// рекомендации YouTube.
+  ///
+  /// В отличие от [_extendWithRadio], который дописывает конец очереди, здесь
+  /// очередь заменяется целиком: это осознанный выбор пользователя, а не
+  /// автоматическое продление. Снимок очереди сохранит [playQueue] →
+  /// [_loadCurrent].
+  Future<void> startRadio(Track seed) async {
+    try {
+      final List<Track> radio =
+          await ref.read(catalogSourceProvider).autoplayQueue(seed.id);
+      // Seed первым, его же из рекомендаций убираем: `autoplayQueue` уже
+      // отсеивает сам трек, но контракт чужих списков лучше не предполагать.
+      final List<Track> queue = <Track>[
+        seed,
+        ...radio.where((Track t) => t.id != seed.id).take(25),
+      ];
+      await playQueue(queue);
+    } on Exception catch (error) {
+      state = state.copyWith(error: 'Не удалось загрузить рекомендации: $error');
+    }
+  }
+
   /// Добавляет трек в конец очереди.
   void enqueue(Track track) {
     final List<Track> queue = <Track>[...state.queue, track];

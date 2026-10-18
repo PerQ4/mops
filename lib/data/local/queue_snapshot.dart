@@ -14,9 +14,12 @@ const String kQueueSnapshotKey = 'mops.queue.v1';
 /// Компактный снимок очереди плеера для восстановления между запусками.
 ///
 /// Хранит только то, что нужно нарисовать очередь и подсветить текущий трек:
-/// идентификатор, название, исполнителя, длительность, обложку и `playlistId`.
-/// Остальные метаданные подтянутся из источника, когда трек понадобится, — для
-/// восстановления они не нужны, а полный трек в разы тяжелее.
+/// идентификатор, название, исполнителя, длительность, обложку, `playlistId` и
+/// признак видео. Остальные метаданные подтянутся из источника, когда трек
+/// понадобится, — для восстановления они не нужны, а полный трек в разы тяжелее.
+///
+/// `isVideo` здесь не ради отрисовки, а ради действий над треком: у
+/// восстановленного клипа без него пропадал бы пункт «Смотреть клип».
 @immutable
 class QueueSnapshot {
   const QueueSnapshot({
@@ -105,6 +108,9 @@ Map<String, dynamic> _trackToJson(Track track) => <String, dynamic>{
         'duration': track.duration.inMilliseconds,
       if (track.artwork != null) 'artwork': track.artwork,
       if (track.playlistId != null) 'playlistId': track.playlistId,
+      // Пишем только когда видео: у обычной песни поле отсутствует, как и
+      // раньше, — снимок для них не растёт.
+      if (track.isVideo) 'video': true,
     };
 
 Track? _trackFromJson(Map<String, dynamic> json) {
@@ -116,6 +122,7 @@ Track? _trackFromJson(Map<String, dynamic> json) {
   final dynamic rawDuration = json['duration'];
   final dynamic artwork = json['artwork'];
   final dynamic playlistId = json['playlistId'];
+  final dynamic video = json['video'];
 
   return Track(
     id: id,
@@ -131,5 +138,6 @@ Track? _trackFromJson(Map<String, dynamic> json) {
         : const <Thumbnail>[],
     playlistId:
         (playlistId is String && playlistId.isNotEmpty) ? playlistId : null,
+    isVideo: video == true,
   );
 }

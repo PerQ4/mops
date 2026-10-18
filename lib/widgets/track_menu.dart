@@ -154,12 +154,25 @@ class _TrackMenuSheet extends ConsumerWidget {
                 },
               ),
             ],
-            // Клип доступен всегда: id трека — это и есть videoId на YouTube.
+            // Радио доступно у любого трека — и у играющего, и у того, что
+            // просто лежит в списке: YouTube Music строит рекомендации по
+            // любому видео.
             _MenuAction(
-              icon: Icons.play_circle_outline,
-              title: 'Смотреть клип',
-              onTap: () => _openClip(context),
+              icon: Icons.radio,
+              title: 'Начать радио',
+              onTap: () {
+                Navigator.pop(context);
+                ref.read(playerControllerProvider.notifier).startRadio(track);
+              },
             ),
+            // Клип есть только у самого видео: у обычной песни YouTube отдал
+            // бы звуковую дорожку, и пункт был бы обманом.
+            if (track.isVideo)
+              _MenuAction(
+                icon: Icons.play_circle_outline,
+                title: 'Смотреть клип',
+                onTap: () => _openClip(context),
+              ),
             // Ссылка — тот же id: на YouTube Music он открывает именно этот
             // трек. Скопировать и открыть — два разных намерения (отправить
             // другу и послушать самому), поэтому пункта два.
