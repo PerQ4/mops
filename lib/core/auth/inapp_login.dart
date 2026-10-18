@@ -4,6 +4,8 @@ import 'dart:io';
 import 'package:flutter/material.dart';
 import 'package:flutter_inappwebview/flutter_inappwebview.dart';
 
+import '../webview/webview_environment.dart';
+
 /// Встроенный браузер для входа — на Windows и macOS.
 ///
 /// На Linux панель входа сделана на WebKitGTK (`linux/runner/webview_login.cc`):
@@ -50,6 +52,9 @@ class _LoginPage extends StatefulWidget {
 class _LoginPageState extends State<_LoginPage> {
   bool _checking = false;
 
+  /// Почему браузер не открылся: показываем текстом, а не пустым окном.
+  String? _error;
+
   /// Проверяет cookie после каждой загрузки: вход мог уже состояться.
   Future<void> _checkCookies() async {
     if (_checking || !mounted) return;
@@ -88,11 +93,46 @@ class _LoginPageState extends State<_LoginPage> {
           ),
         ],
       ),
-      body: InAppWebView(
-        initialUrlRequest: URLRequest(url: WebUri(widget.url)),
-        onLoadStop: (InAppWebViewController controller, WebUri? url) {
-          unawaited(_checkCookies());
-        },
+      body: Column(
+        children: <Widget>[
+          // Ошибку загрузки показываем текстом: пустое окно ничего не
+          // объясняет, а причина обычно в сети или в самом движке браузера.
+          if (_error != null)
+            Container(
+              width: double.infinity,
+              color: Theme.of(context).colorScheme.errorContainer,
+              padding: const EdgeInsets.all(12),
+              child: Text(
+                _error!,
+                style: TextStyle(
+                  color: Theme.of(context).colorScheme.onErrorContainer,
+                ),
+              ),
+            ),
+          Expanded(
+            child: InAppWebView(
+              // Окружение WebView2, подготовленное при старте: с ним данные
+              // браузера лежат в каталоге приложения, а не рядом с exe.
+              webViewEnvironment: mopsWebViewEnvironment,
+              initialUrlRequest: URLRequest(url: WebUri(widget.url)),
+              onLoadStop: (InAppWebViewController controller, WebUri? url) {
+                unawaited(_checkCookies());
+              },
+              onReceivedError:
+                  (InAppWebViewController controller, WebResourceRequest request,
+                      WebResourceError error) {
+                // Частичные ошибки (картинки, скрипты) окно не ломают —
+                // показываем только сбой самой страницы.
+                if (request.isForMainFrame != true) return;
+                if (!mounted) return;
+                setState(() {
+                  _error = 'Страница входа не загрузилась: '
+                      '${error.description}';
+                });
+              },
+            ),
+          ),
+        ],
       ),
     );
   }

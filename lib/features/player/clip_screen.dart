@@ -7,6 +7,7 @@ import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:url_launcher/url_launcher.dart';
 
 import '../../core/auth/inapp_login.dart';
+import '../../core/webview/webview_environment.dart';
 import '../../data/models/models.dart';
 import '../../state/player_controller.dart';
 
@@ -200,6 +201,9 @@ class _ClipScreenState extends ConsumerState<ClipScreen> {
       fit: StackFit.expand,
       children: <Widget>[
         InAppWebView(
+          // Окружение WebView2 из каталога приложения: рядом с exe писать
+          // нельзя, если приложение установлено в `Program Files`.
+          webViewEnvironment: mopsWebViewEnvironment,
           initialUrlRequest: URLRequest(url: WebUri(_embedUrl)),
           onLoadStart: (InAppWebViewController controller, WebUri? url) {
             if (!mounted) return;
