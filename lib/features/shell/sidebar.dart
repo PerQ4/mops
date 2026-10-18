@@ -11,17 +11,25 @@ import '../../state/catalog_providers.dart';
 import '../../state/library_providers.dart';
 import '../../state/player_controller.dart';
 import '../../state/providers.dart';
+import '../../state/shell.dart';
 import '../../widgets/artwork.dart';
 import '../../widgets/async_views.dart';
 import '../common/navigation.dart';
 import '../playlist/playlist_screen.dart';
+import 'content_navigator.dart';
+import 'destinations.dart';
 
 /// Постоянная левая панель широкой раскладки.
 ///
 /// Форма взята у Spotify Desktop: сверху заголовок библиотеки, ниже — поиск,
-/// переключатель раздела («Плейлисты / Альбомы / Исполнители»), сортировка и
-/// сам список. У каждого элемента — контекстное меню: открыть, играть,
-/// сохранить/убрать, а у своих плейлистов ещё переименовать и удалить.
+/// переключатель раздела одной полосой («Плейлисты / Альбомы / Исполнители»),
+/// сортировка и сам список. У каждого элемента — контекстное меню: открыть,
+/// играть, сохранить/убрать, а у своих плейлистов ещё переименовать и удалить.
+///
+/// Если включена настройка «Панель вместо островка», над библиотекой
+/// появляется навигация по разделам (Главная, Обзор, Поиск, Библиотека,
+/// Настройки) — как в боковой панели swiftify: тогда волнистый островок внизу
+/// на широком экране не нужен.
 ///
 /// Панель сворачивается в узкую полосу с обложками (состояние запоминается в
 /// настройках — иначе при каждом переходе в широкую раскладку панель
@@ -79,6 +87,13 @@ class _LibrarySidebarState extends ConsumerState<LibrarySidebar> {
     // клика по кнопке тут же сворачивалась бы обратно.
     final bool collapsed = ref.watch(sidebarCollapseOverrideProvider) ??
         AppLayout.sidebarCollapsedByDefault(window, saved: savedCollapsed);
+    // Навигация переезжает в панель, только пока сама панель есть: на узком
+    // окне её нет, и там разделы живут в плавающем островке.
+    final bool navInPanel = ref.watch(
+      settingsControllerProvider.select(
+        (AppSettings s) => s.sidebarNavigation,
+      ),
+    );
     final double saved = ref.watch(
       settingsControllerProvider.select((AppSettings s) => s.sidebarWidth),
     );
@@ -111,6 +126,7 @@ class _LibrarySidebarState extends ConsumerState<LibrarySidebar> {
                     collapsed: collapsed,
                     onToggle: () => _toggleCollapsed(collapsed),
                   ),
+                  if (navInPanel) _SidebarNavigation(collapsed: collapsed),
                   Expanded(
                     child: collapsed
                         ? _CollapsedLibrary()
@@ -272,7 +288,7 @@ class _ExpandedLibrary extends ConsumerWidget {
       crossAxisAlignment: CrossAxisAlignment.stretch,
       children: <Widget>[
         _LibrarySearchField(controller: search, query: state.query),
-        _SectionChips(
+        _SectionBar(
           selected: state.section,
           onSelected: controller.selectSection,
         ),
@@ -340,36 +356,250 @@ class _LibrarySearchField extends ConsumerWidget {
   }
 }
 
-/// Переключатель раздела библиотеки.
+/// Переключатель раздела библиотеки — одной полосой на всю ширину панели.
 ///
-/// Капсулы переносятся на следующую строку: при узкой панели три подписи в
-/// одну строку не влезают, а обрезать «Исполнителей» до «Испол…» нехорошо.
-class _SectionChips extends StatelessWidget {
-  const _SectionChips({required this.selected, required this.onSelected});
+/// Раньше это были капсулы в `Wrap`: на ширине 220–280 px три подписи не
+/// влезали в строку и переносились на три, отбирая половину панели. Полоса
+/// всегда одна; если ячейке не хватает места под подпись, остаётся только
+/// значок с подсказкой — обрезать «Исполнителей» до «Испол…» нехорошо.
+class _SectionBar extends StatelessWidget {
+  const _SectionBar({required this.selected, required this.onSelected});
 
   final LibrarySection selected;
   final ValueChanged<LibrarySection> onSelected;
 
   @override
   Widget build(BuildContext context) {
+    final ColorScheme scheme = Theme.of(context).colorScheme;
     return Padding(
-      padding: const EdgeInsets.fromLTRB(12, 0, 12, 2),
-      child: Wrap(
-        spacing: 6,
-        runSpacing: 6,
-        children: <Widget>[
-          for (final LibrarySection section in LibrarySection.values)
-            ChoiceChip(
-              selected: section == selected,
-              showCheckmark: false,
-              visualDensity: VisualDensity.compact,
-              materialTapTargetSize: MaterialTapTargetSize.shrinkWrap,
-              labelPadding: const EdgeInsets.symmetric(horizontal: 2),
-              avatar: Icon(_sectionIcon(section), size: 16),
-              label: Text(section.label),
-              onSelected: (_) => onSelected(section),
+      padding: const EdgeInsets.fromLTRB(12, 0, 12, 4),
+      child: LayoutBuilder(
+        builder: (BuildContext context, BoxConstraints constraints) {
+          final double cell =
+              constraints.maxWidth / LibrarySection.values.length;
+          final bool withLabel = cell >= AppLayout.sidebarSectionLabelMinWidth;
+          return Container(
+            height: AppLayout.sidebarSectionBarHeight,
+            padding: const EdgeInsets.all(AppLayout.sidebarSectionBarInset),
+            decoration: BoxDecoration(
+              color: scheme.surfaceContainerHighest.withValues(alpha: 0.5),
+              borderRadius: BorderRadius.circular(AppLayout.radiusS),
             ),
-        ],
+            child: Row(
+              children: <Widget>[
+                for (final LibrarySection section in LibrarySection.values)
+                  Expanded(
+                    child: _SectionBarItem(
+                      section: section,
+                      selected: section == selected,
+                      icon: _sectionIcon(section),
+                      withLabel: withLabel,
+                      onTap: () => onSelected(section),
+                    ),
+                  ),
+              ],
+            ),
+          );
+        },
+      ),
+    );
+  }
+}
+
+/// Ячейка полосы разделов: значок и, если места хватает, подпись.
+class _SectionBarItem extends StatelessWidget {
+  const _SectionBarItem({
+    required this.section,
+    required this.selected,
+    required this.icon,
+    required this.withLabel,
+    required this.onTap,
+  });
+
+  final LibrarySection section;
+  final bool selected;
+  final IconData icon;
+  final bool withLabel;
+  final VoidCallback onTap;
+
+  @override
+  Widget build(BuildContext context) {
+    final ColorScheme scheme = Theme.of(context).colorScheme;
+    final BorderRadius radius = BorderRadius.circular(
+      AppLayout.radiusS - AppLayout.sidebarSectionBarInset,
+    );
+    return Tooltip(
+      message: section.label,
+      child: InkWell(
+        onTap: onTap,
+        borderRadius: radius,
+        child: AnimatedContainer(
+          duration: const Duration(milliseconds: 200),
+          curve: Curves.easeOutCubic,
+          decoration: BoxDecoration(
+            color: selected ? scheme.secondaryContainer : Colors.transparent,
+            borderRadius: radius,
+          ),
+          padding: const EdgeInsets.symmetric(horizontal: 4),
+          child: Row(
+            mainAxisAlignment: MainAxisAlignment.center,
+            children: <Widget>[
+              Icon(
+                icon,
+                size: 16,
+                color: selected
+                    ? scheme.onSecondaryContainer
+                    : scheme.onSurfaceVariant,
+              ),
+              if (withLabel) ...<Widget>[
+                const SizedBox(width: 6),
+                // `FittedBox` уменьшает подпись вместо обрезки: при узкой
+                // панели «Исполнители» чуть мельче, но читаются целиком.
+                Flexible(
+                  child: FittedBox(
+                    fit: BoxFit.scaleDown,
+                    alignment: Alignment.centerLeft,
+                    child: Text(
+                      section.label,
+                      maxLines: 1,
+                      style: Theme.of(context).textTheme.labelMedium?.copyWith(
+                            color: selected
+                                ? scheme.onSecondaryContainer
+                                : scheme.onSurfaceVariant,
+                            fontWeight:
+                                selected ? FontWeight.w600 : FontWeight.w500,
+                          ),
+                    ),
+                  ),
+                ),
+              ],
+            ],
+          ),
+        ),
+      ),
+    );
+  }
+}
+
+/// Навигация по разделам внутри левой панели.
+///
+/// Показывается при включённой настройке «Панель вместо островка». Список — те
+/// же [ShellDestination], что и у плавающего островка, плюс «Настройки»:
+/// [selectShellDestination] ещё и сбрасывает открытые подэкраны, поэтому
+/// переход ведёт себя ровно как нажатие на островке.
+class _SidebarNavigation extends ConsumerWidget {
+  const _SidebarNavigation({required this.collapsed});
+
+  /// Свёрнутая панель: от строки остаётся один значок.
+  final bool collapsed;
+
+  @override
+  Widget build(BuildContext context, WidgetRef ref) {
+    final int index = ref.watch(shellIndexProvider);
+
+    return Column(
+      crossAxisAlignment: CrossAxisAlignment.stretch,
+      children: <Widget>[
+        const SizedBox(height: 4),
+        for (final ShellDestination destination in ShellDestination.values)
+          _NavRow(
+            icon: destination.icon,
+            selectedIcon: destination.selectedIcon,
+            label: destination.label,
+            selected: destination.index == index,
+            collapsed: collapsed,
+            onTap: () => selectShellDestination(ref, destination.index),
+          ),
+        _NavRow(
+          icon: Icons.settings_outlined,
+          selectedIcon: Icons.settings,
+          label: 'Настройки',
+          // Настройки — не раздел верхнего уровня, поэтому активной строку не
+          // подсвечиваем: так же ведёт себя кнопка настроек в островке.
+          selected: false,
+          collapsed: collapsed,
+          onTap: () => AppRoutes.settings(context),
+        ),
+        const SizedBox(height: 6),
+        const Divider(height: 1, indent: 12, endIndent: 12),
+      ],
+    );
+  }
+}
+
+/// Строка навигации в панели: значок, подпись и выделение выбранного.
+class _NavRow extends StatelessWidget {
+  const _NavRow({
+    required this.icon,
+    required this.selectedIcon,
+    required this.label,
+    required this.selected,
+    required this.collapsed,
+    required this.onTap,
+  });
+
+  final IconData icon;
+  final IconData selectedIcon;
+  final String label;
+  final bool selected;
+  final bool collapsed;
+  final VoidCallback onTap;
+
+  @override
+  Widget build(BuildContext context) {
+    final ColorScheme scheme = Theme.of(context).colorScheme;
+    final BorderRadius radius = BorderRadius.circular(AppLayout.radiusM);
+
+    return Padding(
+      padding: const EdgeInsets.fromLTRB(8, 1, 8, 1),
+      child: Tooltip(
+        // В развёрнутой панели подпись и так видна — подсказка не нужна.
+        message: collapsed ? label : '',
+        child: InkWell(
+          onTap: onTap,
+          borderRadius: radius,
+          child: Container(
+            height: AppLayout.sidebarNavRowHeight,
+            decoration: selected
+                ? BoxDecoration(
+                    color: scheme.secondaryContainer,
+                    borderRadius: radius,
+                  )
+                : null,
+            padding: EdgeInsets.symmetric(horizontal: collapsed ? 0 : 12),
+            child: Row(
+              mainAxisAlignment: collapsed
+                  ? MainAxisAlignment.center
+                  : MainAxisAlignment.start,
+              children: <Widget>[
+                Icon(
+                  selected ? selectedIcon : icon,
+                  size: 20,
+                  color: selected
+                      ? scheme.onSecondaryContainer
+                      : scheme.onSurfaceVariant,
+                ),
+                if (!collapsed) ...<Widget>[
+                  const SizedBox(width: 12),
+                  Expanded(
+                    child: Text(
+                      label,
+                      maxLines: 1,
+                      overflow: TextOverflow.ellipsis,
+                      style: Theme.of(context).textTheme.bodyMedium?.copyWith(
+                            color: selected
+                                ? scheme.onSecondaryContainer
+                                : scheme.onSurface,
+                            fontWeight:
+                                selected ? FontWeight.w600 : FontWeight.w500,
+                          ),
+                    ),
+                  ),
+                ],
+              ],
+            ),
+          ),
+        ),
       ),
     );
   }

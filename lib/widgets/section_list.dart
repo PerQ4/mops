@@ -11,6 +11,7 @@ import 'horizontal_list.dart';
 import 'media_card.dart';
 import 'track_menu.dart';
 import 'track_tile.dart';
+import 'wavy_underline.dart';
 
 /// Запускает элемент карусели — нажатие на обложку.
 ///
@@ -225,7 +226,8 @@ class _Section extends ConsumerWidget {
 ///
 /// Высота ≥64, отступ 16 по горизонтали и 8 по вертикали, строки в колонке
 /// прижаты к центру. Название — `titleLarge` semibold цвета `onSurface`,
-/// надпись-ярлык — `labelLarge` цвета `onSurfaceVariant`. Кнопка «Слушать все»
+/// надпись-ярлык — `labelLarge` цвета `onSurfaceVariant`. После названия —
+/// короткая волнистая линия, как в Swiftify. Кнопка «Слушать все»
 /// (`OutlinedButton`, ≥40 в высоту и ≥88 в ширину) показывается только там,
 /// где есть продолжение.
 class _SectionTitle extends StatelessWidget {
@@ -261,14 +263,24 @@ class _SectionTitle extends StatelessWidget {
                         color: scheme.onSurfaceVariant,
                       ),
                     ),
-                  Text(
-                    title,
-                    maxLines: 1,
-                    overflow: TextOverflow.ellipsis,
-                    style: text.titleLarge?.copyWith(
-                      fontWeight: FontWeight.w600,
-                      color: scheme.onSurface,
-                    ),
+                  Row(
+                    // Flexible: волна идёт сразу за названием, а не у края.
+                    mainAxisSize: MainAxisSize.min,
+                    children: <Widget>[
+                      Flexible(
+                        child: Text(
+                          title,
+                          maxLines: 1,
+                          overflow: TextOverflow.ellipsis,
+                          style: text.titleLarge?.copyWith(
+                            fontWeight: FontWeight.w600,
+                            color: scheme.onSurface,
+                          ),
+                        ),
+                      ),
+                      const SizedBox(width: 8),
+                      const WavyUnderline(),
+                    ],
                   ),
                 ],
               ),

@@ -112,6 +112,10 @@ class SettingsController extends Notifier<AppSettings> {
   Future<void> setSidebarWidth(double width) =>
       update((AppSettings s) => s.copyWith(sidebarWidth: width));
 
+  /// Навигация в левой панели вместо плавающего островка.
+  Future<void> setSidebarNavigation(bool value) =>
+      update((AppSettings s) => s.copyWith(sidebarNavigation: value));
+
   Future<void> setPlayerPanelWidth(double width) =>
       update((AppSettings s) => s.copyWith(playerPanelWidth: width));
 
@@ -185,6 +189,22 @@ class SettingsController extends Notifier<AppSettings> {
   /// Фон полноэкранного плеера — стиль из ArchiveTune.
   Future<void> setPlayerBackgroundStyle(PlayerBackgroundStyle style) =>
       update((AppSettings s) => s.copyWith(playerBackgroundStyle: style));
+
+  /// «Жидкость»: скорость течения.
+  Future<void> setLiquidSpeed(double value) =>
+      update((AppSettings s) => s.copyWith(liquidSpeed: value));
+
+  /// «Жидкость»: масштаб пятен.
+  Future<void> setLiquidScale(double value) =>
+      update((AppSettings s) => s.copyWith(liquidScale: value));
+
+  /// «Жидкость»: насыщенность цвета.
+  Future<void> setLiquidSaturation(double value) =>
+      update((AppSettings s) => s.copyWith(liquidSaturation: value));
+
+  /// «Жидкость»: откуда брать цвета — из обложки или из темы.
+  Future<void> setLiquidColorSource(LiquidColorSource source) =>
+      update((AppSettings s) => s.copyWith(liquidColorSource: source));
 
   /// Отключить размытие фона.
   Future<void> setDisableBlur(bool value) =>

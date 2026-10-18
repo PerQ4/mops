@@ -94,6 +94,21 @@ abstract final class AppLayout {
   /// заметно снисходительнее к промаху и не мешает содержимому.
   static const double sidebarResizeHandleWidth = 14;
 
+  /// Высота полосы-переключателя разделов библиотеки (одна строка, а не столбик
+  /// капсул: при узкой панели три подписи переносились на три строки).
+  static const double sidebarSectionBarHeight = 34;
+
+  /// Отступ выделения внутри полосы: он же вычитается из радиуса, чтобы
+  /// скругление выбранной ячейки было концентрично самой полосе.
+  static const double sidebarSectionBarInset = 3;
+
+  /// Ширина одной ячейки полосы, начиная с которой в ней помещается подпись.
+  /// Уже — остаются только значки с подсказкой: подпись обрезать нехорошо.
+  static const double sidebarSectionLabelMinWidth = 78;
+
+  /// Высота строки навигации внутри левой панели.
+  static const double sidebarNavRowHeight = 40;
+
   /// Высота шапки экрана.
   static const double appBarHeight = 64;
 

@@ -97,6 +97,41 @@ jobs:
       - name: Пакеты Dart
         run: flutter pub get
 
+      # libmpv для Windows пакет media_kit_libs_windows_audio качает сам, но
+      # только «минимальную» сборку: FFmpeg в ней собран с --disable-filters, и
+      # из аудиофильтров есть только overlay да equalizer. Визуализатору уровня
+      # звука нужен astats, а его там нет — mpv отвечает «Option af: astats
+      # doesn't exist». Поэтому подменяем в пакете имя, ссылку и MD5 архива на
+      # полную сборку FFmpeg. Ровно те же три строки заменены в build/windows/x64
+      # при локальной сборке, чтобы релиз собирался тем же файлом.
+      #
+      # MD5 считает сам CMake при скачивании, поэтому здесь он обязателен:
+      # сменишь ссылку — пересчитай хеш архива.
+      - name: libmpv (полная сборка)
+        if: matrix.os == 'windows-latest'
+        shell: pwsh
+        run: |
+          $roots = @($env:PUB_CACHE, "$env:LOCALAPPDATA\Pub\Cache") | Where-Object { $_ }
+          $found = @()
+          foreach ($root in $roots) {
+            $found += Get-ChildItem -Path "$root\hosted\pub.dev\media_kit_libs_windows_audio-*\windows\CMakeLists.txt" -ErrorAction SilentlyContinue
+          }
+          if ($found.Count -eq 0) {
+            throw 'Не найден CMakeLists.txt пакета media_kit_libs_windows_audio в кэше pub.'
+          }
+          $file = $found[0].FullName
+          $text = [System.IO.File]::ReadAllText($file, [System.Text.Encoding]::UTF8)
+          $text = $text -replace 'set\(LIBMPV "[^"]+"\)', 'set(LIBMPV "mpv-dev-x86_64-20261018-git-01e2533f31.7z")'
+          $text = $text -replace 'set\(LIBMPV_URL "[^"]+"\)', 'set(LIBMPV_URL "https://github.com/shinchiro/mpv-winbuild-cmake/releases/download/20261018/${LIBMPV}")'
+          $text = $text -replace 'set\(LIBMPV_MD5 "[^"]+"\)', 'set(LIBMPV_MD5 "5ca2e48b297f05367eb355ab1e068284")'
+          if ($text -notmatch 'shinchiro/mpv-winbuild-cmake') {
+            throw "Строки LIBMPV/LIBMPV_URL/LIBMPV_MD5 в $file не найдены — пакет изменился."
+          }
+          # Без BOM: CMake читает CMakeLists как ASCII, и лишний байт в начале
+          # ломает разбор имени команды.
+          [System.IO.File]::WriteAllText($file, $text, (New-Object System.Text.UTF8Encoding($false)))
+          Select-String -Path $file -Pattern 'set\(LIBMPV' | ForEach-Object { $_.Line }
+
       - name: Сборка
         # Иконки лежат в перечислениях и записях, поэтому их нельзя
         # вырезать: без этого часть иконок пропадает.

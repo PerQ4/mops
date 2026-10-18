@@ -98,9 +98,18 @@ class _FloatingDockState extends ConsumerState<FloatingDock> {
       playerControllerProvider.select((PlayerUiState s) => s.current != null),
     );
 
-    // Боковая панель рисуется только в широкой раскладке и сама показывает
-    // библиотеку — тогда вкладка «Библиотека» в островке была бы дублем.
-    final bool sidebarVisible = context.isExpandedLayout;
+    // Боковая панель есть и в средней раскладке — свёрнутой полосой (см.
+    // `AppShell`), поэтому «панель видна» — это всё, что не компакт.
+    final bool sidebarVisible = !context.isCompactLayout;
+
+    // Настройка «панель вместо островка»: панель уже несёт навигацию, и
+    // островок навигации в доке был бы её дублем. Плеерный островок остаётся.
+    final bool navInSidebar = ref.watch(
+      settingsControllerProvider.select(
+        (AppSettings s) => s.sidebarNavigation,
+      ),
+    );
+    final bool showNavIsland = !(sidebarVisible && navInSidebar);
 
     // Настройка «Плеер справа» включает разворот островка в правую панель.
     // Панель есть только в широкой раскладке: на телефоне её размещать негде,
@@ -126,7 +135,9 @@ class _FloatingDockState extends ConsumerState<FloatingDock> {
       duration: const Duration(milliseconds: 260),
       curve: Curves.easeOutCubic,
       alignment: Alignment.centerLeft,
-      child: showPlayerIsland ? _PlayerIsland(swipe: _swipe) : const SizedBox.shrink(),
+      child: showPlayerIsland
+          ? _PlayerIsland(swipe: _swipe, navHidden: !showNavIsland)
+          : const SizedBox.shrink(),
     );
 
     // Навигация — слева, плеер — справа. Если места не хватает, док не
@@ -147,11 +158,13 @@ class _FloatingDockState extends ConsumerState<FloatingDock> {
         textDirection: TextDirection.rtl,
         children: <Widget>[
           playerIsland,
-          if (showPlayerIsland) const SizedBox(width: FloatingDock.gap),
-          _NavIsland(
-            joinedOnRight: showPlayerIsland,
-            sidebarVisible: sidebarVisible,
-          ),
+          if (showPlayerIsland && showNavIsland)
+            const SizedBox(width: FloatingDock.gap),
+          if (showNavIsland)
+            _NavIsland(
+              joinedOnRight: showPlayerIsland,
+              sidebarVisible: sidebarVisible,
+            ),
         ],
       ),
     );
@@ -341,7 +354,12 @@ class _NavButton extends StatelessWidget {
 /// --------------------------------------------------------- островок плеера
 
 class _PlayerIsland extends ConsumerStatefulWidget {
-  const _PlayerIsland({required this.swipe});
+  const _PlayerIsland({required this.swipe, this.navHidden = false});
+
+  /// Островка навигации рядом нет (настройка «панель вместо островка» или
+  /// компактное окно): тогда левый край круглый сразу, а не только после
+  /// свайпа — иначе он остался бы со «спиленным» стыком.
+  final bool navHidden;
 
   /// Признак жеста для соседнего островка: пишем сюда, читает док.
   final ValueNotifier<Offset> swipe;
@@ -420,8 +438,11 @@ class _PlayerIslandState extends ConsumerState<_PlayerIsland> {
         (_progress.abs() * 0.7 + _downProgress * 0.5).clamp(0.0, 1.0);
 
     // Свайп от навигации (вправо) — островок отрывается от неё, и левый край
-    // становится таким же круглым, как правый.
-    final double awayNav = (_dragDx / 140).clamp(0.0, 1.0);
+    // становится таким же круглым, как правый. Если навигации рядом нет вовсе,
+    // край круглый сразу.
+    final double awayNav = widget.navHidden
+        ? 1.0
+        : (_dragDx / 140).clamp(0.0, 1.0);
 
     // Свайп К навигации (влево) — блок ОБРЕЗАЕТСЯ справа вместе с содержимым:
     // ширина становится меньше, а левый край с минимальным скруглением (стык)

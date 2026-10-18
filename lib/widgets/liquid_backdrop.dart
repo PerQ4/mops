@@ -3,6 +3,10 @@ import 'dart:ui' as ui;
 
 import 'package:flutter/foundation.dart';
 import 'package:flutter/material.dart';
+import 'package:flutter_riverpod/flutter_riverpod.dart';
+
+import '../data/local/app_settings.dart';
+import '../state/providers.dart';
 
 /// Живой фон плеера: «жидкость» из цветов обложки на фрагментном шейдере.
 ///
@@ -11,26 +15,32 @@ import 'package:flutter/material.dart';
 /// останавливается вместе с секундомером, поэтому время не растёт, перерисовки не
 /// запрашиваются и картинка замирает на месте — кадры на простое не тратятся.
 ///
+/// Настройки «Жидкости» (скорость, масштаб пятен, насыщенность, источник цвета)
+/// читаются из [AppSettings] здесь же, а не передаются вызывающим: фон — часть
+/// того же виджета, и стиль «Градиент» эти значения не трогает. Значения по
+/// умолчанию совпадают с прежним видом.
+///
 /// Два обстоятельства, из-за которых анимация может не пойти, и оба не «падающие»:
 ///
 /// * шейдер не загрузился (`FragmentProgram` недоступен — например, в среде
 ///   тестов) — рисуется статичный градиент ровно из тех же цветов, а причина
 ///   пишется в журнал;
 /// * не идёт воспроизведение — время стоит, то есть фон просто неподвижен.
-class LiquidBackdrop extends StatefulWidget {
+class LiquidBackdrop extends ConsumerStatefulWidget {
   const LiquidBackdrop({super.key, required this.colors, this.animate = true});
 
   /// Три цвета палитры обложки (первый — основной), как у градиента фона.
+  /// Используются, только когда источник цвета — «Из обложки».
   final List<Color> colors;
 
   /// Идёт воспроизведение. `false` — фон замирает.
   final bool animate;
 
   @override
-  State<LiquidBackdrop> createState() => _LiquidBackdropState();
+  ConsumerState<LiquidBackdrop> createState() => _LiquidBackdropState();
 }
 
-class _LiquidBackdropState extends State<LiquidBackdrop> {
+class _LiquidBackdropState extends ConsumerState<LiquidBackdrop> {
   static const String _asset = 'shaders/liquid_backdrop.frag';
 
   /// Шаг анимации: ~30 кадров в секунду. Чаще незаметно, реже — заметно дёргается.
@@ -98,31 +108,78 @@ class _LiquidBackdropState extends State<LiquidBackdrop> {
 
   @override
   Widget build(BuildContext context) {
-    final List<Color> colors = _palette(widget.colors);
+    // Только эти четыре значения и нужны фону: `select` не даёт перестраивать
+    // шейдер на каждое изменение любой другой настройки.
+    final (
+      double speed,
+      double scale,
+      double saturation,
+      LiquidColorSource source,
+    ) = ref.watch(
+      settingsControllerProvider.select(
+        (AppSettings s) => (
+          s.liquidSpeed,
+          s.liquidScale,
+          s.liquidSaturation,
+          s.liquidColorSource,
+        ),
+      ),
+    );
+
+    final List<Color> base = source == LiquidColorSource.theme
+        ? _themePalette(Theme.of(context).colorScheme)
+        : widget.colors;
+    final List<Color> colors = _palette(base, saturation);
     final ui.FragmentShader? shader = _shader;
     if (shader == null || _broken) return _StaticPalette(colors: colors);
     return RepaintBoundary(
       child: CustomPaint(
         size: Size.infinite,
-        painter: _LiquidPainter(shader: shader, time: _time, colors: colors),
+        painter: _LiquidPainter(
+          shader: shader,
+          time: _time,
+          colors: colors,
+          flowSpeed: speed,
+          blobScale: scale,
+        ),
       ),
     );
   }
 
-  /// Ровно три цвета: у шейдера три униформы. Меньше — повторяем последний,
-  /// больше — лишние не нужны.
+  /// Цвета палитры приложения — для источника «Из темы». Те же роли, что у
+  /// градиента фона: контейнеры, а не `primary`/`tertiary`, — тогда при смене
+  /// источника фон остаётся той же светлоты.
+  static List<Color> _themePalette(ColorScheme scheme) => <Color>[
+        scheme.primaryContainer,
+        scheme.secondaryContainer,
+        scheme.tertiaryContainer,
+      ];
+
+  /// Ровно три цвета: у шейдера три цветовые униформы. Меньше — повторяем
+  /// последний, больше — лишние не нужны.
   ///
   /// Альфу обнуляем в непрозрачность: шейдер выводит сплошной кадр, поэтому
   /// статичная подложка должна быть такой же, иначе подмена шейдера на неё была
-  /// бы заметна по прозрачности.
-  static List<Color> _palette(List<Color> source) {
+  /// бы заметна по прозрачности. Насыщенность применяем здесь, а не в шейдере:
+  /// так статичная подложка и жидкость выглядят одинаково.
+  static List<Color> _palette(List<Color> source, double saturation) {
     final List<Color> filled = <Color>[
-      for (final Color color in source.take(3)) color.withValues(alpha: 1),
+      for (final Color color in source.take(3))
+        _saturate(color.withValues(alpha: 1), saturation),
     ];
     while (filled.length < 3) {
       filled.add(filled.isEmpty ? const Color(0xFF000000) : filled.last);
     }
     return filled;
+  }
+
+  /// Множитель насыщенности: 1 — цвет как есть, 0 — серый той же светлоты.
+  /// `HSLColor` меняет только насыщенность, поэтому от настройки фон не
+  /// темнеет и не светлеет.
+  static Color _saturate(Color color, double factor) {
+    if (factor == 1.0) return color;
+    final HSLColor hsl = HSLColor.fromColor(color);
+    return hsl.withSaturation((hsl.saturation * factor).clamp(0.0, 1.0)).toColor();
   }
 }
 
@@ -131,6 +188,8 @@ class _LiquidPainter extends CustomPainter {
     required this.shader,
     required this.time,
     required this.colors,
+    required this.flowSpeed,
+    required this.blobScale,
   }) : super(repaint: time);
 
   final ui.FragmentShader shader;
@@ -139,6 +198,12 @@ class _LiquidPainter extends CustomPainter {
   final ValueListenable<double> time;
 
   final List<Color> colors;
+
+  /// Множитель времени в шейдере: скорость течения из настроек.
+  final double flowSpeed;
+
+  /// Масштаб пятен: во сколько раз крупнее «волокна» жидкости из настроек.
+  final double blobScale;
 
   @override
   void paint(Canvas canvas, Size size) {
@@ -155,14 +220,19 @@ class _LiquidPainter extends CustomPainter {
       ..setFloat(8, colors[1].b)
       ..setFloat(9, colors[2].r)
       ..setFloat(10, colors[2].g)
-      ..setFloat(11, colors[2].b);
+      ..setFloat(11, colors[2].b)
+      ..setFloat(12, flowSpeed)
+      ..setFloat(13, blobScale);
 
     canvas.drawRect(Offset.zero & size, Paint()..shader = shader);
   }
 
   @override
   bool shouldRepaint(covariant _LiquidPainter old) =>
-      old.shader != shader || !listEquals(old.colors, colors);
+      old.shader != shader ||
+      !listEquals(old.colors, colors) ||
+      old.flowSpeed != flowSpeed ||
+      old.blobScale != blobScale;
 }
 
 /// Статичная подложка тех же цветов, что у жидкости: нужна, пока шейдер грузится,

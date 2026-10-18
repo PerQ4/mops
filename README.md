@@ -194,10 +194,21 @@ flutter build windows --release --no-tree-shake-icons
 
 Две вещи, о которые легко споткнуться:
 
-- **libmpv.** Сборка `media_kit_libs_windows_audio` ищет архив `mpv-dev-*.7z` в
-  каталоге `build/windows/x64`. Обычно он скачивается автоматически с GitHub; на
-  сети без доступа к релизам положите архив туда вручную (имя зафиксировано в
-  пакете — `mpv-dev-x86_64-20230924-git-652a1dd.7z`).
+- **libmpv.** Пакет `media_kit_libs_windows_audio` качает архив `mpv-dev-*.7z` в
+  каталог `build/windows/x64` и распаковывает его в `build/windows/x64/libmpv`.
+  Своя сборка у пакета «минимальная»: FFmpeg в ней собран с `--disable-filters`,
+  и из аудиофильтров есть только `overlay` да `equalizer`. Визуализатору уровня
+  звука нужен `astats`, которого там нет, — mpv на такую цепочку отвечает
+  «Option af: astats doesn't exist». Поэтому имя, ссылка и MD5 архива в пакете
+  заменены на полную сборку shinchiro
+  (`mpv-dev-x86_64-20261018-git-01e2533f31.7z`, mpv 0.41.0, FFmpeg со всеми
+  фильтрами). В конвейере замену делает шаг «libmpv (полная сборка)» из
+  `.github/workflows/build.yml`; локально те же три строки (`LIBMPV`,
+  `LIBMPV_URL`, `LIBMPV_MD5`) в
+  `<кэш pub>\media_kit_libs_windows_audio-1.0.9\windows\CMakeLists.txt` надо
+  заменить один раз после `flutter pub get` (и после обновления пакета). Если
+  релизы GitHub недоступны, положите архив под этим именем в `build/windows/x64`
+  — тогда пакет его качать не станет.
 - **Шаг `INSTALL`.** Windows-сборка Flutter копирует файлы в
   `CMAKE_INSTALL_PREFIX`. Если в кэше CMake он указывает в `Program Files`, файлы
   уйдут туда, а не в `build/windows/x64/runner/Release`. В этом случае удалите

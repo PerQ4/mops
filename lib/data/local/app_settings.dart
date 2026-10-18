@@ -245,6 +245,27 @@ enum PlayerBackgroundStyle {
       );
 }
 
+/// Источник цвета для фонового стиля «Жидкость».
+///
+/// «Из обложки» — как было: три цвета берутся у текущего трека. «Из темы» —
+/// цвета палитры приложения: фон перестаёт зависеть от обложки и держится в
+/// одном тоне.
+enum LiquidColorSource {
+  artwork('Из обложки', 'Цвета текущего трека'),
+  theme('Из темы', 'Цвета палитры приложения');
+
+  const LiquidColorSource(this.label, this.description);
+
+  final String label;
+  final String description;
+
+  static LiquidColorSource fromName(String? name) =>
+      LiquidColorSource.values.firstWhere(
+        (LiquidColorSource v) => v.name == name,
+        orElse: () => LiquidColorSource.artwork,
+      );
+}
+
 /// Где искать треки.
 ///
 /// В ArchiveTune поиск можно ограничить своей библиотекой — так быстрее
@@ -407,9 +428,16 @@ class AppSettings {
     this.bypass = const AntiDpiConfig(),
     this.autoDetectProxy = true,
     this.sidebarCollapsed = false,
+    // Панель вместо островка: навигация переезжает в левую панель.
+    this.sidebarNavigation = false,
     this.playerPanelEnabled = true,
     this.progressBarStyle = ProgressBarStyle.standard,
     this.playerBackgroundStyle = PlayerBackgroundStyle.gradient,
+    // «Жидкость»: значения по умолчанию совпадают с прежним видом фона.
+    this.liquidSpeed = 1.0,
+    this.liquidScale = 1.0,
+    this.liquidSaturation = 1.0,
+    this.liquidColorSource = LiquidColorSource.artwork,
     this.disableBlur = false,
     this.blurRadius = 48,
     this.visualizerEnabled = false,
@@ -554,6 +582,14 @@ class AppSettings {
   /// переходе в широкий режим было бы навязчиво.
   final bool sidebarCollapsed;
 
+  /// Берёт ли левая панель на себя навигацию по разделам (Главная, Поиск,
+  /// Библиотека, Настройки) — как в боковой панели swiftify.
+  ///
+  /// Тогда плавающий островок навигации внизу не нужен. На компактном окне
+  /// панели нет вообще, поэтому там настройка ни на что не влияет: навигация
+  /// остаётся островком.
+  final bool sidebarNavigation;
+
   /// Разворачивать ли островок плеера в отдельную панель справа.
   ///
   /// По умолчанию **включено**: навигация стоит слева, плеер — справа, и
@@ -568,6 +604,19 @@ class AppSettings {
 
   /// Фон полноэкранного плеера — стиль из ArchiveTune.
   final PlayerBackgroundStyle playerBackgroundStyle;
+
+  /// Скорость течения жидкости — множитель времени шейдера. 1 — как было.
+  final double liquidSpeed;
+
+  /// Масштаб пятен: во сколько раз крупнее «волокна» жидкости. 1 — как было.
+  final double liquidScale;
+
+  /// Насыщенность цвета: 1 — цвета как есть, 0 — серый. Влияет и на статичную
+  /// подложку, которая показывается, пока шейдер недоступен.
+  final double liquidSaturation;
+
+  /// Откуда «Жидкость» берёт цвета: из обложки трека или из палитры приложения.
+  final LiquidColorSource liquidColorSource;
 
   /// Отключить размытие (как в ArchiveTune): фон рисуется без блюра.
   final bool disableBlur;
@@ -666,9 +715,14 @@ class AppSettings {
     AntiDpiConfig? bypass,
     bool? autoDetectProxy,
     bool? sidebarCollapsed,
+    bool? sidebarNavigation,
     bool? playerPanelEnabled,
     ProgressBarStyle? progressBarStyle,
     PlayerBackgroundStyle? playerBackgroundStyle,
+    double? liquidSpeed,
+    double? liquidScale,
+    double? liquidSaturation,
+    LiquidColorSource? liquidColorSource,
     bool? disableBlur,
     double? blurRadius,
     bool? visualizerEnabled,
@@ -725,10 +779,15 @@ class AppSettings {
       bypass: bypass ?? this.bypass,
       autoDetectProxy: autoDetectProxy ?? this.autoDetectProxy,
       sidebarCollapsed: sidebarCollapsed ?? this.sidebarCollapsed,
+      sidebarNavigation: sidebarNavigation ?? this.sidebarNavigation,
       playerPanelEnabled: playerPanelEnabled ?? this.playerPanelEnabled,
       progressBarStyle: progressBarStyle ?? this.progressBarStyle,
       playerBackgroundStyle:
           playerBackgroundStyle ?? this.playerBackgroundStyle,
+      liquidSpeed: liquidSpeed ?? this.liquidSpeed,
+      liquidScale: liquidScale ?? this.liquidScale,
+      liquidSaturation: liquidSaturation ?? this.liquidSaturation,
+      liquidColorSource: liquidColorSource ?? this.liquidColorSource,
       disableBlur: disableBlur ?? this.disableBlur,
       blurRadius: blurRadius ?? this.blurRadius,
       visualizerEnabled: visualizerEnabled ?? this.visualizerEnabled,
@@ -789,9 +848,14 @@ class AppSettings {
         'bypass': bypass.toJson(),
         'autoDetectProxy': autoDetectProxy,
         'sidebarCollapsed': sidebarCollapsed,
+        'sidebarNavigation': sidebarNavigation,
         'playerPanelEnabled': playerPanelEnabled,
         'progressBarStyle': progressBarStyle.name,
         'playerBackgroundStyle': playerBackgroundStyle.name,
+        'liquidSpeed': liquidSpeed,
+        'liquidScale': liquidScale,
+        'liquidSaturation': liquidSaturation,
+        'liquidColorSource': liquidColorSource.name,
         'disableBlur': disableBlur,
         'blurRadius': blurRadius,
         'visualizerEnabled': visualizerEnabled,
@@ -861,11 +925,17 @@ class AppSettings {
           : const AntiDpiConfig(),
       autoDetectProxy: json['autoDetectProxy'] as bool? ?? true,
       sidebarCollapsed: json['sidebarCollapsed'] as bool? ?? false,
+      sidebarNavigation: json['sidebarNavigation'] as bool? ?? false,
       playerPanelEnabled: json['playerPanelEnabled'] as bool? ?? true,
       progressBarStyle: ProgressBarStyle.fromName(json['progressBarStyle'] as String?),
       playerBackgroundStyle: PlayerBackgroundStyle.fromName(
         json['playerBackgroundStyle'] as String?,
       ),
+      liquidSpeed: (json['liquidSpeed'] as num?)?.toDouble() ?? 1.0,
+      liquidScale: (json['liquidScale'] as num?)?.toDouble() ?? 1.0,
+      liquidSaturation: (json['liquidSaturation'] as num?)?.toDouble() ?? 1.0,
+      liquidColorSource:
+          LiquidColorSource.fromName(json['liquidColorSource'] as String?),
       disableBlur: json['disableBlur'] as bool? ?? false,
       blurRadius: (json['blurRadius'] as num?)?.toDouble() ?? 48,
       visualizerEnabled: json['visualizerEnabled'] as bool? ?? false,

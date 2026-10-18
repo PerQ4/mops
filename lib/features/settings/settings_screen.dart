@@ -106,6 +106,17 @@ class SettingsScreen extends ConsumerWidget {
                   subtitle: _uiScaleLabel(context, ref, settings),
                   onTap: () => _pickUiScale(context, controller, settings),
                 ),
+                // Навигация переезжает в левую панель — как боковая панель
+                // swiftify. На компактном окне панели нет, поэтому там
+                // переключатель ни на что не влияет: разделы остаются в островке.
+                SettingsSwitchRow(
+                  icon: Icons.view_sidebar_outlined,
+                  title: 'Панель вместо островка',
+                  subtitle: 'Навигация по разделам переезжает в левую панель '
+                      '(на широком экране)',
+                  value: settings.sidebarNavigation,
+                  onChanged: controller.setSidebarNavigation,
+                ),
               ],
             ),
             const SizedBox(height: SettingsDims.sectionSpacing),
@@ -277,6 +288,63 @@ class SettingsScreen extends ConsumerWidget {
                     settings,
                   ),
                 ),
+                // Настройки «Жидкости» показываются, только когда выбран этот
+                // стиль: у градиента и «размытой обложки» их смысла нет.
+                if (settings.playerBackgroundStyle ==
+                    PlayerBackgroundStyle.liquid) ...<Widget>[
+                  SettingsRow(
+                    icon: Icons.speed,
+                    title: 'Скорость течения',
+                    subtitle: '${settings.liquidSpeed.toStringAsFixed(1)}×',
+                    onTap: () => _pickLiquidSlider(
+                      context,
+                      title: 'Скорость течения',
+                      value: settings.liquidSpeed,
+                      min: 0.2,
+                      max: 3,
+                      divisions: 28,
+                      label: (double v) => '${v.toStringAsFixed(1)}×',
+                      onSaved: controller.setLiquidSpeed,
+                    ),
+                  ),
+                  SettingsRow(
+                    icon: Icons.zoom_out_map,
+                    title: 'Масштаб пятен',
+                    subtitle: '${settings.liquidScale.toStringAsFixed(1)}×',
+                    onTap: () => _pickLiquidSlider(
+                      context,
+                      title: 'Масштаб пятен',
+                      value: settings.liquidScale,
+                      min: 0.5,
+                      max: 2.5,
+                      divisions: 20,
+                      label: (double v) => '${v.toStringAsFixed(1)}×',
+                      onSaved: controller.setLiquidScale,
+                    ),
+                  ),
+                  SettingsRow(
+                    icon: Icons.opacity,
+                    title: 'Насыщенность цвета',
+                    subtitle: '${(settings.liquidSaturation * 100).round()}%',
+                    onTap: () => _pickLiquidSlider(
+                      context,
+                      title: 'Насыщенность цвета',
+                      value: settings.liquidSaturation,
+                      min: 0,
+                      max: 1.5,
+                      divisions: 30,
+                      label: (double v) => '${(v * 100).round()}%',
+                      onSaved: controller.setLiquidSaturation,
+                    ),
+                  ),
+                  SettingsRow(
+                    icon: Icons.palette_outlined,
+                    title: 'Источник цвета',
+                    subtitle: settings.liquidColorSource.label,
+                    onTap: () =>
+                        _pickLiquidColorSource(context, controller, settings),
+                  ),
+                ],
                 // Визуализатор — отдельная настройка, а не часть стиля фона: гало
                 // живёт поверх любой подложки. Уровень берётся у libmpv, поэтому
                 // там, где такого фильтра нет, гало честно скажет, что данных нет.
@@ -548,6 +616,63 @@ class SettingsScreen extends ConsumerWidget {
       label: (PlayerBackgroundStyle v) => v.label,
     );
     if (result != null) await controller.setPlayerBackgroundStyle(result);
+  }
+
+  /// Числовая настройка «Жидкости» — слайдер в диалоге, как у размытия.
+  Future<void> _pickLiquidSlider(
+    BuildContext context, {
+    required String title,
+    required double value,
+    required double min,
+    required double max,
+    required int divisions,
+    required String Function(double value) label,
+    required Future<void> Function(double value) onSaved,
+  }) async {
+    double current = value;
+    final double? result = await showDialog<double>(
+      context: context,
+      builder: (BuildContext dialogContext) => StatefulBuilder(
+        builder: (BuildContext context, StateSetter setState) => AlertDialog(
+          title: Text(title),
+          content: Slider(
+            value: current,
+            min: min,
+            max: max,
+            divisions: divisions,
+            label: label(current),
+            onChanged: (double v) => setState(() => current = v),
+          ),
+          actions: <Widget>[
+            TextButton(
+              onPressed: () => Navigator.of(dialogContext).pop(),
+              child: const Text('Отмена'),
+            ),
+            FilledButton(
+              onPressed: () => Navigator.of(dialogContext).pop(current),
+              child: const Text('Сохранить'),
+            ),
+          ],
+        ),
+      ),
+    );
+    if (result != null) await onSaved(result);
+  }
+
+  /// «Жидкость»: цвета из обложки текущего трека или из палитры приложения.
+  Future<void> _pickLiquidColorSource(
+    BuildContext context,
+    SettingsController controller,
+    AppSettings settings,
+  ) async {
+    final LiquidColorSource? result = await _showChoice<LiquidColorSource>(
+      context,
+      title: 'Источник цвета «Жидкости»',
+      current: settings.liquidColorSource,
+      values: LiquidColorSource.values,
+      label: (LiquidColorSource v) => v.label,
+    );
+    if (result != null) await controller.setLiquidColorSource(result);
   }
 
   /// Интенсивность размытия фона (0–64) — слайдер в диалоге.
