@@ -273,6 +273,16 @@ class SettingsScreen extends ConsumerWidget {
                     settings,
                   ),
                 ),
+                // Визуализатор — отдельная настройка, а не часть стиля фона: гало
+                // живёт поверх любой подложки. Уровень берётся у libmpv, поэтому
+                // там, где такого фильтра нет, гало честно скажет, что данных нет.
+                SettingsSwitchRow(
+                  icon: Icons.equalizer,
+                  title: 'Визуализатор',
+                  subtitle: 'Гало вокруг обложки дышит по уровню звука',
+                  value: settings.visualizerEnabled,
+                  onChanged: controller.setVisualizerEnabled,
+                ),
                 SettingsSwitchRow(
                   icon: Icons.blur_off,
                   title: 'Отключить размытие',

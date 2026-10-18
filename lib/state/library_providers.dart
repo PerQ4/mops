@@ -1,6 +1,7 @@
 import 'dart:async';
 
 import 'package:flutter_riverpod/flutter_riverpod.dart';
+import 'package:meta/meta.dart';
 
 import '../data/local/playlist_tags.dart';
 import '../data/models/models.dart';
@@ -477,3 +478,83 @@ final Provider<List<String>> playlistTagsListProvider =
   }
   return all.toList()..sort();
 });
+
+// ------------------------------------------------------------ боковая колонка
+
+/// Разделы боковой библиотеки: что показывает её список.
+///
+/// Значки намеренно не здесь: это слой состояния, а не интерфейс, — иконки
+/// подбирает панель. Так файл остаётся без зависимости от `material`.
+enum LibrarySection {
+  playlists('Плейлисты'),
+  albums('Альбомы'),
+  artists('Исполнители');
+
+  const LibrarySection(this.label);
+
+  final String label;
+}
+
+/// Порядок элементов списка библиотеки.
+///
+/// «По дате добавления» — это исходный порядок ответа YouTube, а не отдельное
+/// поле: разделы библиотеки приходят от недавно добавленных к старым, но
+/// отметки времени в разметке нет. Сортировка лишь сохраняет этот порядок и
+/// ничего не выдумывает.
+enum LibrarySort {
+  recent('По дате добавления'),
+  title('По названию'),
+  owner('По владельцу');
+
+  const LibrarySort(this.label);
+
+  final String label;
+}
+
+/// Состояние боковой библиотеки: выбранный раздел, порядок и строка поиска.
+///
+/// Сессионное, между запусками не сохраняется: держать его в настройках
+/// значило бы писать на диск на каждую букву в строке поиска.
+@immutable
+class LibrarySidebarState {
+  const LibrarySidebarState({
+    this.section = LibrarySection.playlists,
+    this.sort = LibrarySort.recent,
+    this.query = '',
+  });
+
+  final LibrarySection section;
+  final LibrarySort sort;
+  final String query;
+
+  LibrarySidebarState copyWith({
+    LibrarySection? section,
+    LibrarySort? sort,
+    String? query,
+  }) =>
+      LibrarySidebarState(
+        section: section ?? this.section,
+        sort: sort ?? this.sort,
+        query: query ?? this.query,
+      );
+}
+
+/// Управляет состоянием боковой библиотеки: раздел, порядок, поиск.
+class LibrarySidebarController extends Notifier<LibrarySidebarState> {
+  @override
+  LibrarySidebarState build() => const LibrarySidebarState();
+
+  void selectSection(LibrarySection section) =>
+      state = state.copyWith(section: section);
+
+  void setSort(LibrarySort sort) => state = state.copyWith(sort: sort);
+
+  /// Строка поиска. Пустая — фильтра нет.
+  void setQuery(String query) => state = state.copyWith(query: query);
+}
+
+final NotifierProvider<LibrarySidebarController, LibrarySidebarState>
+    librarySidebarProvider =
+    NotifierProvider<LibrarySidebarController, LibrarySidebarState>(
+  LibrarySidebarController.new,
+);

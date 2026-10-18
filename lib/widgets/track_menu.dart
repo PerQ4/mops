@@ -4,6 +4,7 @@ import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:url_launcher/url_launcher.dart';
 
 import '../core/theme/layout.dart';
+import '../core/theme/motion.dart';
 import '../data/models/models.dart';
 import '../features/common/navigation.dart';
 import '../features/library/playlist_edit.dart';
@@ -35,6 +36,9 @@ Future<void> showTrackMenu(
     // разрешаем занять больше и добавляем прокрутку — на низком окне
     // последние пункты иначе были бы обрезаны.
     isScrollControlled: true,
+    // Лист появляется и уходит тем же переходом, что и элементы интерфейса:
+    // появление — 400 мс с торможением, закрытие — 200 мс на разгон.
+    sheetAnimationStyle: AppMotion.elementMoveEnter.style,
     builder: (BuildContext sheetContext) => _TrackMenuSheet(
       track: track,
       hostContext: context,

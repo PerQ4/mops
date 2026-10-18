@@ -1,7 +1,9 @@
 import 'package:flutter_riverpod/flutter_riverpod.dart';
+import 'package:media_kit/media_kit.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 
 import '../core/audio/audio_engine.dart';
+import '../core/audio/audio_level_monitor.dart';
 import '../core/audio/audioplayers_engine.dart';
 import '../core/auth/token_store.dart';
 import '../core/innertube/innertube_client.dart';
@@ -191,6 +193,10 @@ class SettingsController extends Notifier<AppSettings> {
   /// Сила размытия фона.
   Future<void> setBlurRadius(double value) =>
       update((AppSettings s) => s.copyWith(blurRadius: value));
+
+  /// «Гало» вокруг обложки по уровню звука.
+  Future<void> setVisualizerEnabled(bool value) =>
+      update((AppSettings s) => s.copyWith(visualizerEnabled: value));
 
   /// Стиль ползунка громкости.
   Future<void> setVolumeSliderStyle(ProgressBarStyle style) =>
@@ -542,11 +548,38 @@ final Provider<StreamDownloader> streamDownloaderProvider =
   return downloader;
 });
 
+/// Плеер libmpv — один на приложение и общий с движком.
+///
+/// Создаётся здесь, а не внутри [MediaKitEngine], потому что того же самого
+/// экземпляра libmpv требуют уровни звука для визуализатора: `af` и
+/// `af-metadata` — свойства конкретного плеера, а второго плеера у них нет.
+/// Освобождает плеер движок (он владеет им) — здесь только отдаём.
+final Provider<Player> mediaKitPlayerProvider = Provider<Player>((ref) {
+  // `pitch: true` включает независимый сдвиг высоты тона: без него `setPitch`
+  // бросает ArgumentError (см. `media_kit_engine.dart`).
+  return Player(configuration: const PlayerConfiguration(pitch: true));
+});
+
 /// Аудиодвижок. Один на всё приложение.
 final Provider<AudioEngine> audioEngineProvider = Provider<AudioEngine>(
   (ref) {
-    final AudioEngine engine = AudioplayersEngine();
+    final AudioEngine engine =
+        AudioplayersEngine(player: ref.watch(mediaKitPlayerProvider));
     ref.onDispose(engine.dispose);
     return engine;
   },
 );
+
+/// Уровень звука для визуализатора (задача 10.3).
+///
+/// Провайдер отдельный и ленивый: его читают только тогда, когда визуализатор
+/// включён в настройках. Пока он выключен, плеер для уровней не поднимается и
+/// никакого опроса `af-metadata` не идёт — в том числе в тестах, где движок
+/// подменён заглушкой и настоящего libmpv нет.
+final Provider<AudioLevelMonitor> audioLevelMonitorProvider =
+    Provider<AudioLevelMonitor>((ref) {
+  final AudioLevelMonitor monitor =
+      AudioLevelMonitor(ref.watch(mediaKitPlayerProvider));
+  ref.onDispose(monitor.dispose);
+  return monitor;
+});

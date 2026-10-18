@@ -95,6 +95,12 @@ flutter:
   assets:
     - assets/icon/
 
+  # Фрагментные шейдеры Flutter (runtime effects). «Жидкость» — фон плеера
+  # (задача 10.2). К шейдеру обращаются по пути ассета:
+  # `FragmentProgram.fromAsset('shaders/liquid_backdrop.frag')`.
+  shaders:
+    - shaders/liquid_backdrop.frag
+
   # Poppins — шрифт ArchiveTune. Без него интерфейс выглядит иначе: в
   # оригинале вся типографика построена на нём.
   # Основной шрифт — Poppins, как в ArchiveTune. Кириллицы в нём нет вовсе

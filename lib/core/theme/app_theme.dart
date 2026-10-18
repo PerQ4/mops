@@ -1,10 +1,11 @@
-import 'dart:math' as math;
-
 import 'package:flutter/material.dart';
 
 import '../../data/local/app_settings.dart';
 
-
+// Кривые и длительности живут в `motion.dart` — там весь словарь движений,
+// а здесь только тема. Реэкспорт оставлен для тех, кто импортирует тему:
+// `import 'core/theme/app_theme.dart'` по-прежнему даёт [AppMotion].
+export 'motion.dart';
 
 /// Сборка темы Material 3 / Material 3 Expressive.
 ///
@@ -372,47 +373,4 @@ class PlayerTheme extends ThemeExtension<PlayerTheme> {
       artworkShadow: BoxShadow.lerp(artworkShadow, other.artworkShadow, t)!,
     );
   }
-}
-
-/// Кривая-пружина: приближает Motion-систему Material 3 Expressive.
-///
-/// В ArchiveTune переходы заданы пружинами (`Spring.StiffnessLow`,
-/// `DampingRatioNoBouncy`), а во Flutter пружинных кривых нет — есть только
-/// кубические. Здесь та же пружина, посчитанная как кривая: критически
-/// затухающий осциллятор, который без отскока приходит в цель.
-///
-/// Критическое затухание даёт формулу `1 - (1 + w·t)·e^(-w·t)`, где `w` —
-/// жёсткость. Чем больше `w`, тем резче движение.
-class SpringCurve extends Curve {
-  const SpringCurve({this.stiffness = 8});
-
-  /// Жёсткость: 8 — спокойно, 12 — живее.
-  final double stiffness;
-
-  @override
-  double transformInternal(double t) {
-    if (t <= 0) return 0;
-    if (t >= 1) return 1;
-    final double w = stiffness;
-    return 1 - (1 + w * t) * math.exp(-w * t);
-  }
-}
-
-/// Пружинные кривые, характерные для Motion-системы Material 3 Expressive.
-abstract final class AppMotion {
-  /// Пружина для размеров и положения: мягкая, без отскока.
-  static const Curve spring = SpringCurve();
-
-  /// Пружина порезче — для нажатий и переключателей.
-  static const Curve springSnappy = SpringCurve(stiffness: 12);
-
-  /// Быстрая «пружина» — для нажатий и переключателей.
-  static const Curve snappy = Cubic(0.2, 0.0, 0.0, 1.0);
-
-  /// Мягкое появление контента.
-  static const Curve gentle = Cubic(0.05, 0.7, 0.1, 1.0);
-
-  static const Duration fast = Duration(milliseconds: 160);
-  static const Duration medium = Duration(milliseconds: 320);
-  static const Duration slow = Duration(milliseconds: 520);
 }

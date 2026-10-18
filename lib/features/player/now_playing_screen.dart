@@ -1,6 +1,7 @@
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 
+import '../../core/audio/audio_level_monitor.dart';
 import '../../core/theme/app_theme.dart';
 import '../../core/theme/layout.dart';
 import '../common/navigation.dart';
@@ -17,6 +18,8 @@ import '../../state/providers.dart';
 import '../../widgets/artist_line.dart';
 import '../../widgets/artwork.dart';
 import '../../widgets/blurred_artwork_background.dart';
+import '../../widgets/liquid_backdrop.dart';
+import '../../widgets/spectrum_visualizer.dart';
 import '../../widgets/track_menu.dart';
 import 'lyrics_actions.dart';
 import 'lyrics_view.dart';
@@ -77,6 +80,9 @@ class _NowPlayingScreenState extends ConsumerState<NowPlayingScreen> {
                     track: track,
                     style: backgroundStyle,
                     blurSigma: disableBlur ? 0 : blurRadius,
+                    // «Жидкость» идёт только по звуку: на паузе анимация
+                    // останавливается и перерисовок нет.
+                    animate: player.isPlaying,
                   ),
                 ),
                 SafeArea(
@@ -295,6 +301,7 @@ class _ArtworkBackdrop extends StatefulWidget {
   const _ArtworkBackdrop({
     required this.track,
     required this.style,
+    required this.animate,
     this.blurSigma = 28,
   });
 
@@ -302,6 +309,10 @@ class _ArtworkBackdrop extends StatefulWidget {
 
   /// Стиль фона из настроек.
   final PlayerBackgroundStyle style;
+
+  /// Идёт воспроизведение — нужно стилю «жидкость»: на паузе он замирает
+  /// (см. `LiquidBackdrop`).
+  final bool animate;
 
   /// Сила размытия для стиля «размытая обложка» (0 — без размытия).
   final double blurSigma;
@@ -372,12 +383,30 @@ class _ArtworkBackdropState extends State<_ArtworkBackdrop> {
     final ColorScheme scheme = Theme.of(context).colorScheme;
     // Пока палитра не готова, рисуем фон ролями темы: тот же градиент, но без
     // вклада обложки. Подмена незаметна — цвета близки по светлоте.
-    return _GradientBackdrop(
-      scheme: scheme,
-      palette: _palette ?? scheme,
-    );
+    final ColorScheme palette = _palette ?? scheme;
+    // «Жидкость» — свой шейдер из тех же трёх цветов, что у градиента: цвета
+    // обложки, только текучие.
+    if (widget.style == PlayerBackgroundStyle.liquid) {
+      return LiquidBackdrop(
+        colors: _backdropColors(palette),
+        animate: widget.animate,
+      );
+    }
+    return _GradientBackdrop(scheme: scheme, palette: palette);
   }
 }
+
+/// Три цвета фона из палитры обложки.
+///
+/// Роли контейнеров, а не `primary`/`tertiary`: у тёмной схемы они тёмные, у
+/// светлой — светлые, поэтому текст темы (`onSurface`) читается в обоих режимах.
+/// Одни и те же цвета берут и градиент, и «жидкость» — фон не меняет палитру при
+/// смене стиля.
+List<Color> _backdropColors(ColorScheme palette) => <Color>[
+      palette.primaryContainer.withValues(alpha: 0.92),
+      palette.secondaryContainer.withValues(alpha: 0.75),
+      palette.tertiaryContainer.withValues(alpha: 0.65),
+    ];
 
 /// Кэш палитр по адресу обложки и яркости: квантование цвета небыстрое, а
 /// треки повторяются.
@@ -420,15 +449,9 @@ class _GradientBackdrop extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
-    // Берём контейнерные роли: у тёмной схемы они тёмные, у светлой — светлые,
-    // поэтому текст темы (`onSurface` / `onSurfaceVariant`) читается в обоих
-    // режимах. `primary`/`tertiary` как фон, наоборот, дали бы светлую заливку
-    // на тёмной теме и тёмную на светлой — и текст бы «поплыл».
-    final List<Color> colors = <Color>[
-      palette.primaryContainer.withValues(alpha: 0.92),
-      palette.secondaryContainer.withValues(alpha: 0.75),
-      palette.tertiaryContainer.withValues(alpha: 0.65),
-    ];
+    // Цвета те же, что у «жидкости» (`_backdropColors`) — фон не меняется при
+    // смене стиля задним числом.
+    final List<Color> colors = _backdropColors(palette);
     // Подложка поверх градиента — как чёрная 0.18 в ArchiveTune. На светлой
     // теме чёрная затемнила бы светлые контейнеры и испортила контраст с
     // тёмным текстом, поэтому там подложка того же назначения, но светлая.
@@ -459,10 +482,27 @@ class _GradientBackdrop extends StatelessWidget {
 }
 
 /// Обложка в открытом виде — крупная и резкая.
+///
+/// Когда включён визуализатор, обложка на пару десятков пикселей уменьшается, а в
+/// освободившемся зазоре рисуется гало по уровню звука: обложку оно не
+/// перекрывает, потому что живёт снаружи неё. Если уровня нет (сборка libmpv без
+/// фильтра `astats`), под обложкой появляется подпись с причиной — вместо
+/// выдуманного движения.
 class _ArtworkStage extends StatelessWidget {
   const _ArtworkStage({required this.track});
 
   final Track track;
+
+  /// Зазор под гало: и отступ кольца от обложки, и место, которое обложка
+  /// уступает визуализатору.
+  static const double _kHaloInset = 18;
+
+  /// Радиус скругления обложки — как `Thumbnail` в ArchiveTune (16).
+  static const double _kArtworkRadius = 16;
+
+  /// Предел стороны обложки: на десктопе огромная обложка отбирала место у
+  /// управления и очереди.
+  static const double _kMaxSide = 420;
 
   @override
   Widget build(BuildContext context) {
@@ -472,31 +512,102 @@ class _ArtworkStage extends StatelessWidget {
       // Отступы обложки — `PlayerHorizontalPadding` по бокам (32) и 16 сверху
       // и снизу, как `Thumbnail` в ArchiveTune.
       padding: const EdgeInsets.symmetric(horizontal: 32, vertical: 16),
-      child: Center(
-        child: LayoutBuilder(
-          builder: (BuildContext context, BoxConstraints constraints) {
-            // Обложка квадратная и вписывается в доступное место, но не
-            // растягивается на пол-экрана: на десктопе огромная обложка
-            // отбирала место у управления и очереди.
-            final double available = constraints.biggest.shortestSide;
-            final double side = available > 420 ? 420 : available;
-            return SizedBox(
-              width: side,
-              height: side,
-              child: Artwork(
-                url: variants.isEmpty ? null : variants.first,
-                fallbacks: variants.length > 1
-                    ? variants.sublist(1)
-                    : const <String>[],
-                // Общий тег с миниатюрой островка: обложка перелетает и
-                // растёт из мини-плеера в полный экран (и обратно).
-                heroTag: kPlayerArtworkHeroTag,
-                // Радиус обложки плеера в ArchiveTune — 16.
-                radius: BorderRadius.circular(16),
-              ),
-            );
-          },
-        ),
+      child: Consumer(
+        builder: (BuildContext context, WidgetRef ref, Widget? child) {
+          final bool withVisualizer = ref.watch(
+            settingsControllerProvider.select(
+              (AppSettings s) => s.visualizerEnabled,
+            ),
+          );
+          // Монитор читается только при включённом визуализаторе: провайдер
+          // ленивый, и пока он не нужен, libmpv для уровней не поднимается.
+          final AudioLevelMonitor? monitor =
+              withVisualizer ? ref.watch(audioLevelMonitorProvider) : null;
+
+          return Center(
+            child: LayoutBuilder(
+              builder: (BuildContext context, BoxConstraints constraints) {
+                // Обложка квадратная и вписывается в доступное место.
+                final double available = constraints.biggest.shortestSide;
+                if (monitor == null) {
+                  return _artwork(context, variants, _side(available), null);
+                }
+                // Слушаем монитор: подпись «уровня нет» должна появиться сама,
+                // без пересборки всего экрана.
+                return AnimatedBuilder(
+                  animation: monitor,
+                  builder: (BuildContext context, Widget? child) {
+                    final bool noData = monitor.availability ==
+                        AudioLevelAvailability.unavailable;
+                    // Подпись занимает место под обложкой: без вычета её высоты
+                    // колонка переполнила бы отведённую высоту на низком окне.
+                    final double limit = noData
+                        ? available - SpectrumUnavailableNote.height
+                        : available;
+                    return Column(
+                      mainAxisSize: MainAxisSize.min,
+                      children: <Widget>[
+                        _artwork(context, variants, _side(limit), monitor),
+                        if (noData) SpectrumUnavailableNote(monitor: monitor),
+                      ],
+                    );
+                  },
+                );
+              },
+            ),
+          );
+        },
+      ),
+    );
+  }
+
+  static double _side(double available) {
+    if (available > _kMaxSide) return _kMaxSide;
+    return available < 0 ? 0 : available;
+  }
+
+  /// Обложка; при [monitor] — вместе с гало в том же квадрате.
+  Widget _artwork(
+    BuildContext context,
+    List<String> variants,
+    double side,
+    AudioLevelMonitor? monitor,
+  ) {
+    final Widget artwork = Artwork(
+      url: variants.isEmpty ? null : variants.first,
+      fallbacks:
+          variants.length > 1 ? variants.sublist(1) : const <String>[],
+      // Общий тег с миниатюрой островка: обложка перелетает и растёт
+      // из мини-плеера в полный экран (и обратно).
+      heroTag: kPlayerArtworkHeroTag,
+      radius: BorderRadius.circular(_kArtworkRadius),
+    );
+    if (monitor == null) {
+      return SizedBox(width: side, height: side, child: artwork);
+    }
+    // Цвета гало — из темы: когда в настройках выбрана палитра «из обложки», это
+    // те же цвета, что у фона, а лишний разбор обложки ради кольца не нужен.
+    final List<Color> colors =
+        _backdropColors(Theme.of(context).colorScheme);
+    // На очень узком окне зазор может не поместиться — тогда обложка просто
+    // занимает весь квадрат, а гало рисуется поверх края.
+    final double inner = (side - 2 * _kHaloInset).clamp(0.0, side);
+    return SizedBox(
+      width: side,
+      height: side,
+      child: Stack(
+        alignment: Alignment.center,
+        children: <Widget>[
+          Positioned.fill(
+            child: SpectrumVisualizer(
+              monitor: monitor,
+              artworkInset: _kHaloInset,
+              cornerRadius: _kArtworkRadius + _kHaloInset,
+              colors: colors,
+            ),
+          ),
+          SizedBox(width: inner, height: inner, child: artwork),
+        ],
       ),
     );
   }

@@ -226,10 +226,12 @@ enum ProgressBarStyle {
 ///
 /// Первый шаг переноса настроек внешнего вида ArchiveTune
 /// (`PlayerBackgroundStyle`): там вариантов восемь, здесь пока базовые —
-/// градиент из цветов обложки и размытая обложка.
+/// градиент из цветов обложки, размытая обложка и «жидкий» шейдер (задача 10.2,
+/// идея — из `LiquidBackdrop.qml` у shredos67/swiftify).
 enum PlayerBackgroundStyle {
   gradient('Градиент', 'Градиент из цветов обложки'),
-  blur('Размытая обложка', 'Обложка трека, размытая и затемнённая');
+  blur('Размытая обложка', 'Обложка трека, размытая и затемнённая'),
+  liquid('Жидкость', 'Медленно текущий шейдер из цветов обложки');
 
   const PlayerBackgroundStyle(this.label, this.description);
 
@@ -410,6 +412,7 @@ class AppSettings {
     this.playerBackgroundStyle = PlayerBackgroundStyle.gradient,
     this.disableBlur = false,
     this.blurRadius = 48,
+    this.visualizerEnabled = false,
     this.volumeSliderStyle = ProgressBarStyle.standard,
     this.titleBarCentered = true,
     this.titleBarMatchesBackground = false,
@@ -572,6 +575,14 @@ class AppSettings {
   /// Сила размытия фона (0–64). Как `BlurRadiusKey` в ArchiveTune.
   final double blurRadius;
 
+  /// «Гало» вокруг обложки, дышащее по уровню звука (задача 10.3).
+  ///
+  /// По умолчанию **выключено**: уровень берётся у libmpv опросом свойства
+  /// `af-metadata`, а такой опрос — лишняя работа, которая нужна не всем. Там,
+  /// где сборка libmpv фильтра не имеет (Windows), визуализатор честно скажет об
+  /// этом и не будет двигаться.
+  final bool visualizerEnabled;
+
   /// Стиль ползунка громкости — тот же набор, что у полосы перемотки.
   final ProgressBarStyle volumeSliderStyle;
 
@@ -660,6 +671,7 @@ class AppSettings {
     PlayerBackgroundStyle? playerBackgroundStyle,
     bool? disableBlur,
     double? blurRadius,
+    bool? visualizerEnabled,
     ProgressBarStyle? volumeSliderStyle,
     bool? titleBarCentered,
     bool? titleBarMatchesBackground,
@@ -719,6 +731,7 @@ class AppSettings {
           playerBackgroundStyle ?? this.playerBackgroundStyle,
       disableBlur: disableBlur ?? this.disableBlur,
       blurRadius: blurRadius ?? this.blurRadius,
+      visualizerEnabled: visualizerEnabled ?? this.visualizerEnabled,
       volumeSliderStyle: volumeSliderStyle ?? this.volumeSliderStyle,
       titleBarCentered: titleBarCentered ?? this.titleBarCentered,
       titleBarMatchesBackground:
@@ -781,6 +794,7 @@ class AppSettings {
         'playerBackgroundStyle': playerBackgroundStyle.name,
         'disableBlur': disableBlur,
         'blurRadius': blurRadius,
+        'visualizerEnabled': visualizerEnabled,
         'volumeSliderStyle': volumeSliderStyle.name,
         'titleBarCentered': titleBarCentered,
         'titleBarMatchesBackground': titleBarMatchesBackground,
@@ -854,6 +868,7 @@ class AppSettings {
       ),
       disableBlur: json['disableBlur'] as bool? ?? false,
       blurRadius: (json['blurRadius'] as num?)?.toDouble() ?? 48,
+      visualizerEnabled: json['visualizerEnabled'] as bool? ?? false,
       volumeSliderStyle: ProgressBarStyle.fromName(
         json['volumeSliderStyle'] as String?,
       ),

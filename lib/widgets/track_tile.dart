@@ -3,6 +3,7 @@ import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 
 import '../core/theme/layout.dart';
+import '../core/theme/motion.dart';
 import '../core/utils/format.dart';
 import '../data/models/models.dart';
 import '../features/common/navigation.dart';
@@ -472,11 +473,10 @@ class _SwipeToSongBoxState extends ConsumerState<SwipeToSongBox> {
           ),
           AnimatedContainer(
             // Во время перетаскивания строка идёт за пальцем без задержки, а
-            // после отпускания плавно возвращается на место.
-            duration: _dragging
-                ? Duration.zero
-                : const Duration(milliseconds: 220),
-            curve: Curves.easeOutCubic,
+            // после отпускания плавно возвращается на место — тем же
+            // переходом, что и экран из-под жеста «назад».
+            duration: _dragging ? Duration.zero : AppMotion.snapBack.duration,
+            curve: AppMotion.snapBack.curve,
             transform: Matrix4.translationValues(_offset, 0, 0),
             child: widget.child,
           ),

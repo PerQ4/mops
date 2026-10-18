@@ -3,6 +3,8 @@ import 'dart:io';
 import 'package:cached_network_image/cached_network_image.dart';
 import 'package:flutter/material.dart';
 
+import '../core/theme/motion.dart';
+
 
 /// Тег [Hero] для обложки плеера.
 ///
@@ -88,7 +90,10 @@ class _ArtworkState extends State<Artwork> {
             width: w,
             height: h,
             fit: widget.fit,
-            fadeInDuration: const Duration(milliseconds: 150),
+            // Появление обложки — тот же темп, что у остальных проявлений:
+            // картинка из кэша не «мигает», а проявляется.
+            fadeInDuration: AppMotion.artworkFade.duration,
+            fadeInCurve: AppMotion.artworkFade.curve,
             placeholder: (BuildContext context, String _) =>
                 _placeholder(scheme),
             errorWidget: (BuildContext context, String url, Object error) {
@@ -138,11 +143,15 @@ class _ArtworkState extends State<Artwork> {
     // отсутствии — у исходного.
     final Widget? content =
         _heroContent(toHeroContext) ?? _heroContent(fromHeroContext);
+    // Скругление идёт по кривой перелёта, а не линейно, как анимация маршрута:
+    // иначе углы «плывут» ровно и картинка выглядит вклеенной.
+    final Animation<double> flight =
+        animation.drive(AppMotion.heroFlight.tween);
     return AnimatedBuilder(
-      animation: animation,
+      animation: flight,
       child: content,
       builder: (BuildContext context, Widget? child) => ClipRRect(
-        borderRadius: BorderRadius.lerp(from, to, animation.value)!,
+        borderRadius: BorderRadius.lerp(from, to, flight.value)!,
         child: child,
       ),
     );

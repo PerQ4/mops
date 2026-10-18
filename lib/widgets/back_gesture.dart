@@ -2,6 +2,7 @@ import 'package:flutter/gestures.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 
+import '../core/theme/motion.dart';
 import '../features/shell/content_navigator.dart';
 
 /// Прогресс жеста «назад», 0…1.
@@ -42,9 +43,12 @@ class _BackGestureState extends State<BackGesture>
   double _panDx = 0;
 
   /// Возврат экрана на место, если жест не добрал порога.
+  ///
+  /// Переход — [AppMotion.snapBack], тот же, что у строки списка из-под
+  /// пальца: оба жеста возвращают элемент на место, и ход у них одинаковый.
   late final AnimationController _settle = AnimationController(
     vsync: this,
-    duration: const Duration(milliseconds: 220),
+    duration: AppMotion.snapBack.duration,
   );
 
   @override
@@ -109,7 +113,7 @@ class _BackGestureState extends State<BackGesture>
     }
     // Порог не добрали — плавно возвращаем экран на место (как и задумано
     // в комментарии к `_settle`).
-    _settle.animateTo(0, curve: Curves.easeOutCubic);
+    _settle.animateTo(0, curve: AppMotion.snapBack.curve);
   }
 
   /// Alt + ← и кнопка «назад» на клавиатуре.
