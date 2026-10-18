@@ -221,9 +221,13 @@ class DiscordPresenceService {
       if (subtitle.isNotEmpty) 'state': _truncate(subtitle, 128),
       'assets': <String, dynamic>{
         'large_image': _coverUrl(track),
-        // Подсказка на обложке — альбом (как в Spotify): название трека уже
-        // стоит в `details`, дублировать его здесь незачем.
-        'large_text': _truncate(album ?? track.title, 128),
+        // Подсказка на обложке — альбом, как в Spotify. Дублировать нечего:
+        // название трека уже в `details`, а если исполнителя нет и в `state`
+        // стоит тот же альбом, вторая строка была бы повтором.
+        if (album != null &&
+            album.trim().isNotEmpty &&
+            album.trim() != subtitle.trim())
+          'large_text': _truncate(album.trim(), 128),
         // Значок приложения в углу обложки. Это ключ ассета из портала
         // (Rich Presence → Art Assets, имя `mops`): внешние ссылки Discord для
         // маленькой картинки не принимает. Если ассет не загружен, в углу
