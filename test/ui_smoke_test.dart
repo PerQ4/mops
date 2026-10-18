@@ -20,6 +20,7 @@ import 'package:mops/data/local/app_settings.dart';
 import 'package:mops/data/models/models.dart';
 import 'package:mops/features/player/floating_dock.dart';
 import 'package:mops/features/player/lyrics_actions.dart';
+import 'package:mops/features/player/lyrics_view.dart';
 import 'package:mops/features/player/now_playing_screen.dart';
 import 'package:mops/features/settings/settings_screen.dart';
 import 'package:mops/features/shell/app_shell.dart';
@@ -324,16 +325,16 @@ class _SearchLauncher extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
-    return Scaffold(
-      body: Center(
-        child: FilledButton(
-          onPressed: () => showLyricsSearchDialog(
-            context,
-            request,
-            startInInput: false,
-          ),
-          child: const Text('Поиск текста'),
+    // Без Scaffold: этот виджет ставится и как «домашний» экран, и внутрь
+    // колонки рядом с плеером — Scaffold в колонке требует ограниченной высоты.
+    return Center(
+      child: FilledButton(
+        onPressed: () => showLyricsSearchDialog(
+          context,
+          request,
+          startInInput: false,
         ),
+        child: const Text('Поиск текста'),
       ),
     );
   }
@@ -635,6 +636,87 @@ void main() {
       find.byType(MaterialApp),
       matchesGoldenFile('goldens/11_lyrics_providers.png'),
     );
+  });
+
+  testWidgets('Выбранный вариант показывается в плеере, даже когда обычный поиск пуст',
+      (WidgetTester tester) async {
+    const String videoId = 'vid00000000042';
+
+    await pump(
+      tester,
+      const _Harness(child: LyricsView(videoId: videoId)),
+      size: const Size(720, 700),
+      extra: <dynamic>[
+        // Обычный поиск ничего не нашёл — так и бывает, когда вариант пришёл
+        // только из «всех совпадений».
+        lyricsProvider.overrideWith(
+          (ref, LyricsRequest request) => Stream<LyricsSearchState>.value(
+            const LyricsSearchState(loading: false),
+          ),
+        ),
+      ],
+    );
+
+    final BuildContext context = tester.element(find.byType(LyricsView));
+    final ProviderContainer container = ProviderScope.containerOf(context);
+    // Выбираем вариант ровно так, как это делает карточка экрана поиска.
+    container.read(lyricsPickProvider.notifier).set(
+          videoId,
+          LyricsPick(
+            id: 'lrclib_x',
+            source: LyricsSource.lrclib,
+            lyrics: _plainLyrics(),
+          ),
+        );
+    await tester.pumpAndSettle();
+
+    expect(tester.takeException(), isNull);
+    // Текст выбранного варианта виден, а не «Текста нет».
+    expect(find.text(_lyricsLines.first), findsWidgets);
+    expect(find.text('Текста нет'), findsNothing);
+  });
+
+  testWidgets('Тап по карточке поиска: плеер показывает этот же текст',
+      (WidgetTester tester) async {
+    // Один и тот же трек в плеере и в поиске — как в жизни.
+    const String videoId = 'vid00000000001';
+
+    await pump(
+      tester,
+      const _Harness(
+        child: Column(
+          children: <Widget>[
+            Expanded(child: LyricsView(videoId: videoId)),
+            _SearchLauncher(),
+          ],
+        ),
+      ),
+      size: const Size(900, 900),
+      extra: <dynamic>[
+        // Обычный поиск пуст: вариант приходит только из «всех совпадений».
+        lyricsProvider.overrideWith(
+          (ref, LyricsRequest request) => Stream<LyricsSearchState>.value(
+            const LyricsSearchState(loading: false),
+          ),
+        ),
+        lyricsVariantsProvider.overrideWith(
+          (ref, LyricsRequest request) =>
+              Stream<LyricsSearchState>.value(_fakeLyricsSearch()),
+        ),
+      ],
+    );
+
+    await tester.tap(find.text('Поиск текста'));
+    await tester.pumpAndSettle();
+
+    // Берём карточку LRCLIB — ту, что с обычным текстом, как выбрал бы
+    // пользователь.
+    await tester.tap(find.text('LRCLIB').first);
+    await tester.pumpAndSettle();
+
+    expect(tester.takeException(), isNull);
+    expect(find.text('Текста нет'), findsNothing);
+    expect(find.text(_lyricsLines.first), findsWidgets);
   });
 
   testWidgets('Масштаб интерфейса меняется с клавиатуры', (WidgetTester tester) async {

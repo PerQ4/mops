@@ -586,6 +586,9 @@ class _LyricsSearchDialogState extends ConsumerState<_LyricsSearchDialog> {
             lyrics: candidate.lyrics,
           ),
         );
+    // Выбранный текст теперь и есть текст трека — отмечаем: значок «есть
+    // текст» в списках должен говорить правду.
+    ref.read(lyricsAvailabilityProvider.notifier).mark(videoId);
     // Источник запоминаем для этого трека: смена настройки затронула бы все
     // треки, а пользователь просил другой текст именно здесь.
     ref

@@ -1280,8 +1280,12 @@ Stream<LyricsSearchState> _searchLyrics(
           b.score.compareTo(a.score));
       if (disposed) return;
       // Отмечаем трек как «с текстом» — по этой отметке в списках появляется
-      // значок, поэтому она ставится только для непустого результата.
-      ref.read(lyricsAvailabilityProvider.notifier).mark(request.videoId);
+      // значок. Только в обычном поиске: он и есть то, что покажет плеер.
+      // Поиск «всех вариантов» отмечать не должен — он ищет шире, и значок
+      // обещал бы текст, которого в плеере нет.
+      if (!allVariants) {
+        ref.read(lyricsAvailabilityProvider.notifier).mark(request.videoId);
+      }
       controller.add(LyricsSearchState(
         candidates: List<LyricsCandidate>.of(found),
         loading: true,
