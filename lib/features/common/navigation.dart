@@ -12,6 +12,7 @@ import '../settings/backup_screen.dart';
 import '../settings/spotify_import_screen.dart';
 import '../settings/bypass_screen.dart';
 import '../settings/settings_screen.dart';
+import '../settings/storage_screen.dart';
 import '../shell/content_navigator.dart';
 import '../../widgets/back_gesture.dart';
 
@@ -129,4 +130,8 @@ abstract final class AppRoutes {
   /// Резервная копия настроек: сохранить в файл или загрузить из файла.
   static Future<void> backup(BuildContext context) =>
       _push<void>(context, const BackupScreen());
+
+  /// Хранилище: сколько занимают данные приложения и очистка кэша текстов.
+  static Future<void> storage(BuildContext context) =>
+      _push<void>(context, const StorageScreen());
 }

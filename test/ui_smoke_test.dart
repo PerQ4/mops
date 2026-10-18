@@ -22,6 +22,7 @@ import 'package:mops/features/player/floating_dock.dart';
 import 'package:mops/features/player/lyrics_actions.dart';
 import 'package:mops/features/player/lyrics_view.dart';
 import 'package:mops/features/player/now_playing_screen.dart';
+import 'package:mops/features/search/search_screen.dart';
 import 'package:mops/features/settings/settings_screen.dart';
 import 'package:mops/features/shell/app_shell.dart';
 import 'package:mops/state/catalog_providers.dart';
@@ -717,6 +718,26 @@ void main() {
     expect(tester.takeException(), isNull);
     expect(find.text('Текста нет'), findsNothing);
     expect(find.text(_lyricsLines.first), findsWidgets);
+  });
+
+  testWidgets('Поиск: настроения и жанры не обрезают подписи',
+      (WidgetTester tester) async {
+    await pump(
+      tester,
+      const _Harness(child: SearchScreen()),
+      size: const Size(1600, 900),
+    );
+
+    expect(tester.takeException(), isNull);
+    // Подписи в плитках видны целиком, а не «Хоро…»: сетка на десктопе шире,
+    // чем мобильные 180 пикселей.
+    expect(find.text('Хорошее настроение'), findsOneWidget);
+    expect(find.text('Для тренировки'), findsOneWidget);
+
+    await expectLater(
+      find.byType(MaterialApp),
+      matchesGoldenFile('goldens/12_search_moods.png'),
+    );
   });
 
   testWidgets('Масштаб интерфейса меняется с клавиатуры', (WidgetTester tester) async {

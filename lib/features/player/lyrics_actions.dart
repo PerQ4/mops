@@ -132,6 +132,12 @@ class _LyricsMenuSheetState extends ConsumerState<_LyricsMenuSheet> {
           .select((Map<String, LyricsTrackHit> m) => m[request.videoId]),
     );
 
+    // Диагностика источников: берём состояние того же поиска, что показывает
+    // плеер, — иначе статусы расходились бы с тем, что видит пользователь.
+    final LyricsSearchState search =
+        ref.watch(lyricsProvider(manual ?? request)).value ??
+            const LyricsSearchState();
+
     // Подпись в шапке: выбранная запись важнее ручного запроса, а он — важнее
     // источника по умолчанию.
     final String subtitle = selectedHit != null
@@ -142,84 +148,91 @@ class _LyricsMenuSheetState extends ConsumerState<_LyricsMenuSheet> {
             : 'Источник: ${current.label}';
 
     return SafeArea(
-      child: Column(
-        mainAxisSize: MainAxisSize.min,
-        children: <Widget>[
-          Padding(
-            padding: const EdgeInsets.fromLTRB(20, 0, 20, 10),
-            child: Column(
-              crossAxisAlignment: CrossAxisAlignment.start,
-              children: <Widget>[
-                Text(
-                  'Текст песни',
-                  style: text.titleLarge?.copyWith(fontWeight: FontWeight.w700),
-                ),
-                const SizedBox(height: 2),
-                Text(
-                  subtitle,
-                  style: text.bodySmall?.copyWith(
-                    color: scheme.onSurfaceVariant,
+      child: SingleChildScrollView(
+        child: Column(
+          mainAxisSize: MainAxisSize.min,
+          children: <Widget>[
+            Padding(
+              padding: const EdgeInsets.fromLTRB(20, 0, 20, 10),
+              child: Column(
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: <Widget>[
+                  Text(
+                    'Текст песни',
+                    style:
+                        text.titleLarge?.copyWith(fontWeight: FontWeight.w700),
                   ),
-                  maxLines: 2,
-                  overflow: TextOverflow.ellipsis,
-                ),
-              ],
+                  const SizedBox(height: 2),
+                  Text(
+                    subtitle,
+                    style: text.bodySmall?.copyWith(
+                      color: scheme.onSurfaceVariant,
+                    ),
+                    maxLines: 2,
+                    overflow: TextOverflow.ellipsis,
+                  ),
+                ],
+              ),
             ),
-          ),
-          Padding(
-            padding: const EdgeInsets.symmetric(horizontal: 8),
-            child: Row(
-              children: <Widget>[
-                _MenuAction(
-                  icon: Icons.edit_outlined,
-                  label: 'Изменить',
-                  onTap: () => _editLyrics(context, ref),
-                ),
-                _MenuAction(
-                  icon: Icons.refresh,
-                  label: 'Обновить',
-                  onTap: () => unawaited(_refresh(ref)),
-                ),
-                _MenuAction(
-                  icon: Icons.search,
-                  label: 'Поиск',
-                  onTap: _openSearch,
-                ),
-                _MenuAction(
-                  icon: Icons.restart_alt,
-                  label: 'Сбросить',
-                  onTap: () {
-                    ref
-                        .read(lyricsSourceOverrideProvider.notifier)
-                        .setSource(request.videoId, LyricsSource.auto);
-                    ref
-                        .read(manualLyricsRequestsProvider.notifier)
-                        .set(request.videoId, null);
-                    // Снимаем и выбранную запись: иначе поиск остался бы
-                    // привязан к ней и «Сбросить» был бы неполным.
-                    ref
-                        .read(manualLyricsSelectionProvider.notifier)
-                        .set(request.videoId, null);
-                    // И выбранный вариант текста — он тоже ручной выбор.
-                    ref
-                        .read(lyricsPickProvider.notifier)
-                        .set(request.videoId, null);
-                    ref.invalidate(lyricsProvider(request));
-                    ref.invalidate(lyricsVariantsProvider(request));
-                  },
-                ),
-              ],
+            Padding(
+              padding: const EdgeInsets.symmetric(horizontal: 8),
+              child: Row(
+                children: <Widget>[
+                  _MenuAction(
+                    icon: Icons.edit_outlined,
+                    label: 'Изменить',
+                    onTap: () => _editLyrics(context, ref),
+                  ),
+                  _MenuAction(
+                    icon: Icons.refresh,
+                    label: 'Обновить',
+                    onTap: () => unawaited(_refresh(ref)),
+                  ),
+                  _MenuAction(
+                    icon: Icons.search,
+                    label: 'Поиск',
+                    onTap: _openSearch,
+                  ),
+                  _MenuAction(
+                    icon: Icons.restart_alt,
+                    label: 'Сбросить',
+                    onTap: () {
+                      ref
+                          .read(lyricsSourceOverrideProvider.notifier)
+                          .setSource(request.videoId, LyricsSource.auto);
+                      ref
+                          .read(manualLyricsRequestsProvider.notifier)
+                          .set(request.videoId, null);
+                      // Снимаем и выбранную запись: иначе поиск остался бы
+                      // привязан к ней и «Сбросить» был бы неполным.
+                      ref
+                          .read(manualLyricsSelectionProvider.notifier)
+                          .set(request.videoId, null);
+                      // И выбранный вариант текста — он тоже ручной выбор.
+                      ref
+                          .read(lyricsPickProvider.notifier)
+                          .set(request.videoId, null);
+                      ref.invalidate(lyricsProvider(request));
+                      ref.invalidate(lyricsVariantsProvider(request));
+                    },
+                  ),
+                ],
+              ),
             ),
-          ),
-          if (widget.onToggleVisibility != null)
-            SwitchListTile(
-              value: widget.lyricsVisible,
-              onChanged: (bool _) => widget.onToggleVisibility!(),
-              title: const Text('Показывать текст в плеере'),
-              contentPadding: const EdgeInsets.symmetric(horizontal: 20),
-            ),
-          const SizedBox(height: 8),
-        ],
+            if (widget.onToggleVisibility != null)
+              SwitchListTile(
+                value: widget.lyricsVisible,
+                onChanged: (bool _) => widget.onToggleVisibility!(),
+                title: const Text('Показывать текст в плеере'),
+                contentPadding: const EdgeInsets.symmetric(horizontal: 20),
+              ),
+            // Диагностика — внизу и свёрнута: она нужна, когда текст не
+            // нашёлся, и не должна мешать обычным действиям.
+            if (search.reports.isNotEmpty || search.loading)
+              _SourcesPanel(reports: search.reports, loading: search.loading),
+            const SizedBox(height: 8),
+          ],
+        ),
       ),
     );
   }
@@ -372,6 +385,182 @@ class _MenuAction extends StatelessWidget {
       ),
     );
   }
+}
+
+/// Сворачиваемый блок диагностики: чем закончился запрос к каждому источнику.
+///
+/// Нужен, когда текст не нашёлся: по нему видно, кто ответил пустотой, кто
+/// ошибся, а кто не успел, — вместо одного «Текст не найден».
+class _SourcesPanel extends StatefulWidget {
+  const _SourcesPanel({required this.reports, required this.loading});
+
+  final List<LyricsSourceReport> reports;
+  final bool loading;
+
+  @override
+  State<_SourcesPanel> createState() => _SourcesPanelState();
+}
+
+class _SourcesPanelState extends State<_SourcesPanel> {
+  /// Свёрнут по умолчанию: это диагностика, а не основное действие.
+  bool _expanded = false;
+
+  @override
+  Widget build(BuildContext context) {
+    final ColorScheme scheme = Theme.of(context).colorScheme;
+    final TextTheme text = Theme.of(context).textTheme;
+
+    return Column(
+      mainAxisSize: MainAxisSize.min,
+      crossAxisAlignment: CrossAxisAlignment.stretch,
+      children: <Widget>[
+        InkWell(
+          onTap: () => setState(() => _expanded = !_expanded),
+          child: Padding(
+            padding: const EdgeInsets.symmetric(horizontal: 20, vertical: 10),
+            child: Row(
+              children: <Widget>[
+                Icon(
+                  Icons.dns_outlined,
+                  size: 20,
+                  color: scheme.onSurfaceVariant,
+                ),
+                const SizedBox(width: 12),
+                Expanded(
+                  child: Column(
+                    crossAxisAlignment: CrossAxisAlignment.start,
+                    children: <Widget>[
+                      Text('Источники', style: text.titleSmall),
+                      const SizedBox(height: 2),
+                      Text(
+                        _summary(),
+                        style: text.bodySmall?.copyWith(
+                          color: scheme.onSurfaceVariant,
+                        ),
+                      ),
+                    ],
+                  ),
+                ),
+                if (widget.loading)
+                  Padding(
+                    padding: const EdgeInsets.only(right: 12),
+                    child: SizedBox(
+                      width: 16,
+                      height: 16,
+                      child: CircularProgressIndicator(
+                        strokeWidth: 2,
+                        color: scheme.onSurfaceVariant,
+                      ),
+                    ),
+                  ),
+                Icon(
+                  _expanded ? Icons.expand_less : Icons.expand_more,
+                  color: scheme.onSurfaceVariant,
+                ),
+              ],
+            ),
+          ),
+        ),
+        if (_expanded)
+          Padding(
+            padding: const EdgeInsets.fromLTRB(20, 0, 20, 8),
+            child: Column(
+              mainAxisSize: MainAxisSize.min,
+              children: <Widget>[
+                for (final LyricsSourceReport report in widget.reports)
+                  _SourceStatusRow(report: report),
+              ],
+            ),
+          ),
+      ],
+    );
+  }
+
+  /// Короткая сводка в свёрнутом виде: сколько источников дали текст.
+  String _summary() {
+    if (widget.reports.isEmpty) {
+      return widget.loading ? 'Ищем…' : 'Нет данных';
+    }
+    final int withText = widget.reports
+        .where((LyricsSourceReport r) => r.outcome == LyricsSourceOutcome.text)
+        .length;
+    final String tail = widget.loading ? ' · ищем…' : '';
+    return 'С текстом: $withText из ${widget.reports.length}$tail';
+  }
+}
+
+/// Строка диагностики: источник, его ответ и время ответа.
+class _SourceStatusRow extends StatelessWidget {
+  const _SourceStatusRow({required this.report});
+
+  final LyricsSourceReport report;
+
+  @override
+  Widget build(BuildContext context) {
+    final ColorScheme scheme = Theme.of(context).colorScheme;
+    final TextTheme text = Theme.of(context).textTheme;
+    final (IconData icon, Color color) = _outcomeStyle(report.outcome, scheme);
+
+    return Padding(
+      padding: const EdgeInsets.symmetric(vertical: 4),
+      child: Row(
+        children: <Widget>[
+          Icon(icon, size: 18, color: color),
+          const SizedBox(width: 10),
+          Expanded(
+            child: Text(
+              report.source.label,
+              style: text.bodyMedium,
+              maxLines: 1,
+              overflow: TextOverflow.ellipsis,
+            ),
+          ),
+          const SizedBox(width: 8),
+          Text(
+            report.outcome.label,
+            style: text.bodySmall?.copyWith(color: color),
+          ),
+          // Пропущенному источнику время не показываем: запроса не было.
+          if (report.outcome != LyricsSourceOutcome.skipped) ...<Widget>[
+            const SizedBox(width: 10),
+            // Время — реальное ожидание источника (секундомер вокруг запроса).
+            SizedBox(
+              width: 48,
+              child: Text(
+                _formatElapsed(report.elapsed),
+                textAlign: TextAlign.right,
+                style: text.bodySmall?.copyWith(
+                  color: scheme.onSurfaceVariant,
+                ),
+              ),
+            ),
+          ],
+        ],
+      ),
+    );
+  }
+}
+
+/// Иконка и цвет статуса: «с текстом» — успех, «ошибка»/«таймаут» — сбой.
+(IconData, Color) _outcomeStyle(LyricsSourceOutcome outcome, ColorScheme scheme) {
+  switch (outcome) {
+    case LyricsSourceOutcome.text:
+      return (Icons.check_circle_outline, scheme.primary);
+    case LyricsSourceOutcome.empty:
+      return (Icons.remove_circle_outline, scheme.onSurfaceVariant);
+    case LyricsSourceOutcome.error:
+      return (Icons.error_outline, scheme.error);
+    case LyricsSourceOutcome.timeout:
+      return (Icons.timer_off_outlined, scheme.error);
+    case LyricsSourceOutcome.skipped:
+      return (Icons.block, scheme.onSurfaceVariant);
+  }
+}
+
+/// Время ответа в секундах с одним знаком — как в ориентире («0.4 с»).
+String _formatElapsed(Duration elapsed) {
+  final double seconds = elapsed.inMilliseconds / 1000;
+  return '${seconds.toStringAsFixed(1)} с';
 }
 
 /// Экран поиска текста: форма ввода и список найденного в одной поверхности.

@@ -430,12 +430,22 @@ class LyricsEditsStore {
   }
 }
 
-/// Файл в каталоге данных приложения: тот же, что у сессии
+/// Каталог данных приложения: тот же, что у сессии
 /// (`getApplicationSupportDirectory`) — рядом с данными приложения, а не во
 /// временной папке, которую ОС чистит.
-Future<File> _dataFile(String fileName) async {
+///
+/// Публичный, потому что экран «Хранилище» считает по нему занятое место и
+/// показывает путь: пусть путь будет один, а не продублирован у каждого
+/// потребителя.
+Future<Directory> appDataDirectory() async {
   final Directory dir = await getApplicationSupportDirectory();
   await dir.create(recursive: true);
+  return dir;
+}
+
+/// Файл в каталоге данных приложения.
+Future<File> _dataFile(String fileName) async {
+  final Directory dir = await appDataDirectory();
   return File('${dir.path}${Platform.pathSeparator}$fileName');
 }
 

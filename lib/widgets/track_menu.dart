@@ -1,5 +1,7 @@
 import 'package:flutter/material.dart';
+import 'package:flutter/services.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
+import 'package:url_launcher/url_launcher.dart';
 
 import '../core/theme/layout.dart';
 import '../data/models/models.dart';
@@ -158,6 +160,19 @@ class _TrackMenuSheet extends ConsumerWidget {
               title: 'Смотреть клип',
               onTap: () => _openClip(context),
             ),
+            // Ссылка — тот же id: на YouTube Music он открывает именно этот
+            // трек. Скопировать и открыть — два разных намерения (отправить
+            // другу и послушать самому), поэтому пункта два.
+            _MenuAction(
+              icon: Icons.link,
+              title: 'Копировать ссылку',
+              onTap: () => _copyLink(context),
+            ),
+            _MenuAction(
+              icon: Icons.open_in_new,
+              title: 'Открыть в YouTube Music',
+              onTap: () => _openInYouTubeMusic(context),
+            ),
             _MenuAction(
               icon: Icons.playlist_add,
               title: 'Добавить в плейлист',
@@ -203,6 +218,53 @@ class _TrackMenuSheet extends ConsumerWidget {
     // Клип, как и плеер, живёт в корневом навигаторе — иначе при открытии из
     // полноэкранного плеера он остался бы под его экраном.
     AppRoutes.clip(hostContext, track);
+  }
+
+  /// Ссылка на трек в YouTube Music: id трека — это и есть videoId.
+  Uri get _watchUri =>
+      Uri.parse('https://music.youtube.com/watch?v=${track.id}');
+
+  /// Кладёт ссылку в буфер обмена и подтверждает это.
+  ///
+  /// Лист закрываем сразу: держать его открытым, пока пользователь идёт
+  /// вставлять ссылку, незачем. Сообщение показываем на контексте хоста —
+  /// контекст листа к этому моменту уже снят.
+  Future<void> _copyLink(BuildContext sheetContext) async {
+    Navigator.pop(sheetContext);
+    final ScaffoldMessengerState messenger = ScaffoldMessenger.of(hostContext);
+    try {
+      await Clipboard.setData(ClipboardData(text: _watchUri.toString()));
+      messenger.showSnackBar(
+        const SnackBar(content: Text('Ссылка скопирована')),
+      );
+    } on Object {
+      // Буфер обмена — системный ресурс: если платформа отказала, молчать
+      // нельзя, иначе пользователь вставит что-то другое и не поймёт почему.
+      messenger.showSnackBar(
+        const SnackBar(content: Text('Не удалось скопировать ссылку.')),
+      );
+    }
+  }
+
+  /// Открывает трек в браузере системы.
+  ///
+  /// `externalApplication` — именно внешний браузер, а не встроенный WebView:
+  /// цель пункта — послушать трек на YouTube Music, где играет полноценный
+  /// веб-плеер, а не наш.
+  Future<void> _openInYouTubeMusic(BuildContext sheetContext) async {
+    Navigator.pop(sheetContext);
+    final ScaffoldMessengerState messenger = ScaffoldMessenger.of(hostContext);
+    bool ok = false;
+    try {
+      ok = await launchUrl(_watchUri, mode: LaunchMode.externalApplication);
+    } on Object {
+      ok = false;
+    }
+    if (!ok) {
+      messenger.showSnackBar(
+        const SnackBar(content: Text('Не удалось открыть браузер.')),
+      );
+    }
   }
 
   /// Закрывает меню и открывает выбор плейлиста для этого трека.

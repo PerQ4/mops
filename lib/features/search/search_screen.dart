@@ -214,9 +214,15 @@ class _MoodsGrid extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
-    // Сетка «настроения и жанры» как в ArchiveTune: адаптивные ячейки не уже
-    // 180, высота 100, отступы по 12 вокруг (MoodAndGenresScreen.kt:91-142,
+    // Сетка «настроения и жанры» как в ArchiveTune: ячейки не уже 180, высота
+    // 100, отступы по 12 вокруг (MoodAndGenresScreen.kt:91-142,
     // `MoodAndGenresButtonHeight = 100.dp`).
+    //
+    // Ширину берём не 180, а 340: в оригинале подписи приходят из API YouTube
+    // Music и короткие, а у нас они длиннее — при 180 на подпись остаётся 72
+    // пикселя (из ширины вычитается обложка 80 и отступы), и «Хорошее
+    // настроение» обрезалось многоточием. 340 даёт подписи ~215 пикселей и
+    // выглядит уместно на десктопе; на узком окне колонок просто меньше.
     return GridView.builder(
       padding: const EdgeInsets.fromLTRB(
         12,
@@ -225,7 +231,7 @@ class _MoodsGrid extends StatelessWidget {
         AppLayout.floatingDockClearance,
       ),
       gridDelegate: const SliverGridDelegateWithMaxCrossAxisExtent(
-        maxCrossAxisExtent: 180,
+        maxCrossAxisExtent: 340,
         mainAxisExtent: 100,
         crossAxisSpacing: 12,
         mainAxisSpacing: 12,
@@ -283,6 +289,9 @@ class _MoodTile extends StatelessWidget {
               ),
             ),
             Positioned(
+              // Обложка как в оригинале: 80 со скруглением 16. На широкой
+              // плитке она занимает треть ширины — это уже не половина, как на
+              // мобильной 180-пиксельной, и места подписи хватает.
               top: 10,
               right: 12,
               child: Container(
@@ -314,6 +323,7 @@ class _MoodTile extends StatelessWidget {
             ),
             Positioned(
               left: 16,
+              // Справа оставляем место под обложку 80 и её отступ 12.
               right: 92,
               bottom: 16,
               child: Text(

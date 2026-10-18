@@ -546,12 +546,56 @@ class LyricsCandidate {
   final String preview;
 }
 
+/// Чем закончился запрос к одному источнику текста.
+///
+/// «Пусто» и «ошибка» — разные ответы: первое значит «спросили и не нашли»,
+/// второе — «спросить не удалось». Поэтому источник, который ошибся или не
+/// успел, не подменяется пустым текстом: диагностике нужен настоящий итог.
+enum LyricsSourceOutcome {
+  /// Источник ответил текстом.
+  text('с текстом'),
+
+  /// Источник ответил, но текста у него нет.
+  empty('пусто'),
+
+  /// Источник не ответил из-за ошибки.
+  error('ошибка'),
+
+  /// Источник не уложился в свой бюджет (см. `_lyricsSourceBudget`).
+  timeout('таймаут'),
+
+  /// Источник не спрашивали: не хватило метаданных, ключа или каталогов.
+  skipped('не спрашивали');
+
+  const LyricsSourceOutcome(this.label);
+
+  final String label;
+}
+
+/// Отчёт по одному источнику: чем закончился запрос и сколько он занял.
+///
+/// Время — реальное ожидание источника, а не оценка: его измеряет секундомер
+/// вокруг самого запроса (см. `_searchLyrics`).
+@immutable
+class LyricsSourceReport {
+  const LyricsSourceReport({
+    required this.source,
+    required this.outcome,
+    required this.elapsed,
+  });
+
+  final LyricsSource source;
+  final LyricsSourceOutcome outcome;
+  final Duration elapsed;
+}
+
 /// Состояние поиска текста: найденные варианты и признак незавершённости.
 @immutable
 class LyricsSearchState {
   const LyricsSearchState({
     this.candidates = const <LyricsCandidate>[],
     this.loading = true,
+    this.reports = const <LyricsSourceReport>[],
   });
 
   /// Варианты, отсортированные по убыванию совместимости.
@@ -559,6 +603,12 @@ class LyricsSearchState {
 
   /// Поиск ещё идёт: в меню это показывается индикатором.
   final bool loading;
+
+  /// Диагностика по источникам: кто ответил и за сколько (см.
+  /// [LyricsSourceReport]).
+  ///
+  /// На выбор текста не влияет — это только отчёт для меню.
+  final List<LyricsSourceReport> reports;
 
   LyricsCandidate? get best => candidates.isEmpty ? null : candidates.first;
 
@@ -969,6 +1019,19 @@ const Duration _lyricsSourceBudget = Duration(seconds: 5);
 /// поэтому в норме сюда попадают уже все ответы.
 const Duration _lyricsSearchDeadline = Duration(seconds: 6);
 
+/// Источник не уложился в свой бюджет (см. `_lyricsSourceBudget`).
+///
+/// Отдельный тип, а не пустой текст: в диагностике «таймаут» и «пусто» —
+/// разные ответы, и подменять один другим нельзя.
+class _LyricsSourceTimeout implements Exception {
+  const _LyricsSourceTimeout();
+}
+
+/// Источник не спрашивали: не хватило метаданных, ключа или каталогов.
+class _LyricsSourceSkipped implements Exception {
+  const _LyricsSourceSkipped();
+}
+
 /// Читает кэш текстов, не задерживая поиск дольше ~300 мс.
 ///
 /// Недоступный или медленный файл — это просто отсутствие кэша: поиск идёт
@@ -1089,9 +1152,12 @@ Stream<LyricsSearchState> _searchLyrics(
 
   // Ограничиваем ожидание каждой базы: если она недоступна (бывает за
   // блокировками), не заставляем пользователя ждать её таймаут — вариант
-  // просто не попадёт в список.
-  Future<Lyrics> bounded(Future<Lyrics> future) =>
-      future.timeout(_lyricsSourceBudget, onTimeout: () => Lyrics.none);
+  // просто не попадёт в список. Таймаут отдаём отдельным сигналом, а не
+  // пустым текстом: диагностика показывает его как «таймаут».
+  Future<Lyrics> bounded(Future<Lyrics> future) => future.timeout(
+        _lyricsSourceBudget,
+        onTimeout: () => throw const _LyricsSourceTimeout(),
+      );
 
   Future<Lyrics> fetchSource(LyricsSource target) {
     switch (target) {
@@ -1111,7 +1177,7 @@ Stream<LyricsSearchState> _searchLyrics(
         ));
       // Остальные базы ищут по названию и исполнителю: без них — пропуск.
       case LyricsSource.betterLyrics:
-        if (!externalOk) return Future<Lyrics>.value(Lyrics.none);
+        if (!externalOk) throw const _LyricsSourceSkipped();
         return bounded(betterLyrics.fetch(
           title: title!,
           artist: artist!,
@@ -1121,7 +1187,7 @@ Stream<LyricsSearchState> _searchLyrics(
           videoId: request.videoId,
         ));
       case LyricsSource.youlyPlus:
-        if (!externalOk) return Future<Lyrics>.value(Lyrics.none);
+        if (!externalOk) throw const _LyricsSourceSkipped();
         return bounded(youlyPlus.fetch(
           title: title!,
           artist: artist!,
@@ -1129,7 +1195,7 @@ Stream<LyricsSearchState> _searchLyrics(
           duration: queryDuration,
         ));
       case LyricsSource.lrclib:
-        if (!externalOk) return Future<Lyrics>.value(Lyrics.none);
+        if (!externalOk) throw const _LyricsSourceSkipped();
         return bounded(lrclib.fetch(
           title: title!,
           artist: artist!,
@@ -1137,7 +1203,7 @@ Stream<LyricsSearchState> _searchLyrics(
           duration: queryDuration,
         ));
       case LyricsSource.kugou:
-        if (!externalOk) return Future<Lyrics>.value(Lyrics.none);
+        if (!externalOk) throw const _LyricsSourceSkipped();
         return bounded(kugou.fetch(
           title: title!,
           artist: artist!,
@@ -1147,7 +1213,7 @@ Stream<LyricsSearchState> _searchLyrics(
         // Paxsenix требует ключ, а его каталоги включаются по отдельности;
         // если выключены все — спрашивать нечего.
         if (!externalOk || musixmatchKey.isEmpty || !paxsenixOptions.any) {
-          return Future<Lyrics>.value(Lyrics.none);
+          throw const _LyricsSourceSkipped();
         }
         return bounded(paxsenix.fetch(
           title: title!,
@@ -1168,12 +1234,15 @@ Stream<LyricsSearchState> _searchLyrics(
   /// Базы, которые умеют отдавать только одно совпадение, работают как раньше.
   Future<List<Lyrics>> fetchSourceAll(LyricsSource target) {
     // Общий бюджет: молчащая база не должна держать список открытым.
-    Future<List<Lyrics>> boundedAll(Future<List<Lyrics>> future) => future
-        .timeout(_lyricsSourceBudget, onTimeout: () => const <Lyrics>[]);
+    Future<List<Lyrics>> boundedAll(Future<List<Lyrics>> future) =>
+        future.timeout(
+          _lyricsSourceBudget,
+          onTimeout: () => throw const _LyricsSourceTimeout(),
+        );
 
     switch (target) {
       case LyricsSource.lrclib:
-        if (!externalOk) return Future<List<Lyrics>>.value(const <Lyrics>[]);
+        if (!externalOk) throw const _LyricsSourceSkipped();
         return boundedAll(lrclib.fetchAll(
           title: title!,
           artist: artist!,
@@ -1181,7 +1250,7 @@ Stream<LyricsSearchState> _searchLyrics(
           duration: queryDuration,
         ));
       case LyricsSource.kugou:
-        if (!externalOk) return Future<List<Lyrics>>.value(const <Lyrics>[]);
+        if (!externalOk) throw const _LyricsSourceSkipped();
         return boundedAll(kugou.fetchAll(
           title: title!,
           artist: artist!,
@@ -1196,7 +1265,7 @@ Stream<LyricsSearchState> _searchLyrics(
         ));
       case LyricsSource.musixmatch:
         if (!externalOk || musixmatchKey.isEmpty || !paxsenixOptions.any) {
-          return Future<List<Lyrics>>.value(const <Lyrics>[]);
+          throw const _LyricsSourceSkipped();
         }
         return boundedAll(paxsenix.fetchAll(
           title: title!,
@@ -1259,6 +1328,47 @@ Stream<LyricsSearchState> _searchLyrics(
     // дедлайна, не должны снова включать «идёт поиск».
     bool terminal = false;
 
+    // Диагностика по источникам: заполняется по мере ответов и попадает в
+    // каждое состояние. На выбор текста не влияет — только отчёт для меню.
+    final Map<LyricsSource, LyricsSourceReport> reports =
+        <LyricsSource, LyricsSourceReport>{};
+
+    List<LyricsSourceReport> reportList() {
+      final List<LyricsSourceReport> list = reports.values.toList();
+      // Порядок — как у источников в настройках: список не должен прыгать,
+      // когда ответы приходят вразнобой.
+      list.sort(
+        (LyricsSourceReport a, LyricsSourceReport b) =>
+            rankOf(a.source).compareTo(rankOf(b.source)),
+      );
+      return list;
+    }
+
+    void publish(bool loading) {
+      if (disposed) return;
+      controller.add(LyricsSearchState(
+        candidates: List<LyricsCandidate>.of(found),
+        loading: loading,
+        reports: reportList(),
+      ));
+    }
+
+    void record(
+      LyricsSource source,
+      LyricsSourceOutcome outcome,
+      Duration elapsed,
+    ) {
+      // После дедлайна состояние уже терминальное: поздний отчёт его бы
+      // снова включил в «идёт поиск».
+      if (disposed || terminal) return;
+      reports[source] = LyricsSourceReport(
+        source: source,
+        outcome: outcome,
+        elapsed: elapsed,
+      );
+      publish(true);
+    }
+
     void accept(LyricsSource source, int rank, Lyrics lyrics) {
       if (disposed || terminal || lyrics.isEmpty) return;
       // Один и тот же текст приходит и из кэша, и из сети — второй раз не
@@ -1289,7 +1399,6 @@ Stream<LyricsSearchState> _searchLyrics(
       // поэтому равных баллов у разных рангов не бывает и порядок стабилен.
       found.sort((LyricsCandidate a, LyricsCandidate b) =>
           b.score.compareTo(a.score));
-      if (disposed) return;
       // Отмечаем трек как «с текстом» — по этой отметке в списках появляется
       // значок. Только в обычном поиске: он и есть то, что покажет плеер.
       // Поиск «всех вариантов» отмечать не должен — он ищет шире, и значок
@@ -1297,10 +1406,7 @@ Stream<LyricsSearchState> _searchLyrics(
       if (!allVariants) {
         ref.read(lyricsAvailabilityProvider.notifier).mark(request.videoId);
       }
-      controller.add(LyricsSearchState(
-        candidates: List<LyricsCandidate>.of(found),
-        loading: true,
-      ));
+      publish(true);
     }
 
     final List<Future<void>> tasks = <Future<void>>[];
@@ -1309,38 +1415,77 @@ Stream<LyricsSearchState> _searchLyrics(
     // должна ронять весь поиск — просто пропускаем этот источник.
     void spawn(LyricsSource source) {
       final int rank = rankOf(source);
+      // Секундомер вокруг самого запроса: время в диагностике — это реальное
+      // ожидание источника, а не оценка «на глаз».
+      final Stopwatch watch = Stopwatch()..start();
+      void finish(LyricsSourceOutcome outcome) {
+        watch.stop();
+        record(source, outcome, watch.elapsed);
+      }
+
+      late final Future<List<Lyrics>> variantsFuture;
       try {
         // В режиме «все варианты» спрашиваем у источника все совпадения,
         // иначе — одно лучшее, как для плеера.
-        final Future<List<Lyrics>> variantsFuture = allVariants
+        variantsFuture = allVariants
             ? fetchSourceAll(source)
             : fetchSource(source).then(
                 (Lyrics lyrics) =>
                     lyrics.isEmpty ? const <Lyrics>[] : <Lyrics>[lyrics],
               );
-        tasks.add(variantsFuture.then<void>(
-          (List<Lyrics> variants) {
-            if (variants.isEmpty) return;
-            // В кэш — только первый ответ (он же лучший): пустым нельзя
-            // затирать уже найденный текст, а хранить все совпадения незачем.
-            unawaited(cache.write(request.videoId, source, variants.first));
-            for (final Lyrics lyrics in variants) {
-              accept(source, rank, lyrics);
-            }
-          },
-          // Асинхронная ошибка одной базы тоже не роняет поиск.
-          onError: (Object _, StackTrace _) {},
-        ));
+      } on _LyricsSourceSkipped {
+        // Источник не спрашивали — это не ошибка и не пустой ответ.
+        finish(LyricsSourceOutcome.skipped);
+        return;
       } on Object catch (error) {
+        finish(LyricsSourceOutcome.error);
         debugPrint('[Lyrics] источник ${source.name} пропущен: $error');
+        return;
       }
+
+      tasks.add(variantsFuture.then<void>(
+        (List<Lyrics> variants) {
+          finish(variants.isEmpty
+              ? LyricsSourceOutcome.empty
+              : LyricsSourceOutcome.text);
+          if (variants.isEmpty) return;
+          // В кэш — только первый ответ (он же лучший): пустым нельзя
+          // затирать уже найденный текст, а хранить все совпадения незачем.
+          unawaited(cache.write(request.videoId, source, variants.first));
+          for (final Lyrics lyrics in variants) {
+            accept(source, rank, lyrics);
+          }
+        },
+        // Асинхронная ошибка одной базы тоже не роняет поиск. Таймаут
+        // отличается от прочей ошибки: в диагностике это разные ответы.
+        onError: (Object error, StackTrace _) {
+          finish(error is _LyricsSourceTimeout
+              ? LyricsSourceOutcome.timeout
+              : LyricsSourceOutcome.error);
+        },
+      ));
     }
 
     try {
       if (selectedHit != null) {
         // Выбрана конкретная запись: не перебираем источники, а берём её
         // текст. Пустой ответ остаётся пустым — подмены нет.
-        final Lyrics lyrics = await fetchHit(selectedHit);
+        final Stopwatch watch = Stopwatch()..start();
+        Lyrics lyrics = Lyrics.none;
+        LyricsSourceOutcome outcome;
+        try {
+          lyrics = await fetchHit(selectedHit);
+          outcome = lyrics.isEmpty
+              ? LyricsSourceOutcome.empty
+              : LyricsSourceOutcome.text;
+        } on _LyricsSourceTimeout {
+          outcome = LyricsSourceOutcome.timeout;
+        } on Object catch (error) {
+          outcome = LyricsSourceOutcome.error;
+          debugPrint('[Lyrics] запись ${selectedHit.source.name}: $error');
+        }
+        watch.stop();
+        record(selectedHit.source, outcome, watch.elapsed);
         if (!lyrics.isEmpty) {
           unawaited(cache.write(request.videoId, selectedHit.source, lyrics));
         }
@@ -1385,10 +1530,7 @@ Stream<LyricsSearchState> _searchLyrics(
       // остался бы в «идёт поиск».
       if (!disposed) {
         terminal = true;
-        controller.add(LyricsSearchState(
-          candidates: List<LyricsCandidate>.of(found),
-          loading: false,
-        ));
+        publish(false);
       }
     }
   }());

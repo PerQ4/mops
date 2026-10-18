@@ -400,6 +400,14 @@ class SettingsScreen extends ConsumerWidget {
                   subtitle: 'Сохранить настройки в файл или загрузить из файла',
                   onTap: () => AppRoutes.backup(context),
                 ),
+                // Хранилище: рядом с копией — обе строки про данные
+                // приложения, а не про его поведение.
+                SettingsRow(
+                  icon: Icons.storage_outlined,
+                  title: 'Хранилище',
+                  subtitle: 'Занятое место и очистка кэша текстов',
+                  onTap: () => AppRoutes.storage(context),
+                ),
                 // Информационная строка: без действия и без шеврона, а подпись
                 // не обрезаем — текст лицензии должен читаться целиком.
                 SettingsRow(
