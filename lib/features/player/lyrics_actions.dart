@@ -200,7 +200,12 @@ class _LyricsMenuSheetState extends ConsumerState<_LyricsMenuSheet> {
                     ref
                         .read(manualLyricsSelectionProvider.notifier)
                         .set(request.videoId, null);
+                    // И выбранный вариант текста — он тоже ручной выбор.
+                    ref
+                        .read(lyricsPickProvider.notifier)
+                        .set(request.videoId, null);
                     ref.invalidate(lyricsProvider(request));
+                    ref.invalidate(lyricsVariantsProvider(request));
                   },
                 ),
               ],
@@ -230,6 +235,7 @@ class _LyricsMenuSheetState extends ConsumerState<_LyricsMenuSheet> {
         ref.read(manualLyricsRequestsProvider)[request.videoId];
     await ref.read(lyricsCacheProvider).remove(request.videoId);
     ref.invalidate(lyricsProvider(manual ?? request));
+    ref.invalidate(lyricsVariantsProvider(manual ?? request));
   }
 
   /// «Поиск»: меню закрываем, экран поиска — отдельная поверхность.
@@ -258,9 +264,10 @@ class _LyricsMenuSheetState extends ConsumerState<_LyricsMenuSheet> {
     final LyricsSearchState search =
         ref.read(lyricsProvider(effective)).value ??
             const LyricsSearchState();
-    final Lyrics? base = current == LyricsSource.auto
-        ? search.bestByOrder(settings.lyricsProviderOrder)?.lyrics
-        : search.candidateFor(current)?.lyrics;
+    final Lyrics? base = ref.read(lyricsPickProvider)[request.videoId]?.lyrics ??
+        (current == LyricsSource.auto
+            ? search.bestByOrder(settings.lyricsProviderOrder)?.lyrics
+            : search.candidateFor(current)?.lyrics);
 
     final LyricsEdits edits = ref.read(lyricsEditsProvider.notifier);
     final String? existing = ref.read(lyricsEditsProvider)[request.videoId];
@@ -399,9 +406,21 @@ class _LyricsSearchDialogState extends ConsumerState<_LyricsSearchDialog> {
           .select((Map<String, LyricsRequest> m) => m[request.videoId]),
     );
     final LyricsRequest effective = manual ?? request;
-    final LyricsSearchState search =
-        ref.watch(lyricsProvider(effective)).value ??
+    // Список вариантов — из «всех совпадений»: у одного источника их бывает
+    // несколько, и выбирать нужно из них (как `getAllLyrics` в ArchiveTune).
+    //
+    // Спрашиваем только когда показываем список: пока открыта форма ввода,
+    // поиск не запущен — иначе он шёл бы впустую, если пользователь передумал.
+    final LyricsSearchState search = _inputMode
+        ? const LyricsSearchState()
+        : ref.watch(lyricsVariantsProvider(effective)).value ??
             const LyricsSearchState();
+
+    // Выбранный вручную вариант: он авторитетен и для списка, и для плеера.
+    final LyricsPick? pick = ref.watch(
+      lyricsPickProvider
+          .select((Map<String, LyricsPick> m) => m[request.videoId]),
+    );
 
     // Какой вариант показывается в плеере сейчас: в «Авто» — лучший по
     // приоритету, иначе выбранный вручную.
@@ -417,9 +436,18 @@ class _LyricsSearchDialogState extends ConsumerState<_LyricsSearchDialog> {
         (AppSettings s) => s.lyricsProviderOrder,
       ),
     );
-    final LyricsSource? shownSource = current == LyricsSource.auto
-        ? search.bestByOrder(order)?.source
-        : current;
+    // Какой вариант показывает плеер: выбранный вручную — по ключу, иначе
+    // лучший («Авто») или первый из выбранного источника. Спрашиваем обычный
+    // поиск: именно его результат идёт в плеер, а список здесь — из «всех
+    // совпадений», и это разные состояния.
+    final LyricsSearchState shownState =
+        ref.watch(lyricsProvider(effective)).value ??
+            const LyricsSearchState();
+    final LyricsCandidate? shown = pick != null
+        ? shownState.candidateById(pick.id) ?? search.candidateById(pick.id)
+        : current == LyricsSource.auto
+            ? shownState.bestByOrder(order)
+            : shownState.candidateFor(current);
 
     return Dialog(
       insetPadding: const EdgeInsets.all(24),
@@ -447,7 +475,7 @@ class _LyricsSearchDialogState extends ConsumerState<_LyricsSearchDialog> {
                       onSearch: () => setState(() => _inputMode = false),
                       onReset: () => setState(() => _inputMode = false),
                     )
-                  : _resultsPane(search, shownSource),
+                  : _resultsPane(search, shown, pick),
             ),
           ],
         ),
@@ -470,10 +498,17 @@ class _LyricsSearchDialogState extends ConsumerState<_LyricsSearchDialog> {
   Future<void> _refetch(LyricsRequest effective) async {
     setState(() => _expandedId = null);
     await ref.read(lyricsCacheProvider).remove(widget.request.videoId);
+    ref.invalidate(lyricsVariantsProvider(effective));
+    // Обычный поиск (для плеера) тоже переспрашиваем: иначе он остался бы
+    // с прежним ответом, а список показывал бы новый.
     ref.invalidate(lyricsProvider(effective));
   }
 
-  Widget _resultsPane(LyricsSearchState search, LyricsSource? shownSource) {
+  Widget _resultsPane(
+    LyricsSearchState search,
+    LyricsCandidate? shown,
+    LyricsPick? pick,
+  ) {
     if (search.candidates.isEmpty) {
       return search.loading
           ? const _SearchMessage(
@@ -499,7 +534,7 @@ class _LyricsSearchDialogState extends ConsumerState<_LyricsSearchDialog> {
         if (index == candidates.length) return const _SearchFooterLoading();
 
         final LyricsCandidate candidate = candidates[index];
-        final String id = candidate.source.name;
+        final String id = candidate.id;
         return Padding(
           padding: const EdgeInsets.only(bottom: 10),
           child: _ResultCard(
@@ -521,24 +556,41 @@ class _LyricsSearchDialogState extends ConsumerState<_LyricsSearchDialog> {
                 candidate.characterCount,
               ),
             ),
-            selected: candidate.source == shownSource,
+            // Выбранный вариант отмечаем по ключу, а не по источнику: у одного
+            // источника вариантов теперь несколько, и по источнику их не
+            // различить.
+            selected: candidate.id == shown?.id || candidate.id == pick?.id,
             expanded: _expandedId == id,
             onExpand: () => setState(
               () => _expandedId = _expandedId == id ? null : id,
             ),
-            onTap: () => _select(candidate.source),
+            onTap: () => _select(candidate),
           ),
         );
       },
     );
   }
 
-  void _select(LyricsSource source) {
+  /// Выбор варианта: запоминаем сам текст, а не только источник.
+  ///
+  /// Почему текст: у одного источника вариантов несколько, и «показать этот»
+  /// нельзя выразить одним источником. Источник тоже фиксируем — по нему
+  /// подписан плеер.
+  void _select(LyricsCandidate candidate) {
+    final String videoId = widget.request.videoId;
+    ref.read(lyricsPickProvider.notifier).set(
+          videoId,
+          LyricsPick(
+            id: candidate.id,
+            source: candidate.source,
+            lyrics: candidate.lyrics,
+          ),
+        );
     // Источник запоминаем для этого трека: смена настройки затронула бы все
     // треки, а пользователь просил другой текст именно здесь.
     ref
         .read(lyricsSourceOverrideProvider.notifier)
-        .setSource(widget.request.videoId, source);
+        .setSource(videoId, candidate.source);
     // Перезапрашивать не нужно: все варианты уже получены параллельным
     // поиском и лежат в состоянии — переключение мгновенное.
     Navigator.pop(context);
@@ -1228,6 +1280,9 @@ class _SearchInputPaneState extends ConsumerState<_SearchInputPane> {
     ref
         .read(lyricsSourceOverrideProvider.notifier)
         .setSource(widget.videoId, hit.source);
+    // Выбранный из списка вариант снимаем: он относится к прежнему поиску и
+    // перебил бы только что выбранную запись.
+    ref.read(lyricsPickProvider.notifier).set(widget.videoId, null);
     Navigator.pop(context);
   }
 }

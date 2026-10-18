@@ -79,6 +79,28 @@ class SettingsController extends Notifier<AppSettings> {
   Future<void> setLyricsSource(LyricsSource source) =>
       update((AppSettings s) => s.copyWith(lyricsSource: source));
 
+  /// Включает или выключает источник текста — как `providerPreferenceKeys`
+  /// в ArchiveTune. Выключенный источник не спрашивается вовсе.
+  Future<void> setLyricsProviderEnabled(LyricsSource source, bool enabled) =>
+      update((AppSettings s) {
+        final List<LyricsSource> disabled =
+            List<LyricsSource>.of(s.lyricsDisabledProviders);
+        if (enabled) {
+          disabled.remove(source);
+        } else if (!disabled.contains(source)) {
+          disabled.add(source);
+        }
+        return s.copyWith(lyricsDisabledProviders: disabled);
+      });
+
+  /// Каталоги Paxsenix: Apple Music, Spotify, Musixmatch — по отдельности.
+  Future<void> setPaxsenixOptions(PaxsenixOptions options) =>
+      update((AppSettings s) => s.copyWith(
+            paxsenixAppleMusic: options.appleMusic,
+            paxsenixSpotify: options.spotify,
+            paxsenixMusixmatch: options.musixmatch,
+          ));
+
   Future<void> setSidebarWidth(double width) =>
       update((AppSettings s) => s.copyWith(sidebarWidth: width));
 

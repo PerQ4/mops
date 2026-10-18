@@ -4,6 +4,7 @@ import 'dart:io';
 import '../../state/catalog_providers.dart';
 import '../local/app_settings.dart';
 import '../models/models.dart';
+import 'lyrics_variants.dart';
 
 /// Тексты из открытой базы LRCLIB.
 ///
@@ -96,6 +97,40 @@ class LrclibSource {
       ));
     }
     return hits;
+  }
+
+  /// Все совпадения с текстом — как `getAllLyrics` в ArchiveTune.
+  ///
+  /// Почему одним запросом: `/search` уже отдаёт и `syncedLyrics`, и
+  /// `plainLyrics`, поэтому каждый вариант обходится без отдельного обращения —
+  /// в отличие от остальных баз, где текст приходится тянуть по записи.
+  Future<List<Lyrics>> fetchAll({
+    required String title,
+    required String artist,
+    String? album,
+    Duration? duration,
+  }) async {
+    final String query = '$artist $title'.trim();
+    if (query.isEmpty) return const <Lyrics>[];
+
+    final Map<String, dynamic>? json = await _request(
+      Uri.parse('$_host/search').replace(
+        queryParameters: <String, String>{'q': query},
+      ),
+    );
+    if (json == null) return const <Lyrics>[];
+
+    final List<dynamic> results =
+        json['results'] as List<dynamic>? ?? <dynamic>[];
+    final List<Lyrics> variants = <Lyrics>[];
+    for (final dynamic item in results) {
+      if (item is! Map<String, dynamic>) continue;
+      final Lyrics lyrics = _fromJson(item);
+      if (lyrics.isEmpty) continue;
+      variants.add(lyrics);
+      if (variants.length >= kMaxLyricsVariants) break;
+    }
+    return variants;
   }
 
   /// Достаёт текст ровно выбранной записи по её id.

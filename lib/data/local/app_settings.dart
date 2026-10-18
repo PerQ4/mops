@@ -93,6 +93,42 @@ enum LyricsSource {
       );
 }
 
+/// Какие каталоги Paxsenix спрашивать.
+///
+/// Как `paxsenixProviders` в ArchiveTune: ключ у Paxsenix один, а каталоги за
+/// ним разные — Apple Music, Spotify и Musixmatch. Включаются по отдельности:
+/// не всем нужен каждый, а лишний каталог — это лишний запрос и лишние
+/// варианты в списке найденного.
+class PaxsenixOptions {
+  const PaxsenixOptions({
+    this.appleMusic = true,
+    this.spotify = true,
+    this.musixmatch = true,
+  });
+
+  /// Apple Music — TTML с временем каждого слова (караоке).
+  final bool appleMusic;
+
+  /// Spotify — обычный текст или LRC.
+  final bool spotify;
+
+  /// Musixmatch — текст с временами строк.
+  final bool musixmatch;
+
+  /// Хоть один каталог включён: если ни одного, спрашивать нечего.
+  bool get any => appleMusic || spotify || musixmatch;
+
+  @override
+  bool operator ==(Object other) =>
+      other is PaxsenixOptions &&
+      other.appleMusic == appleMusic &&
+      other.spotify == spotify &&
+      other.musixmatch == musixmatch;
+
+  @override
+  int get hashCode => Object.hash(appleMusic, spotify, musixmatch);
+}
+
 /// Порядок источников текста по умолчанию — как `DefaultLyricsProviderOrder`
 /// в ArchiveTune. Первый в списке — приоритетный.
 /// Порядок подобран по тому, что реально отвечает и что даёт подробнее
@@ -108,14 +144,13 @@ const List<LyricsSource> kDefaultLyricsOrder = <LyricsSource>[
   LyricsSource.unison,
 ];
 
-/// Разбирает сохранённый порядок источников; при мусоре — порядок по умолчанию.
+/// Разбирает список имён источников, отбрасывая неизвестные.
 ///
 /// Имена, которых больше нет в [LyricsSource] (например, удалённые источники),
 /// молча пропускаются: у пользователя в сохранённых настройках они могут
-/// остаться, и это не должно ни ронять разбор, ни терять остальной порядок.
-/// Если после фильтрации не осталось ничего — берётся [kDefaultLyricsOrder].
-List<LyricsSource> _parseLyricsOrder(String? raw) {
-  if (raw == null || raw.trim().isEmpty) return kDefaultLyricsOrder;
+/// остаться, и это не должно ни ронять разбор, ни терять остальные.
+List<LyricsSource> _parseSourceNames(String? raw) {
+  if (raw == null || raw.trim().isEmpty) return const <LyricsSource>[];
   final List<LyricsSource> parsed = <LyricsSource>[];
   for (final String name in raw.split(',')) {
     final String trimmed = name.trim();
@@ -125,6 +160,12 @@ List<LyricsSource> _parseLyricsOrder(String? raw) {
         .firstWhere((LyricsSource? v) => v?.name == trimmed, orElse: () => null);
     if (source != null && !parsed.contains(source)) parsed.add(source);
   }
+  return parsed;
+}
+
+/// Разбирает сохранённый порядок источников; при мусоре — порядок по умолчанию.
+List<LyricsSource> _parseLyricsOrder(String? raw) {
+  final List<LyricsSource> parsed = _parseSourceNames(raw);
   return parsed.isEmpty ? kDefaultLyricsOrder : parsed;
 }
 
@@ -301,6 +342,14 @@ class AppSettings {
     this.lyricsLineSpacing = 1.35,
     this.lyricsLineBlur = true,
     this.lyricsProviderOrder = kDefaultLyricsOrder,
+    // Источники, выключенные пользователем (как `providerPreferenceKeys`
+    // в ArchiveTune). Храним именно выключенные: новый источник по умолчанию
+    // включён, а не пропадает из поиска.
+    this.lyricsDisabledProviders = const <LyricsSource>[],
+    // Под-провайдеры Paxsenix (как `paxsenixProviders` в ArchiveTune).
+    this.paxsenixAppleMusic = true,
+    this.paxsenixSpotify = true,
+    this.paxsenixMusixmatch = true,
     // Романизация: пять отдельных переключателей как `LyricsRomanize*Key`
     // в ArchiveTune. Язык по тексту определяется сам, выбирать его не нужно.
     this.romanizeJapanese = true,
@@ -378,6 +427,19 @@ class AppSettings {
   /// Порядок источников текста в режиме «Авто» — как `LyricsProviderOrderKey`
   /// в ArchiveTune. Первый источник в списке — приоритетный.
   final List<LyricsSource> lyricsProviderOrder;
+
+  /// Источники текста, выключенные пользователем. Выключенный источник не
+  /// спрашивается вовсе — ни в «Авто», ни в списке найденного.
+  final List<LyricsSource> lyricsDisabledProviders;
+
+  /// Каталоги Paxsenix: Apple Music.
+  final bool paxsenixAppleMusic;
+
+  /// Каталоги Paxsenix: Spotify.
+  final bool paxsenixSpotify;
+
+  /// Каталоги Paxsenix: Musixmatch.
+  final bool paxsenixMusixmatch;
 
   /// Романизация японского текста (кана, `々`, `〆`).
   final bool romanizeJapanese;
@@ -475,6 +537,26 @@ class AppSettings {
 
   bool get isUiScaleAuto => uiScale <= 0;
 
+  /// Включён ли источник текста.
+  ///
+  /// «Авто» — не источник, а режим перебора: выключать его нечем, поэтому в
+  /// списке источников он не участвует и всегда считается включённым.
+  bool isLyricsSourceEnabled(LyricsSource source) =>
+      source != LyricsSource.auto && !lyricsDisabledProviders.contains(source);
+
+  /// Источники, которые можно включать и выключать, — всё, кроме «Авто».
+  static List<LyricsSource> get toggleableLyricsSources => LyricsSource.values
+      .where((LyricsSource s) => s != LyricsSource.auto)
+      .toList(growable: false);
+
+  /// Каталоги Paxsenix одним значением — так источник получает их одним
+  /// параметром, а не тремя.
+  PaxsenixOptions get paxsenixOptions => PaxsenixOptions(
+        appleMusic: paxsenixAppleMusic,
+        spotify: paxsenixSpotify,
+        musixmatch: paxsenixMusixmatch,
+      );
+
   int get safeSeedIndex =>
       (seedColorIndex >= 0 && seedColorIndex < kSeedColors.length) ? seedColorIndex : 0;
 
@@ -496,6 +578,10 @@ class AppSettings {
     double? lyricsLineSpacing,
     bool? lyricsLineBlur,
     List<LyricsSource>? lyricsProviderOrder,
+    List<LyricsSource>? lyricsDisabledProviders,
+    bool? paxsenixAppleMusic,
+    bool? paxsenixSpotify,
+    bool? paxsenixMusixmatch,
     bool? romanizeJapanese,
     bool? romanizeKorean,
     bool? romanizeChinese,
@@ -545,6 +631,11 @@ class AppSettings {
       lyricsLineSpacing: lyricsLineSpacing ?? this.lyricsLineSpacing,
       lyricsLineBlur: lyricsLineBlur ?? this.lyricsLineBlur,
       lyricsProviderOrder: lyricsProviderOrder ?? this.lyricsProviderOrder,
+      lyricsDisabledProviders:
+          lyricsDisabledProviders ?? this.lyricsDisabledProviders,
+      paxsenixAppleMusic: paxsenixAppleMusic ?? this.paxsenixAppleMusic,
+      paxsenixSpotify: paxsenixSpotify ?? this.paxsenixSpotify,
+      paxsenixMusixmatch: paxsenixMusixmatch ?? this.paxsenixMusixmatch,
       romanizeJapanese: romanizeJapanese ?? this.romanizeJapanese,
       romanizeKorean: romanizeKorean ?? this.romanizeKorean,
       romanizeChinese: romanizeChinese ?? this.romanizeChinese,
@@ -599,6 +690,11 @@ class AppSettings {
         'lyricsLineBlur': lyricsLineBlur,
         'lyricsProviderOrder':
             lyricsProviderOrder.map((LyricsSource s) => s.name).join(','),
+        'lyricsDisabledProviders':
+            lyricsDisabledProviders.map((LyricsSource s) => s.name).join(','),
+        'paxsenixAppleMusic': paxsenixAppleMusic,
+        'paxsenixSpotify': paxsenixSpotify,
+        'paxsenixMusixmatch': paxsenixMusixmatch,
         'romanizeJapanese': romanizeJapanese,
         'romanizeKorean': romanizeKorean,
         'romanizeChinese': romanizeChinese,
@@ -656,6 +752,12 @@ class AppSettings {
       lyricsProviderOrder: _parseLyricsOrder(
         json['lyricsProviderOrder'] as String?,
       ),
+      lyricsDisabledProviders: _parseSourceNames(
+        json['lyricsDisabledProviders'] as String?,
+      ),
+      paxsenixAppleMusic: json['paxsenixAppleMusic'] as bool? ?? true,
+      paxsenixSpotify: json['paxsenixSpotify'] as bool? ?? true,
+      paxsenixMusixmatch: json['paxsenixMusixmatch'] as bool? ?? true,
       romanizeJapanese: json['romanizeJapanese'] as bool? ?? true,
       romanizeKorean: json['romanizeKorean'] as bool? ?? true,
       romanizeChinese: json['romanizeChinese'] as bool? ?? true,

@@ -76,6 +76,8 @@
 | Вставка-пауза отдельной строкой списка с заливающейся снизу нотой | `lib/features/player/lyrics_view.dart` | ✅ |
 | Романизация как в ArchiveTune: автоопределение языка по тексту и пять переключателей | `lib/data/sources/romanization.dart`, `lib/features/settings/settings_screen.dart` | ✅ |
 | Масштаб интерфейса с привязкой к сетке пикселей | `lib/core/theme/ui_scaler.dart` | ✅ |
+| Несколько вариантов текста от одного источника (как `getAllLyrics`): список экрана поиска, выбор конкретного варианта | `lib/state/catalog_providers.dart` (`lyricsVariantsProvider`, `lyricsPickProvider`), `lib/data/sources/lyrics_variants.dart` | ✅ |
+| Включение и выключение источников текста + каталоги Paxsenix по отдельности | `lib/data/local/app_settings.dart` (`lyricsDisabledProviders`, `PaxsenixOptions`), `lib/features/settings/settings_screen.dart` | ✅ |
 
 ### Что есть у нас, но чего нет в ArchiveTune
 
@@ -121,7 +123,7 @@
 - [ ] 1.6 Поделиться текстом картинкой
 - [ ] 1.7 Экспорт и импорт настроек (резервная копия)
 - [ ] 1.8 Настройки содержимого: скрыть explicit и видео, длина топа
-- [ ] 1.9 Провайдеры текстов: включение и под-провайдеры Paxsenix
+- [x] 1.9 Провайдеры текстов: включение и под-провайдеры Paxsenix
 - [ ] 1.10 Романизация: выбор набора языков
 
 #### 1.1 Таймер сна

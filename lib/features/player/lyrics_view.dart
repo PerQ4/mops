@@ -268,14 +268,24 @@ class _LyricsViewState extends ConsumerState<LyricsView> {
       lyricsOffsetProvider.select((Map<String, int> m) => m[widget.videoId] ?? 0),
     );
 
+    // Выбранный вручную вариант текста: он авторитетнее и источника, и
+    // «Авто» — это ровно тот текст, который пользователь нажал в списке.
+    final LyricsPick? pick = ref.watch(
+      lyricsPickProvider
+          .select((Map<String, LyricsPick> m) => m[request.videoId]),
+    );
+
     // Что показываем: в «Авто» — лучший по механизму приоритета (сначала тип
     // синхронизации, затем порядок источников), иначе — ровно выбранную базу.
     // Пустота выбранной базы остаётся пустотой, подмены нет. Ручная правка
     // ложится поверх найденного текста.
-    final Lyrics? data = _applyEdit(_resolve(state, selected, order), edit);
-    final LyricsCandidate? shown = selected == LyricsSource.auto
-        ? state.bestByOrder(order)
-        : state.candidateFor(selected);
+    final Lyrics? data =
+        _applyEdit(_resolve(state, selected, order, pick), edit);
+    final LyricsCandidate? shown = pick != null
+        ? state.candidateById(pick.id)
+        : selected == LyricsSource.auto
+            ? state.bestByOrder(order)
+            : state.candidateFor(selected);
 
     // Подсветку и переходы считаем по уже загруженному тексту: держать это в
     // состоянии было бы рассинхронизацией, а строк в песне немного.
@@ -324,7 +334,7 @@ class _LyricsViewState extends ConsumerState<LyricsView> {
           request: request,
           // Показываем настоящий источник строк: в «Авто» это лучший вариант,
           // а не слово «Авто»; выбранный вручную источник тоже виден.
-          actualSource: shown?.source.label,
+          actualSource: pick?.source.label ?? shown?.source.label,
           searchOpen: _searchOpen,
           onToggleSearch: _toggleSearch,
           // Кнопки оффсета нужны только там, где есть времена: у обычного
@@ -346,7 +356,7 @@ class _LyricsViewState extends ConsumerState<LyricsView> {
           child: searchAsync.when(
             data: (LyricsSearchState value) {
               final Lyrics? resolved =
-                  _applyEdit(_resolve(value, selected, order), edit);
+                  _applyEdit(_resolve(value, selected, order, pick), edit);
               // Поиск ещё идёт и показывать нечего — честное ожидание вместо
               // пустого экрана: вариант может появиться в любой момент.
               if (resolved == null && value.loading) {
@@ -418,7 +428,11 @@ class _LyricsViewState extends ConsumerState<LyricsView> {
     LyricsSearchState state,
     LyricsSource selected,
     List<LyricsSource> order,
+    LyricsPick? pick,
   ) {
+    // Выбранный вручную вариант показываем как есть: он не зависит от того,
+    // что успел ответить повторный поиск.
+    if (pick != null) return pick.lyrics;
     if (selected == LyricsSource.auto) return state.bestByOrder(order)?.lyrics;
     return state.candidateFor(selected)?.lyrics;
   }

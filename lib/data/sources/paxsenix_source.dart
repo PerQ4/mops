@@ -7,6 +7,7 @@ import '../local/app_settings.dart';
 import '../models/models.dart';
 import 'lyrics_format.dart';
 import 'lyrics_match.dart';
+import 'lyrics_variants.dart';
 
 /// Результат проверки ключа Paxsenix — то, что показывает экран настроек.
 ///
@@ -42,22 +43,32 @@ class PaxsenixSource {
   static const String _host = 'https://api.paxsenix.org';
 
   /// Сначала Apple Music (пословная разметка), затем Musixmatch, затем общий
-  /// поиск по базе lrcget.
+  /// поиск по базе lrcget. Каталоги включаются по отдельности: выключенный
+  /// не спрашивается вовсе (как `paxsenixProviders` в ArchiveTune).
   Future<Lyrics> fetch({
     required String title,
     required String artist,
     required String apiKey,
     Duration? duration,
+    PaxsenixOptions options = const PaxsenixOptions(),
   }) async {
     final String key = apiKey.trim();
     if (key.isEmpty) return Lyrics.none;
     if (title.trim().isEmpty || artist.trim().isEmpty) return Lyrics.none;
+    // Все каталоги выключены — спрашивать нечего.
+    if (!options.any) return Lyrics.none;
 
-    final Lyrics apple = await _appleMusic(title.trim(), artist.trim(), duration, key);
-    if (!apple.isEmpty) return apple;
+    if (options.appleMusic) {
+      final Lyrics apple =
+          await _appleMusic(title.trim(), artist.trim(), duration, key);
+      if (!apple.isEmpty) return apple;
+    }
 
-    final Lyrics musix = await _musixmatch(title.trim(), artist.trim(), duration, key);
-    if (!musix.isEmpty) return musix;
+    if (options.musixmatch) {
+      final Lyrics musix =
+          await _musixmatch(title.trim(), artist.trim(), duration, key);
+      if (!musix.isEmpty) return musix;
+    }
 
     return _lrcget(title.trim(), artist.trim(), key);
   }
@@ -74,6 +85,7 @@ class PaxsenixSource {
     String? album,
     Duration? duration,
     String? apiKey,
+    PaxsenixOptions options = const PaxsenixOptions(),
   }) async {
     final String key = (apiKey ?? '').trim();
     // Без ключа сервис отвечает 401 — источник просто пропускается.
@@ -85,20 +97,52 @@ class PaxsenixSource {
       return const <LyricsTrackHit>[];
     }
 
-    // Каталоги независимы — спрашиваем оба параллельно.
-    final List<List<LyricsTrackHit>> groups =
-        await Future.wait(<Future<List<LyricsTrackHit>>>[
-      _searchCatalog('apple-music/search', 'applemusic', trimmedTitle,
-          trimmedArtist, key),
-      _searchCatalog(
-          'spotify/search', 'spotify', trimmedTitle, trimmedArtist, key),
-    ]);
+    // Каталоги независимы — спрашиваем включённые параллельно.
+    final List<Future<List<LyricsTrackHit>>> requests =
+        <Future<List<LyricsTrackHit>>>[
+      if (options.appleMusic)
+        _searchCatalog('apple-music/search', 'applemusic', trimmedTitle,
+            trimmedArtist, key),
+      if (options.spotify)
+        _searchCatalog(
+            'spotify/search', 'spotify', trimmedTitle, trimmedArtist, key),
+    ];
+    if (requests.isEmpty) return const <LyricsTrackHit>[];
+
+    final List<List<LyricsTrackHit>> groups = await Future.wait(requests);
 
     final List<LyricsTrackHit> hits = <LyricsTrackHit>[];
     for (final List<LyricsTrackHit> group in groups) {
       hits.addAll(group);
     }
     return hits;
+  }
+
+  /// Все совпадения с текстом — как `getAllLyrics` в ArchiveTune.
+  ///
+  /// Текст каждой записи Paxsenix отдаёт отдельным запросом, поэтому берём
+  /// первые записи из поиска и качаем их параллельно (см.
+  /// [kMaxLyricsVariants]).
+  Future<List<Lyrics>> fetchAll({
+    required String title,
+    required String artist,
+    String apiKey = '',
+    Duration? duration,
+    PaxsenixOptions options = const PaxsenixOptions(),
+  }) async {
+    final String key = apiKey.trim();
+    if (key.isEmpty) return const <Lyrics>[];
+    final List<LyricsTrackHit> hits = await search(
+      title: title,
+      artist: artist,
+      duration: duration,
+      apiKey: key,
+      options: options,
+    );
+    return fetchVariants(
+      hits,
+      (LyricsTrackHit hit) => fetchHit(hit, apiKey: key),
+    );
   }
 
   /// Достаёт текст ровно выбранной записи.

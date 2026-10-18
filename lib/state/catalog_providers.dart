@@ -465,6 +465,7 @@ class LyricsTrackHit {
 /// занимает место в общем списке (см. [scoreLyrics]).
 class LyricsCandidate {
   const LyricsCandidate({
+    required this.id,
     required this.source,
     required this.lyrics,
     required this.score,
@@ -493,6 +494,10 @@ class LyricsCandidate {
     final List<String> nonEmpty =
         lines.where((String l) => l.trim().isNotEmpty).toList();
     return LyricsCandidate(
+      // Ключ варианта — из источника и самого текста, а не из позиции в
+      // списке: список пересортировывается по мере ответов, и позиция менялась
+      // бы, а по ключу находится выбранный вариант после повторного поиска.
+      id: '${source.name}_${(lyrics.plain ?? nonEmpty.join('\n')).hashCode}',
       source: source,
       lyrics: lyrics,
       score: score,
@@ -509,6 +514,8 @@ class LyricsCandidate {
       preview: nonEmpty.take(8).join('\n'),
     );
   }
+
+  final String id;
 
   final LyricsSource source;
   final Lyrics lyrics;
@@ -590,6 +597,15 @@ class LyricsSearchState {
     }
     return null;
   }
+
+  /// Вариант по его ключу — так находится выбранная вручную карточка.
+  LyricsCandidate? candidateById(String? id) {
+    if (id == null || id.isEmpty) return null;
+    for (final LyricsCandidate candidate in candidates) {
+      if (candidate.id == id) return candidate;
+    }
+    return null;
+  }
 }
 
 /// Порядок источников для «Авто» и для тай-брейка совместимости.
@@ -653,6 +669,52 @@ final NotifierProvider<ManualLyricsSelection, Map<String, LyricsTrackHit>>
   ManualLyricsSelection.new,
 );
 
+/// Вариант текста, выбранный вручную из списка найденного.
+///
+/// Почему храним сам текст, а не только источник: у одного источника вариантов
+/// теперь несколько, и показать нужно ровно тот, что нажали (в ArchiveTune
+/// выбранный текст тоже сохраняется целиком — как `USER_SELECTION`). Ключ
+/// варианта нужен, чтобы отметить выбранную карточку и найти тот же текст
+/// после повторного поиска.
+@immutable
+class LyricsPick {
+  const LyricsPick({
+    required this.id,
+    required this.source,
+    required this.lyrics,
+  });
+
+  /// Ключ варианта (см. [LyricsCandidate.id]).
+  final String id;
+
+  /// Источник выбранного варианта — по нему подписан плеер.
+  final LyricsSource source;
+
+  /// Сам текст: он авторитетен и не зависит от повторного поиска.
+  final Lyrics lyrics;
+}
+
+class LyricsPickController extends Notifier<Map<String, LyricsPick>> {
+  @override
+  Map<String, LyricsPick> build() => const <String, LyricsPick>{};
+
+  void set(String videoId, LyricsPick? pick) {
+    final Map<String, LyricsPick> next = Map<String, LyricsPick>.of(state);
+    if (pick == null) {
+      next.remove(videoId);
+    } else {
+      next[videoId] = pick;
+    }
+    state = next;
+  }
+}
+
+final NotifierProvider<LyricsPickController, Map<String, LyricsPick>>
+    lyricsPickProvider =
+    NotifierProvider<LyricsPickController, Map<String, LyricsPick>>(
+  LyricsPickController.new,
+);
+
 /// Результаты ручного поиска: список найденных записей из всех баз.
 ///
 /// Спрашиваем только те базы, что умеют искать списком. YouLy+ и BetterLyrics
@@ -675,6 +737,16 @@ final manualLyricsHitsProvider =
   final String musixmatchKey = ref.watch(
     settingsControllerProvider.select((AppSettings s) => s.musixmatchApiKey),
   );
+  final PaxsenixOptions paxsenixOptions = ref.watch(
+    settingsControllerProvider.select((AppSettings s) => s.paxsenixOptions),
+  );
+  // Выключенные источники не спрашиваем и здесь: список записей — тот же
+  // поиск, и выключенная база не должна в нём появляться.
+  final List<LyricsSource> disabled = ref.watch(
+    settingsControllerProvider.select(
+      (AppSettings s) => s.lyricsDisabledProviders,
+    ),
+  );
 
   // У каждой базы свой бюджет: молчащая база не должна задерживать список.
   Future<List<LyricsTrackHit>> bounded(
@@ -687,30 +759,35 @@ final manualLyricsHitsProvider =
 
   final List<List<LyricsTrackHit>> groups =
       await Future.wait(<Future<List<LyricsTrackHit>>>[
-    bounded(lrclib.search(
-      title: title,
-      artist: artist ?? '',
-      album: request.album,
-      duration: request.duration,
-    )),
-    bounded(kugou.search(
-      title: title,
-      artist: artist ?? '',
-      duration: request.duration,
-    )),
-    bounded(unison.search(
-      title: title,
-      artist: artist ?? '',
-      album: request.album,
-      duration: request.duration,
-    )),
-    // Paxsenix без ключа не работает — не спрашиваем его зря.
-    if (musixmatchKey.trim().isNotEmpty)
+    if (!disabled.contains(LyricsSource.lrclib))
+      bounded(lrclib.search(
+        title: title,
+        artist: artist ?? '',
+        album: request.album,
+        duration: request.duration,
+      )),
+    if (!disabled.contains(LyricsSource.kugou))
+      bounded(kugou.search(
+        title: title,
+        artist: artist ?? '',
+        duration: request.duration,
+      )),
+    if (!disabled.contains(LyricsSource.unison))
+      bounded(unison.search(
+        title: title,
+        artist: artist ?? '',
+        album: request.album,
+        duration: request.duration,
+      )),
+    // Paxsenix без ключа не работает — не спрашиваем его зря. Выключенные
+    // каталоги тоже не спрашиваем: их записи в списке не нужны.
+    if (musixmatchKey.trim().isNotEmpty && paxsenixOptions.any)
       bounded(paxsenix.search(
         title: title,
         artist: artist ?? '',
         duration: request.duration,
         apiKey: musixmatchKey,
+        options: paxsenixOptions,
       )),
   ]);
 
@@ -797,6 +874,7 @@ Future<Lyrics> _fetchHit(
   required UnisonSource unison,
   required PaxsenixSource paxsenix,
   required String musixmatchKey,
+  PaxsenixOptions paxsenixOptions = const PaxsenixOptions(),
 }) {
   switch (hit.source) {
     case LyricsSource.lrclib:
@@ -806,6 +884,14 @@ Future<Lyrics> _fetchHit(
     case LyricsSource.unison:
       return unison.fetchHit(hit);
     case LyricsSource.musixmatch:
+      // Запись может принадлежать выключенному каталогу — тогда за текстом
+      // не идём: выключенный каталог не должен отвечать и здесь.
+      if (hit.provider == 'spotify' && !paxsenixOptions.spotify) {
+        return Future<Lyrics>.value(Lyrics.none);
+      }
+      if (hit.provider == 'applemusic' && !paxsenixOptions.appleMusic) {
+        return Future<Lyrics>.value(Lyrics.none);
+      }
       return paxsenix.fetchHit(hit, apiKey: musixmatchKey);
     case LyricsSource.auto:
     case LyricsSource.music:
@@ -832,6 +918,9 @@ final lyricsHitPreviewProvider =
   final String musixmatchKey = ref.watch(
     settingsControllerProvider.select((AppSettings s) => s.musixmatchApiKey),
   );
+  final PaxsenixOptions paxsenixOptions = ref.watch(
+    settingsControllerProvider.select((AppSettings s) => s.paxsenixOptions),
+  );
 
   try {
     // Бюджет тот же, что у поиска: молчащая база не должна держать карточку
@@ -844,6 +933,7 @@ final lyricsHitPreviewProvider =
       unison: unison,
       paxsenix: paxsenix,
       musixmatchKey: musixmatchKey,
+      paxsenixOptions: paxsenixOptions,
     ).timeout(_lyricsSourceBudget, onTimeout: () => Lyrics.none);
   } on Object {
     return Lyrics.none;
@@ -917,8 +1007,28 @@ Future<Map<LyricsSource, Lyrics>> _readCachedLyrics(
 /// Перед сетевыми запросами отдаются уже найденные тексты из дискового кэша
 /// ([lyricsCacheProvider]) — они видны сразу, а сеть лишь уточняет и пополняет
 /// кэш. Поиск завершается по дедлайну, а не по самой медленной базе.
-final lyricsProvider =
-    StreamProvider.family<LyricsSearchState, LyricsRequest>((ref, request) {
+final lyricsProvider = StreamProvider.family<LyricsSearchState, LyricsRequest>(
+  (ref, request) => _searchLyrics(ref, request, allVariants: false),
+);
+
+/// Все найденные варианты текста — для экрана поиска.
+///
+/// Почему отдельно от [lyricsProvider]: тот работает всегда, на каждом треке, и
+/// ему достаточно одного лучшего ответа на источник. Здесь же спрашиваются все
+/// совпадения (как `getAllLyrics` в ArchiveTune), а это лишние запросы — поэтому
+/// провайдер создаётся только пока открыт экран поиска.
+final lyricsVariantsProvider = StreamProvider.autoDispose
+    .family<LyricsSearchState, LyricsRequest>(
+  (ref, request) => _searchLyrics(ref, request, allVariants: true),
+);
+
+/// Тело поиска текста — одно на оба провайдера: разница только в том, брать у
+/// источника один лучший ответ или все совпадения.
+Stream<LyricsSearchState> _searchLyrics(
+  Ref ref,
+  LyricsRequest request, {
+  required bool allVariants,
+}) {
   final StreamController<LyricsSearchState> controller =
       StreamController<LyricsSearchState>();
   bool disposed = false;
@@ -940,6 +1050,16 @@ final lyricsProvider =
   final LyricsCache cache = ref.watch(lyricsCacheProvider);
   final String musixmatchKey = ref.watch(
     settingsControllerProvider.select((AppSettings s) => s.musixmatchApiKey),
+  );
+  // Выключенные источники не спрашиваем вовсе — как `providerPreferenceKeys`
+  // в ArchiveTune: выключить источник значит не тратить на него запрос.
+  final List<LyricsSource> disabled = ref.watch(
+    settingsControllerProvider.select(
+      (AppSettings s) => s.lyricsDisabledProviders,
+    ),
+  );
+  final PaxsenixOptions paxsenixOptions = ref.watch(
+    settingsControllerProvider.select((AppSettings s) => s.paxsenixOptions),
   );
 
   // Выбранная вручную запись важнее обычного поиска: если она есть, берём
@@ -1013,8 +1133,9 @@ final lyricsProvider =
           duration: duration,
         ));
       case LyricsSource.musixmatch:
-        // Paxsenix требует ключ; без ключа — пропуск.
-        if (!externalOk || musixmatchKey.isEmpty) {
+        // Paxsenix требует ключ, а его каталоги включаются по отдельности;
+        // если выключены все — спрашивать нечего.
+        if (!externalOk || musixmatchKey.isEmpty || !paxsenixOptions.any) {
           return Future<Lyrics>.value(Lyrics.none);
         }
         return bounded(paxsenix.fetch(
@@ -1022,9 +1143,67 @@ final lyricsProvider =
           artist: artist!,
           apiKey: musixmatchKey,
           duration: duration,
+          options: paxsenixOptions,
         ));
       case LyricsSource.auto:
         return Future<Lyrics>.value(Lyrics.none);
+    }
+  }
+
+  /// Все совпадения одного источника — для экрана поиска.
+  ///
+  /// Почему отдельно от [fetchSource]: там нужен один лучший текст (его и
+  /// показывает плеер), а здесь — все, как `getAllLyrics` в ArchiveTune.
+  /// Базы, которые умеют отдавать только одно совпадение, работают как раньше.
+  Future<List<Lyrics>> fetchSourceAll(LyricsSource target) {
+    // Общий бюджет: молчащая база не должна держать список открытым.
+    Future<List<Lyrics>> boundedAll(Future<List<Lyrics>> future) => future
+        .timeout(_lyricsSourceBudget, onTimeout: () => const <Lyrics>[]);
+
+    switch (target) {
+      case LyricsSource.lrclib:
+        if (!externalOk) return Future<List<Lyrics>>.value(const <Lyrics>[]);
+        return boundedAll(lrclib.fetchAll(
+          title: title!,
+          artist: artist!,
+          album: album,
+          duration: duration,
+        ));
+      case LyricsSource.kugou:
+        if (!externalOk) return Future<List<Lyrics>>.value(const <Lyrics>[]);
+        return boundedAll(kugou.fetchAll(
+          title: title!,
+          artist: artist!,
+          duration: duration,
+        ));
+      case LyricsSource.unison:
+        return boundedAll(unison.fetchAll(
+          title: title ?? '',
+          artist: artist ?? '',
+          album: album,
+          duration: duration,
+        ));
+      case LyricsSource.musixmatch:
+        if (!externalOk || musixmatchKey.isEmpty || !paxsenixOptions.any) {
+          return Future<List<Lyrics>>.value(const <Lyrics>[]);
+        }
+        return boundedAll(paxsenix.fetchAll(
+          title: title!,
+          artist: artist!,
+          apiKey: musixmatchKey,
+          duration: duration,
+          options: paxsenixOptions,
+        ));
+      // Эти базы отдают один текст — спрашиваем обычным путём.
+      case LyricsSource.music:
+      case LyricsSource.subtitles:
+      case LyricsSource.betterLyrics:
+      case LyricsSource.youlyPlus:
+      case LyricsSource.auto:
+        return fetchSource(target)
+            .then((Lyrics lyrics) => lyrics.isEmpty
+                ? const <Lyrics>[]
+                : <Lyrics>[lyrics]);
     }
   }
 
@@ -1036,17 +1215,21 @@ final lyricsProvider =
         unison: unison,
         paxsenix: paxsenix,
         musixmatchKey: musixmatchKey,
+        paxsenixOptions: paxsenixOptions,
       ));
 
   controller.add(const LyricsSearchState(loading: true));
-
   // Порядок источников — из настроек (как в ArchiveTune): первый в списке
-  // приоритетнее. Влияет на тай-брейк при равном качестве текста.
-  final List<LyricsSource> order = ref.read(
-    settingsControllerProvider.select(
-      (AppSettings s) => s.lyricsProviderOrder,
-    ),
-  );
+  // приоритетнее. Влияет на тай-брейк при равном качестве текста. Выключенные
+  // источники из него выпадают целиком — их не спрашивают.
+  final List<LyricsSource> order = ref
+      .read(
+        settingsControllerProvider.select(
+          (AppSettings s) => s.lyricsProviderOrder,
+        ),
+      )
+      .where((LyricsSource source) => !disabled.contains(source))
+      .toList(growable: false);
 
   unawaited(() async {
     final List<LyricsCandidate> found = <LyricsCandidate>[];
@@ -1067,6 +1250,12 @@ final lyricsProvider =
 
     void accept(LyricsSource source, int rank, Lyrics lyrics) {
       if (disposed || terminal || lyrics.isEmpty) return;
+      // Один и тот же текст приходит и из кэша, и из сети — второй раз не
+      // показываем: карточки-близнецы только мешают выбирать.
+      final String key = _lyricsTextKey(lyrics);
+      if (found.any((LyricsCandidate c) => _lyricsTextKey(c.lyrics) == key)) {
+        return;
+      }
       final LyricsScore score = scoreLyrics(
         lyrics: lyrics,
         rank: rank,
@@ -1074,9 +1263,11 @@ final lyricsProvider =
         requestArtist: artist,
         requestDuration: duration,
       );
-      // Один источник — один вариант: свежий сетевой ответ заменяет
-      // закэшированный, а не показывается рядом с ним.
-      found.removeWhere((LyricsCandidate c) => c.source == source);
+      if (!allVariants) {
+        // Один источник — один вариант: свежий сетевой ответ заменяет
+        // закэшированный, а не показывается рядом с ним.
+        found.removeWhere((LyricsCandidate c) => c.source == source);
+      }
       found.add(LyricsCandidate.from(
         source: source,
         lyrics: lyrics,
@@ -1104,14 +1295,23 @@ final lyricsProvider =
     void spawn(LyricsSource source) {
       final int rank = rankOf(source);
       try {
-        tasks.add(fetchSource(source).then<void>(
-          (Lyrics lyrics) {
-            // В кэш — только непустой ответ: пустым нельзя затирать уже
-            // найденный текст. Запись не ждём: на показ она не влияет.
-            if (!lyrics.isEmpty) {
-              unawaited(cache.write(request.videoId, source, lyrics));
+        // В режиме «все варианты» спрашиваем у источника все совпадения,
+        // иначе — одно лучшее, как для плеера.
+        final Future<List<Lyrics>> variantsFuture = allVariants
+            ? fetchSourceAll(source)
+            : fetchSource(source).then(
+                (Lyrics lyrics) =>
+                    lyrics.isEmpty ? const <Lyrics>[] : <Lyrics>[lyrics],
+              );
+        tasks.add(variantsFuture.then<void>(
+          (List<Lyrics> variants) {
+            if (variants.isEmpty) return;
+            // В кэш — только первый ответ (он же лучший): пустым нельзя
+            // затирать уже найденный текст, а хранить все совпадения незачем.
+            unawaited(cache.write(request.videoId, source, variants.first));
+            for (final Lyrics lyrics in variants) {
+              accept(source, rank, lyrics);
             }
-            accept(source, rank, lyrics);
           },
           // Асинхронная ошибка одной базы тоже не роняет поиск.
           onError: (Object _, StackTrace _) {},
@@ -1148,9 +1348,13 @@ final lyricsProvider =
 
       // Тексты YouTube — последними и в самом низу списка: у них нет
       // метаданных, поэтому при равной синхронизации внешняя база
-      // всегда предпочтительнее.
-      spawn(LyricsSource.subtitles);
-      spawn(LyricsSource.music);
+      // всегда предпочтительнее. Выключенные источники не спрашиваем.
+      if (!disabled.contains(LyricsSource.subtitles)) {
+        spawn(LyricsSource.subtitles);
+      }
+      if (!disabled.contains(LyricsSource.music)) {
+        spawn(LyricsSource.music);
+      }
 
       // Завершаемся по дедлайну, а не по самой медленной базе: иначе меню
       // крутилось бы, пока кто-то молчит. Уже полученные варианты остаются
@@ -1175,7 +1379,20 @@ final lyricsProvider =
   }());
 
   return controller.stream;
-});
+}
+
+/// Ключ текста для сравнения вариантов: одинаковый текст, пришедший из кэша и
+/// из сети, — это один и тот же вариант, а не два.
+///
+/// Считается по строкам, а не по объекту: `Lyrics` — значение без равенства, и
+/// два одинаковых ответа разных запросов не были бы равны.
+String _lyricsTextKey(Lyrics lyrics) {
+  final List<TimedLyric>? timed = lyrics.timed;
+  if (timed != null && timed.isNotEmpty) {
+    return timed.map((TimedLyric line) => line.text).join('\n');
+  }
+  return lyrics.plain ?? '';
+}
 
 /// Пара «поисковый запрос + фильтр» — ключ кэша поиска.
 class SearchQuery {

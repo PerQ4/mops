@@ -272,7 +272,8 @@ Lyrics _wordSyncedLyrics() => Lyrics(
       ],
     );
 
-/// Три варианта с разными типами синхронизации — по одному на иконку.
+/// Четыре варианта: у LRCLIB их два — проверить, что карточки одного источника
+/// различаются по ключу, а не по названию базы.
 LyricsSearchState _fakeLyricsSearch() => LyricsSearchState(
       loading: false,
       candidates: <LyricsCandidate>[
@@ -291,7 +292,22 @@ LyricsSearchState _fakeLyricsSearch() => LyricsSearchState(
           lyrics: _plainLyrics(),
           score: 20,
         ),
+        LyricsCandidate.from(
+          source: LyricsSource.lrclib,
+          lyrics: _otherPlainLyrics(),
+          score: 19,
+        ),
       ],
+    );
+
+/// Второе совпадение той же базы: другой текст, тот же источник.
+Lyrics _otherPlainLyrics() => Lyrics(
+      plain: <String>[
+        'Город тонет в синем свете фонарей',
+        'Я иду по краю, не считая дней',
+        'Это другая запись той же песни — с другого концерта',
+        'И слова в ней чуть-чуть не те',
+      ].join('\n'),
     );
 
 /// Открывает экран поиска текста — для эталона.
@@ -520,7 +536,12 @@ void main() {
       size: const Size(900, 900),
       extra: <dynamic>[
         // Источники в тесте не спрашиваем: варианты заданы заранее — эталон
-        // должен быть одинаковым при любом состоянии сети.
+        // должен быть одинаковым при любом состоянии сети. Обычный поиск
+        // (по нему экран понимает, что показывает плеер) отдаёт тот же ответ.
+        lyricsVariantsProvider.overrideWith(
+          (ref, LyricsRequest request) =>
+              Stream<LyricsSearchState>.value(_fakeLyricsSearch()),
+        ),
         lyricsProvider.overrideWith(
           (ref, LyricsRequest request) =>
               Stream<LyricsSearchState>.value(_fakeLyricsSearch()),
@@ -533,7 +554,7 @@ void main() {
 
     expect(tester.takeException(), isNull);
     // Счётчик в шапке — как «3 results» в ArchiveTune.
-    expect(find.text('Найдено: 3 варианта'), findsOneWidget);
+    expect(find.text('Найдено: 4 варианта'), findsOneWidget);
     // Типы синхронизации подписаны, а не показаны одной иконкой.
     expect(find.text('Пословная синхронизация'), findsWidgets);
     expect(find.text('Построчная синхронизация'), findsWidgets);
@@ -563,6 +584,10 @@ void main() {
       const _Harness(child: _SearchLauncher()),
       size: const Size(900, 900),
       extra: <dynamic>[
+        lyricsVariantsProvider.overrideWith(
+          (ref, LyricsRequest request) =>
+              Stream<LyricsSearchState>.value(_fakeLyricsSearch()),
+        ),
         lyricsProvider.overrideWith(
           (ref, LyricsRequest request) =>
               Stream<LyricsSearchState>.value(_fakeLyricsSearch()),
@@ -583,6 +608,32 @@ void main() {
     await expectLater(
       find.byType(MaterialApp),
       matchesGoldenFile('goldens/10_lyrics_search_input.png'),
+    );
+  });
+
+  testWidgets('Настройки: источники текста включаются по отдельности',
+      (WidgetTester tester) async {
+    await pump(
+      tester,
+      const _Harness(child: SettingsScreen()),
+      size: const Size(720, 900),
+    );
+
+    final Finder row = find.text('Источники текста');
+    await tester.ensureVisible(row);
+    await tester.pumpAndSettle();
+    await tester.tap(row);
+    await tester.pumpAndSettle();
+
+    expect(tester.takeException(), isNull);
+    // Каталоги Paxsenix включаются внутри той же формы.
+    expect(find.text('Каталоги Paxsenix'), findsOneWidget);
+    expect(find.text('Apple Music'), findsOneWidget);
+    expect(find.text('Spotify'), findsOneWidget);
+
+    await expectLater(
+      find.byType(MaterialApp),
+      matchesGoldenFile('goldens/11_lyrics_providers.png'),
     );
   });
 

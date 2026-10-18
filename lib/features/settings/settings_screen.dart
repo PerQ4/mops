@@ -124,6 +124,13 @@ class SettingsScreen extends ConsumerWidget {
                   subtitle: settings.lyricsProviderOrder.first.label,
                   onTap: () => _pickLyricsOrder(context, controller, settings),
                 ),
+                SettingsRow(
+                  icon: Icons.checklist,
+                  title: 'Источники текста',
+                  subtitle: _enabledSourcesLabel(settings),
+                  onTap: () =>
+                      _pickLyricsProviders(context, controller, settings),
+                ),
                 SettingsSwitchRow(
                   icon: Icons.subtitles_outlined,
                   title: 'Показывать текст в плеере',
@@ -787,6 +794,154 @@ class SettingsScreen extends ConsumerWidget {
       ),
     );
     if (result != null) await controller.setLyricsProviderOrder(result);
+  }
+
+  /// Включение и выключение источников текста — как `providerPreferenceKeys`
+  /// в ArchiveTune. Выключенный источник не спрашивается вовсе, поэтому
+  /// выключение — это ещё и экономия времени поиска.
+  ///
+  /// Каталоги Paxsenix включаются внутри этой же формы: ключ у Paxsenix один,
+  /// а каталогов за ним три, и они независимы.
+  Future<void> _pickLyricsProviders(
+    BuildContext context,
+    SettingsController controller,
+    AppSettings settings,
+  ) async {
+    final List<LyricsSource> disabled =
+        List<LyricsSource>.of(settings.lyricsDisabledProviders);
+    PaxsenixOptions paxsenix = settings.paxsenixOptions;
+
+    final bool? saved = await showDialog<bool>(
+      context: context,
+      builder: (BuildContext dialogContext) => StatefulBuilder(
+        builder: (BuildContext context, StateSetter setState) {
+          void toggle(LyricsSource source, bool enabled) {
+            if (enabled) {
+              disabled.remove(source);
+            } else if (!disabled.contains(source)) {
+              disabled.add(source);
+            }
+          }
+
+          return AlertDialog(
+            title: const Text('Источники текста'),
+            content: SizedBox(
+              width: 440,
+              child: SingleChildScrollView(
+                child: Column(
+                  mainAxisSize: MainAxisSize.min,
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  children: <Widget>[
+                    for (final LyricsSource source
+                        in AppSettings.toggleableLyricsSources)
+                      SwitchListTile(
+                        dense: true,
+                        value: !disabled.contains(source),
+                        onChanged: (bool on) =>
+                            setState(() => toggle(source, on)),
+                        title: Text(source.label),
+                        subtitle: Text(
+                          source.description,
+                          style: const TextStyle(fontSize: 12),
+                        ),
+                      ),
+                    // Каталоги Paxsenix нужны, только когда включён сам
+                    // источник: иначе это выключенные переключатели.
+                    if (!disabled.contains(LyricsSource.musixmatch)) ...<Widget>[
+                      const Divider(height: 24),
+                      Padding(
+                        padding: const EdgeInsets.only(left: 16, bottom: 4),
+                        child: Text(
+                          'Каталоги Paxsenix',
+                          style: Theme.of(context).textTheme.labelLarge,
+                        ),
+                      ),
+                      SwitchListTile(
+                        dense: true,
+                        value: paxsenix.appleMusic,
+                        onChanged: (bool on) => setState(
+                          () => paxsenix = PaxsenixOptions(
+                            appleMusic: on,
+                            spotify: paxsenix.spotify,
+                            musixmatch: paxsenix.musixmatch,
+                          ),
+                        ),
+                        title: const Text('Apple Music'),
+                        subtitle: const Text(
+                          'TTML с временем каждого слова — караоке',
+                          style: TextStyle(fontSize: 12),
+                        ),
+                      ),
+                      SwitchListTile(
+                        dense: true,
+                        value: paxsenix.spotify,
+                        onChanged: (bool on) => setState(
+                          () => paxsenix = PaxsenixOptions(
+                            appleMusic: paxsenix.appleMusic,
+                            spotify: on,
+                            musixmatch: paxsenix.musixmatch,
+                          ),
+                        ),
+                        title: const Text('Spotify'),
+                        subtitle: const Text(
+                          'Обычный текст или LRC',
+                          style: TextStyle(fontSize: 12),
+                        ),
+                      ),
+                      SwitchListTile(
+                        dense: true,
+                        value: paxsenix.musixmatch,
+                        onChanged: (bool on) => setState(
+                          () => paxsenix = PaxsenixOptions(
+                            appleMusic: paxsenix.appleMusic,
+                            spotify: paxsenix.spotify,
+                            musixmatch: on,
+                          ),
+                        ),
+                        title: const Text('Musixmatch'),
+                        subtitle: const Text(
+                          'Текст с временами строк',
+                          style: TextStyle(fontSize: 12),
+                        ),
+                      ),
+                    ],
+                  ],
+                ),
+              ),
+            ),
+            actions: <Widget>[
+              TextButton(
+                onPressed: () => Navigator.of(dialogContext).pop(),
+                child: const Text('Отмена'),
+              ),
+              FilledButton(
+                onPressed: () => Navigator.of(dialogContext).pop(true),
+                child: const Text('Сохранить'),
+              ),
+            ],
+          );
+        },
+      ),
+    );
+
+    if (saved != true) return;
+    await controller.update(
+      (AppSettings s) => s.copyWith(
+        lyricsDisabledProviders: disabled,
+        paxsenixAppleMusic: paxsenix.appleMusic,
+        paxsenixSpotify: paxsenix.spotify,
+        paxsenixMusixmatch: paxsenix.musixmatch,
+      ),
+    );
+  }
+
+  /// Подпись к строке «Источники текста»: сколько из них включено.
+  String _enabledSourcesLabel(AppSettings settings) {
+    final List<LyricsSource> all = AppSettings.toggleableLyricsSources;
+    final int on = all.where(settings.isLyricsSourceEnabled).length;
+    if (on == 0) return 'Все выключены — текст не ищется';
+    if (on == all.length) return 'Включены все';
+    return 'Включено $on из ${all.length}';
   }
 
   /// Application ID приложения Discord: без него presence не отправляется.

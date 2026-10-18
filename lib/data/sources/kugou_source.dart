@@ -5,6 +5,7 @@ import '../../state/catalog_providers.dart';
 import '../local/app_settings.dart';
 import '../models/models.dart';
 import 'lrclib_source.dart';
+import 'lyrics_variants.dart';
 
 /// Тексты из базы KuGou.
 ///
@@ -129,6 +130,23 @@ class KugouSource {
       ));
     }
     return hits;
+  }
+
+  /// Все совпадения с текстом — как `getAllLyrics` в ArchiveTune.
+  ///
+  /// KuGou отдаёт текст отдельным запросом на запись, поэтому берём первые
+  /// записи из поиска и качаем их параллельно (см. [kMaxLyricsVariants]).
+  Future<List<Lyrics>> fetchAll({
+    required String title,
+    required String artist,
+    Duration? duration,
+  }) async {
+    final List<LyricsTrackHit> hits = await search(
+      title: title,
+      artist: artist,
+      duration: duration,
+    );
+    return fetchVariants(hits, fetchHit);
   }
 
   /// Достаёт текст ровно выбранной записи по её id и ключу.

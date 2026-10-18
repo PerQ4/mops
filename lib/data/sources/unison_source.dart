@@ -5,6 +5,7 @@ import '../../state/catalog_providers.dart';
 import '../local/app_settings.dart';
 import '../models/models.dart';
 import 'lyrics_format.dart';
+import 'lyrics_variants.dart';
 
 /// Тексты из базы Unison (`unison.boidu.dev`).
 ///
@@ -104,6 +105,25 @@ class UnisonSource {
   }
 
   /// Достаёт текст ровно выбранной записи.
+  /// Все совпадения с текстом — как `getAllLyrics` в ArchiveTune.
+  ///
+  /// Unison отдаёт текст отдельным запросом на запись, поэтому берём первые
+  /// записи из поиска и качаем их параллельно (см. [kMaxLyricsVariants]).
+  Future<List<Lyrics>> fetchAll({
+    required String title,
+    required String artist,
+    String? album,
+    Duration? duration,
+  }) async {
+    final List<LyricsTrackHit> hits = await search(
+      title: title,
+      artist: artist,
+      album: album,
+      duration: duration,
+    );
+    return fetchVariants(hits, fetchHit);
+  }
+
   Future<Lyrics> fetchHit(LyricsTrackHit hit) async {
     final String id = hit.id.trim();
     if (id.isEmpty) return Lyrics.none;
