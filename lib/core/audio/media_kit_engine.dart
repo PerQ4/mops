@@ -85,7 +85,58 @@ class MediaKitEngine implements AudioEngine {
       _player.stream.error.listen(_onError),
       _player.stream.log.listen(_onLog),
       _player.stream.audioDevices.listen(_onAudioDevices),
+      // Сведения о потоке — для диалога «Детали потока» (кодек, битрейт,
+      // частота, каналы). Контейнер media_kit не отдаёт, см. [PlaybackState].
+      _player.stream.tracks.listen(_onTracks),
+      _player.stream.audioParams.listen(_onAudioParams),
+      _player.stream.audioBitrate.listen(_onAudioBitrate),
     ]);
+  }
+
+  /// Разбирает состав потока: кодек и параметры выбранной аудиодорожки.
+  ///
+  /// `stream.track` в media_kit обновляется только явным `setAudioTrack`, а мы
+  /// дорожки не переключаем, поэтому текущую берём из `stream.tracks` — ту, что
+  /// помечена `default` (именно её выбирает libmpv), иначе первую реальную.
+  void _onTracks(Tracks tracks) {
+    final AudioTrack? audio = _selectedAudioTrack(tracks);
+    if (audio == null) return;
+    _emit(_state.copyWith(
+      audioCodec: audio.codec,
+      // `demux-bitrate` есть не у всех потоков: если мгновенный `audio-bitrate`
+      // уже пришёл, он точнее и не перекрывается.
+      bitrate: _state.bitrate ?? audio.bitrate,
+      // Частота источника важнее частоты вывода, поэтому дорожка перекрывает
+      // значение из `audio-params` (см. [_onAudioParams]).
+      sampleRate: audio.samplerate ?? _state.sampleRate,
+      channels: audio.channelscount ?? _state.channels,
+    ));
+  }
+
+  /// `audio-params` — параметры уже на выходе декодера. Их берём только как
+  /// запасной источник: `track-list` даёт частоту и каналы самого потока.
+  void _onAudioParams(AudioParams params) {
+    _emit(_state.copyWith(
+      sampleRate: _state.sampleRate ?? params.sampleRate,
+      channels: _state.channels ?? params.channelCount,
+    ));
+  }
+
+  void _onAudioBitrate(double? bitrate) {
+    // `null` — у потока битрейт неизвестен; прежнее значение не трогаем.
+    if (bitrate == null) return;
+    _emit(_state.copyWith(bitrate: bitrate.round()));
+  }
+
+  /// Первая реальная аудиодорожка: `auto`/`no` — служебные записи mpv.
+  AudioTrack? _selectedAudioTrack(Tracks tracks) {
+    AudioTrack? first;
+    for (final AudioTrack track in tracks.audio) {
+      if (track.id == 'auto' || track.id == 'no') continue;
+      first ??= track;
+      if (track.isDefault == true) return track;
+    }
+    return first;
   }
 
   void _onAudioDevices(List<AudioDevice> devices) {
@@ -189,6 +240,7 @@ class MediaKitEngine implements AudioEngine {
     _emit(_state.copyWith(
       status: PlaybackStatus.error,
       error: _humanizeError(message),
+      clearMediaInfo: true,
     ));
   }
 
@@ -235,6 +287,8 @@ class MediaKitEngine implements AudioEngine {
       duration: Duration.zero,
       buffered: Duration.zero,
       clearError: true,
+      // Новый источник — прежние кодек и битрейт к нему не относятся.
+      clearMediaInfo: true,
     ));
 
     try {
@@ -292,7 +346,11 @@ class MediaKitEngine implements AudioEngine {
     } on Object catch (error) {
       debugPrint('Ошибка остановки плеера: $error');
     }
-    _emit(_state.copyWith(status: PlaybackStatus.idle, position: Duration.zero));
+    _emit(_state.copyWith(
+      status: PlaybackStatus.idle,
+      position: Duration.zero,
+      clearMediaInfo: true,
+    ));
   }
 
   @override

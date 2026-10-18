@@ -242,11 +242,7 @@ class LyricsCache {
   Future<File> _cacheFile() async {
     final File? ready = _file;
     if (ready != null) return ready;
-    // Тот же каталог, что у сессии (`getApplicationSupportDirectory`): рядом
-    // с данными приложения, а не во временной папке, которую ОС чистит.
-    final Directory dir = await getApplicationSupportDirectory();
-    await dir.create(recursive: true);
-    final File file = File('${dir.path}${Platform.pathSeparator}$fileName');
+    final File file = await _dataFile(fileName);
     _file = file;
     return file;
   }
@@ -260,6 +256,189 @@ class LyricsCache {
   }
 }
 
+/// Дисковое хранилище ручных правок текста: id трека → исправленный текст.
+///
+/// Почему файлом, а не в `shared_preferences`, как оффсет: правка — это целый
+/// текст песни, те же килобайты, что и у кэша, а строку настроек читают и
+/// пишут на каждое изменение любой из них. TTL у правок нет: это ручная
+/// работа, а не ответ базы, и устареть сама по себе она не может. Предел числа
+/// записей всё же есть — иначе файл рос бы без предела.
+class LyricsEditsStore {
+  LyricsEditsStore({this.fileName = 'lyrics_edits.json'});
+
+  final String fileName;
+
+  /// Предел числа записей. При переполнении вытесняются самые старые.
+  static const int maxEntries = 500;
+
+  File? _file;
+
+  /// Правки в памяти: нужны, чтобы запись одного трека не перечитывала файл
+  /// целиком и чтобы повторные чтения не били по диску.
+  Map<String, _StoredEdit>? _memory;
+
+  /// Загрузка файла идёт один раз: параллельные чтения ждут её же.
+  Future<void>? _loading;
+
+  /// Запись на диск выстроена в очередь: параллельные `write` иначе
+  /// перетирали бы снимки друг друга и часть правок терялась бы.
+  Future<void> _writing = Future<void>.value();
+
+  /// Все сохранённые правки: id трека → текст.
+  ///
+  /// Ошибки файла и JSON наружу не пробрасываются: недоступное хранилище —
+  /// это отсутствие правок, а не повод не показать текст.
+  Future<Map<String, String>> readAll() async {
+    final Map<String, _StoredEdit> entries = await _entries();
+    return <String, String>{
+      for (final MapEntry<String, _StoredEdit> item in entries.entries)
+        item.key: item.value.text,
+    };
+  }
+
+  /// Сохраняет правку трека. Пустой текст не пишется: снятие правки — это
+  /// [remove], а не запись пустоты.
+  Future<void> write(String videoId, String text) async {
+    if (videoId.isEmpty || text.trim().isEmpty) return;
+    final Map<String, _StoredEdit> entries = await _entries();
+    entries[videoId] = _StoredEdit(
+      text: text,
+      at: DateTime.now().millisecondsSinceEpoch,
+    );
+    _evictOldest(entries);
+    await _persist(entries);
+  }
+
+  /// Убирает правку трека — и в памяти, и на диске. После этого трек снова
+  /// показывается так, как его отдал источник.
+  Future<void> remove(String videoId) async {
+    if (videoId.isEmpty) return;
+    final Map<String, _StoredEdit> entries = await _entries();
+    if (entries.remove(videoId) == null) return;
+    await _persist(entries);
+  }
+
+  /// Полная очистка — и в памяти, и на диске.
+  Future<void> clear() async {
+    _memory = <String, _StoredEdit>{};
+    try {
+      final File file = await _editsFile();
+      if (file.existsSync()) await file.delete();
+    } on FileSystemException {
+      // Цель — отсутствие файла; если не вышло, это не критично.
+    } on Object catch (error) {
+      debugPrint('[LyricsEditsStore] не удалось очистить правки: $error');
+    }
+  }
+
+  /// Возвращает записи из памяти, загрузив файл при первом обращении.
+  Future<Map<String, _StoredEdit>> _entries() async {
+    final Map<String, _StoredEdit>? ready = _memory;
+    if (ready != null) return ready;
+    _loading ??= _loadFromDisk();
+    await _loading;
+    return _memory ?? <String, _StoredEdit>{};
+  }
+
+  Future<void> _loadFromDisk() async {
+    final Map<String, _StoredEdit> parsed = <String, _StoredEdit>{};
+    try {
+      final File file = await _editsFile();
+      if (file.existsSync()) {
+        final String raw = await file.readAsString();
+        if (raw.trim().isNotEmpty) {
+          _readEntries(jsonDecode(raw), parsed);
+        }
+      }
+    } on FileSystemException {
+      // Нет доступа к файлу — работаем без сохранённых правок.
+    } on FormatException {
+      // Повреждённый JSON — начнём файл заново при следующей записи.
+    } on Object catch (error) {
+      debugPrint('[LyricsEditsStore] не удалось прочитать правки: $error');
+    }
+    _memory = parsed;
+  }
+
+  /// Разбирает содержимое файла. Битая запись пропускается целиком — одна
+  /// испорченная правка не должна обнулять остальные.
+  void _readEntries(dynamic decoded, Map<String, _StoredEdit> into) {
+    final dynamic raw = decoded is Map<String, dynamic> ? decoded['entries'] : null;
+    if (raw is! List) return;
+
+    final int now = DateTime.now().millisecondsSinceEpoch;
+    for (final dynamic item in raw) {
+      if (item is! Map<String, dynamic>) continue;
+      final dynamic videoId = item['videoId'];
+      final dynamic text = item['text'];
+      if (videoId is! String || videoId.isEmpty) continue;
+      if (text is! String || text.trim().isEmpty) continue;
+
+      final dynamic at = item['at'];
+      into[videoId] = _StoredEdit(
+        text: text,
+        at: at is num ? at.toInt() : now,
+      );
+    }
+  }
+
+  /// Вытесняет самые старые правки, если записей стало больше [maxEntries].
+  void _evictOldest(Map<String, _StoredEdit> entries) {
+    if (entries.length <= maxEntries) return;
+    final List<MapEntry<String, _StoredEdit>> all = entries.entries.toList()
+      ..sort((MapEntry<String, _StoredEdit> a, MapEntry<String, _StoredEdit> b) =>
+          a.value.at.compareTo(b.value.at));
+    for (int i = 0; i < all.length - maxEntries; i++) {
+      entries.remove(all[i].key);
+    }
+  }
+
+  /// Пишет снимок в файл. Снимок кодируется сразу: пока ждём очередь, память
+  /// могла измениться, а на диск должно попасть согласованное состояние.
+  Future<void> _persist(Map<String, _StoredEdit> entries) {
+    final List<Map<String, dynamic>> flat = <Map<String, dynamic>>[];
+    for (final MapEntry<String, _StoredEdit> item in entries.entries) {
+      flat.add(<String, dynamic>{
+        'videoId': item.key,
+        'at': item.value.at,
+        'text': item.value.text,
+      });
+    }
+    final String payload =
+        jsonEncode(<String, dynamic>{'version': 1, 'entries': flat});
+    _writing = _writing.then((_) => _writeFile(payload));
+    return _writing;
+  }
+
+  Future<void> _writeFile(String payload) async {
+    try {
+      final File file = await _editsFile();
+      await file.writeAsString(payload, flush: true);
+    } on FileSystemException {
+      // Диск недоступен — правка остаётся только в памяти.
+    } on Object catch (error) {
+      debugPrint('[LyricsEditsStore] не удалось сохранить правки: $error');
+    }
+  }
+
+  Future<File> _editsFile() async {
+    final File? ready = _file;
+    if (ready != null) return ready;
+    final File file = await _dataFile(fileName);
+    _file = file;
+    return file;
+  }
+}
+
+/// Файл в каталоге данных приложения: тот же, что у сессии
+/// (`getApplicationSupportDirectory`) — рядом с данными приложения, а не во
+/// временной папке, которую ОС чистит.
+Future<File> _dataFile(String fileName) async {
+  final Directory dir = await getApplicationSupportDirectory();
+  await dir.create(recursive: true);
+  return File('${dir.path}${Platform.pathSeparator}$fileName');
+}
+
 /// Запись кэша: текст и время записи (мс от эпохи) — по нему считается TTL
 /// и выбираются самые старые при вытеснении.
 @immutable
@@ -267,6 +446,16 @@ class _CachedLyrics {
   const _CachedLyrics({required this.lyrics, required this.at});
 
   final Lyrics lyrics;
+  final int at;
+}
+
+/// Запись правки: исправленный текст и время записи (мс от эпохи) — по нему
+/// выбираются самые старые при вытеснении.
+@immutable
+class _StoredEdit {
+  const _StoredEdit({required this.text, required this.at});
+
+  final String text;
   final int at;
 }
 

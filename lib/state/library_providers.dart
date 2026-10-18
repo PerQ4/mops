@@ -1,6 +1,7 @@
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 
 import '../data/models/models.dart';
+import '../data/sources/library_source.dart';
 import 'auth_controller.dart';
 import 'catalog_providers.dart';
 
@@ -354,3 +355,53 @@ void refreshLibrary(WidgetRef ref) {
   ref.invalidate(libraryArtistsProvider);
   ref.invalidate(subscriptionsProvider);
 }
+
+/// Изменения состава плейлистов: добавление трека и создание плейлиста.
+///
+/// Мутации лежат в [LibrarySource], но после них кэш списка плейлистов
+/// устаревает. Сброс держим рядом с мутацией, чтобы вызывающий не мог его
+/// забыть: без него ни новый плейлист, ни добавленный трек не появились бы
+/// до перезапуска.
+class PlaylistEditor {
+  PlaylistEditor(this._ref);
+
+  final Ref _ref;
+
+  /// Добавляет трек в плейлист и сбрасывает кэш затронутых списков.
+  Future<void> addTrack({
+    required String playlistId,
+    required String videoId,
+  }) async {
+    await _ref
+        .read(librarySourceProvider)
+        .addToPlaylist(playlistId, <String>[videoId]);
+
+    _ref.invalidate(likedPlaylistsProvider);
+    // «Мне нравится» — тот же плейлист, но с отдельным экраном и отдельным
+    // кэшем (`likedSongsPlaylistProvider`): без сброса добавленный трек не
+    // появился бы на нём, пока приложение не перезапустят.
+    if (LibrarySource.isLikedPlaylist(playlistId)) {
+      _ref.invalidate(likedSongsPlaylistProvider);
+      _ref.invalidate(likedSongsProvider);
+    }
+  }
+
+  /// Создаёт плейлист сразу с треком.
+  ///
+  /// Трек передаём в `videoIds` при создании, а не отдельным запросом: иначе
+  /// обрыв сети между двумя вызовами оставил бы пустой плейлист, а
+  /// пользователь считал бы, что трек внутри.
+  Future<void> createWithTrack({
+    required String title,
+    required String videoId,
+  }) async {
+    await _ref.read(librarySourceProvider).createPlaylist(
+          title: title,
+          videoIds: <String>[videoId],
+        );
+    _ref.invalidate(likedPlaylistsProvider);
+  }
+}
+
+final Provider<PlaylistEditor> playlistEditorProvider =
+    Provider<PlaylistEditor>((Ref ref) => PlaylistEditor(ref));

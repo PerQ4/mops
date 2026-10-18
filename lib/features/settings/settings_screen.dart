@@ -392,6 +392,14 @@ class SettingsScreen extends ConsumerWidget {
               title: 'О приложении',
               accent: scheme.secondary,
               children: <Widget>[
+                // Резервная копия: перенос настроек на другой компьютер и
+                // откат после неудачного эксперимента.
+                SettingsRow(
+                  icon: Icons.backup_outlined,
+                  title: 'Резервная копия',
+                  subtitle: 'Сохранить настройки в файл или загрузить из файла',
+                  onTap: () => AppRoutes.backup(context),
+                ),
                 // Информационная строка: без действия и без шеврона, а подпись
                 // не обрезаем — текст лицензии должен читаться целиком.
                 SettingsRow(

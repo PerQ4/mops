@@ -1,6 +1,9 @@
+import 'dart:async';
+
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 
+import '../data/local/lyrics_cache.dart';
 import 'providers.dart';
 
 /// Оффсет синхронизации и ручная правка текста — обе вещи привязаны к треку,
@@ -8,9 +11,8 @@ import 'providers.dart';
 /// кривой. Поэтому храним их по `videoId`, как BetterLyrics
 /// (`blyricsOffset_<videoId>`), а не в общих настройках.
 
-/// Префиксы ключей в `shared_preferences`.
+/// Префикс ключа оффсета в `shared_preferences`.
 const String kLyricsOffsetPrefix = 'blyricsOffset_';
-const String kLyricsEditPrefix = 'blyricsEdit_';
 
 /// Шаг кнопок оффсета, мс.
 const int kLyricsOffsetStepMs = 500;
@@ -65,39 +67,46 @@ class LyricsOffsets extends Notifier<Map<String, int>> {
 final NotifierProvider<LyricsOffsets, Map<String, int>> lyricsOffsetProvider =
     NotifierProvider<LyricsOffsets, Map<String, int>>(LyricsOffsets.new);
 
+/// Хранилище ручных правок — одно на приложение: держит файл и очередь записи.
+final Provider<LyricsEditsStore> lyricsEditsStoreProvider =
+    Provider<LyricsEditsStore>((ref) => LyricsEditsStore());
+
 /// Ручная правка текста по треку.
 ///
 /// Храним именно текст строками: при показе он ложится поверх найденного
 /// варианта. Если у оригинала были времена и число строк совпало — времена
 /// сохраняются по индексу; если нет — показываем как обычный текст, ничего не
 /// выдумывая (см. `_applyEdit` в `lyrics_view.dart`).
+///
+/// Правки лежат на диске рядом с кэшем текстов, поэтому перезапуск их не
+/// теряет. Чтение файла асинхронное, а состояние нужно синхронно: первый кадр
+/// обходится без правок, и они поднимаются, как только файл прочитан.
 class LyricsEdits extends Notifier<Map<String, String>> {
   @override
   Map<String, String> build() {
-    final SharedPreferences prefs = ref.watch(sharedPreferencesProvider);
-    final Map<String, String> edits = <String, String>{};
-    for (final String key in prefs.getKeys()) {
-      if (!key.startsWith(kLyricsEditPrefix)) continue;
-      final String? value = prefs.getString(key);
-      if (value != null && value.trim().isNotEmpty) {
-        edits[key.substring(kLyricsEditPrefix.length)] = value;
-      }
-    }
-    return edits;
+    final LyricsEditsStore store = ref.watch(lyricsEditsStoreProvider);
+    unawaited(
+      store.readAll().then((Map<String, String> loaded) {
+        if (!ref.mounted) return;
+        // Правки, сделанные в этой сессии, важнее прочитанных: они появились
+        // позже и уже лежат на диске.
+        state = <String, String>{...loaded, ...state};
+      }),
+    );
+    return const <String, String>{};
   }
 
   /// Сохраняет правку. Пустой текст означает «снять правку» — тогда трек
   /// снова показывается как есть.
   Future<void> set(String videoId, String? text) async {
-    final SharedPreferences prefs = ref.read(sharedPreferencesProvider);
-    final String key = '$kLyricsEditPrefix$videoId';
+    final LyricsEditsStore store = ref.read(lyricsEditsStoreProvider);
     final Map<String, String> next = Map<String, String>.of(state);
     if (text == null || text.trim().isEmpty) {
       next.remove(videoId);
-      await prefs.remove(key);
+      await store.remove(videoId);
     } else {
       next[videoId] = text;
-      await prefs.setString(key, text);
+      await store.write(videoId, text);
     }
     state = next;
   }

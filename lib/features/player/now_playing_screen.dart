@@ -20,6 +20,7 @@ import '../../widgets/blurred_artwork_background.dart';
 import '../../widgets/track_menu.dart';
 import 'lyrics_actions.dart';
 import 'lyrics_view.dart';
+import 'media_info.dart';
 import 'queue_list.dart';
 import 'player_controls.dart';
 
@@ -649,8 +650,14 @@ class _InfoRow extends ConsumerWidget {
           _PlayerActionButton(
             tooltip: 'Действия',
             icon: Icons.more_vert,
-            onPressed: () =>
-                showTrackMenu(context, track, rootNavigator: true),
+            onPressed: () => showTrackMenu(
+              context,
+              track,
+              rootNavigator: true,
+              // Параметры играющего потока — в том же меню, что и действия
+              // над треком: второй «⋮» на экране только путал бы.
+              onMediaInfo: () => showMediaInfoDialog(context),
+            ),
           ),
           const SizedBox(width: 10),
           _PlayerActionButton(

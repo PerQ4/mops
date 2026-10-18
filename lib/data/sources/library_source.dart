@@ -371,8 +371,8 @@ class LibrarySource {
   Future<void> setSaved({required String playlistId, required bool saved}) {
     // У плейлистов `Playlist.id` — это browse-идентификатор страницы с
     // префиксом `VL` (`VLPL…`, `VLLM`), а мутация принимает «сырой» id, как и
-    // очередь (ср. `likedPlaylistQueueId`). Снимаем префикс — тем же способом,
-    // каким `_editPlaylist` ниже его добавляет.
+    // очередь (ср. `likedPlaylistQueueId`). Снимаем префикс — так же, как это
+    // делает `_editPlaylist` ниже.
     final String target =
         playlistId.startsWith('VL') ? playlistId.substring(2) : playlistId;
     return _client.mutate(
@@ -405,37 +405,55 @@ class LibrarySource {
   }
 
   /// Добавляет треки в плейлист.
+  ///
+  /// Ограничение YouTube: не больше сотни треков за запрос — вызывающий сам
+  /// режет длинные списки (см. `SpotifyImporter`).
   Future<void> addToPlaylist(String playlistId, List<String> videoIds) {
     return _editPlaylist(
       playlistId,
       videoIds
           .map((String id) => <String, dynamic>{
-                'action': 'ADD_VIDEO',
+                // Именно `ACTION_ADD_VIDEO`, а не короткое `ADD_VIDEO`:
+                // так делает и эталон ArchiveTune, и текущий ytmusicapi.
+                'action': 'ACTION_ADD_VIDEO',
                 'addedVideoId': id,
               })
           .toList(),
     );
   }
 
-  /// Удаляет трек из плейлиста (по индексу в плейлисте).
+  /// Удаляет трек из плейлиста.
+  ///
+  /// Одного `removedVideoId` серверу мало — ему нужен ещё `setVideoId` записи
+  /// (он приходит вместе с треком на странице плейлиста), поэтому метод пока
+  /// не используется: им займётся задача 4.2.
   Future<void> removeFromPlaylist(String playlistId, String videoId) {
     return _editPlaylist(
       playlistId,
       <Map<String, dynamic>>[
         <String, dynamic>{
-          'action': 'REMOVE_VIDEO',
+          'action': 'ACTION_REMOVE_VIDEO',
           'removedVideoId': videoId,
         },
       ],
     );
   }
 
-  Future<void> _editPlaylist(String playlistId, List<Map<String, dynamic>> actions) {
+  /// Правка плейлиста одним запросом (`browse/edit_playlist`).
+  ///
+  /// Сервер ждёт «сырой» id без префикса `VL` (`ytmusicapi.validate_playlist_id`
+  /// и ArchiveTune снимают его) — с префиксом запрос завершается статусом
+  /// ошибки, хотя для `browse` тот же id с `VL` и нужен.
+  Future<void> _editPlaylist(
+    String playlistId,
+    List<Map<String, dynamic>> actions,
+  ) {
+    final String target =
+        playlistId.startsWith('VL') ? playlistId.substring(2) : playlistId;
     return _client.mutate(
       'browse/edit_playlist',
       <String, dynamic>{
-        // Внутренний id плейлиста обязан иметь префикс VL.
-        'playlistId': playlistId.startsWith('VL') ? playlistId : 'VL$playlistId',
+        'playlistId': target,
         'actions': actions,
       },
     );

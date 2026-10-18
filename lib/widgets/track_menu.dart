@@ -4,6 +4,7 @@ import 'package:flutter_riverpod/flutter_riverpod.dart';
 import '../core/theme/layout.dart';
 import '../data/models/models.dart';
 import '../features/common/navigation.dart';
+import '../features/library/playlist_edit.dart';
 import '../state/auth_controller.dart';
 import '../state/library_providers.dart';
 import '../state/player_controller.dart';
@@ -23,6 +24,7 @@ Future<void> showTrackMenu(
   BuildContext context,
   Track track, {
   bool rootNavigator = false,
+  VoidCallback? onMediaInfo,
 }) {
   return showModalBottomSheet<void>(
     context: context,
@@ -35,6 +37,7 @@ Future<void> showTrackMenu(
       track: track,
       hostContext: context,
       rootNavigator: rootNavigator,
+      onMediaInfo: onMediaInfo,
     ),
   );
 }
@@ -44,6 +47,7 @@ class _TrackMenuSheet extends ConsumerWidget {
     required this.track,
     required this.hostContext,
     required this.rootNavigator,
+    this.onMediaInfo,
   });
 
   final Track track;
@@ -53,6 +57,10 @@ class _TrackMenuSheet extends ConsumerWidget {
   final BuildContext hostContext;
 
   final bool rootNavigator;
+
+  /// Показ параметров играющего потока. Задаёт только плеер: у трека из списка
+  /// никакого потока ещё нет, и пункт там был бы враньём.
+  final VoidCallback? onMediaInfo;
 
   @override
   Widget build(BuildContext context, WidgetRef ref) {
@@ -151,6 +159,23 @@ class _TrackMenuSheet extends ConsumerWidget {
               onTap: () => _openClip(context),
             ),
             _MenuAction(
+              icon: Icons.playlist_add,
+              title: 'Добавить в плейлист',
+              // Без входа YouTube не примет правку плейлиста — как и лайк.
+              onTap: signedIn ? () => _openAddToPlaylist(context) : null,
+            ),
+            // Параметры потока — только там, где поток уже играет: пункт
+            // приходит из плеера вместе с колбэком.
+            if (onMediaInfo != null)
+              _MenuAction(
+                icon: Icons.info_outline,
+                title: 'Детали потока',
+                onTap: () {
+                  Navigator.pop(context);
+                  onMediaInfo!();
+                },
+              ),
+            _MenuAction(
               icon: liked ? Icons.favorite : Icons.favorite_border,
               title: liked ? 'Убрать из «Мне нравится»' : 'Мне нравится',
               // Без входа действие недоступно — как и кнопка лайка в плеере.
@@ -178,6 +203,16 @@ class _TrackMenuSheet extends ConsumerWidget {
     // Клип, как и плеер, живёт в корневом навигаторе — иначе при открытии из
     // полноэкранного плеера он остался бы под его экраном.
     AppRoutes.clip(hostContext, track);
+  }
+
+  /// Закрывает меню и открывает выбор плейлиста для этого трека.
+  ///
+  /// Диалог показываем уже после закрытия листа: два модальных слоя друг над
+  /// другом на одном контексте конфликтуют, а лист после нажатия всё равно
+  /// должен уйти.
+  void _openAddToPlaylist(BuildContext sheetContext) {
+    Navigator.pop(sheetContext);
+    showAddToPlaylistDialog(hostContext, track);
   }
 
   /// Первый исполнитель с id: у трека с несколькими авторами на страницу

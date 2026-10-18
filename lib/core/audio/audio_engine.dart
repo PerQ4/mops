@@ -30,6 +30,11 @@ class PlaybackState {
     this.volume = 1.0,
     this.speed = 1.0,
     this.error,
+    this.audioCodec,
+    this.container,
+    this.bitrate,
+    this.sampleRate,
+    this.channels,
   });
 
   final PlaybackStatus status;
@@ -39,6 +44,28 @@ class PlaybackState {
   final double volume;
   final double speed;
   final String? error;
+
+  /// Кодек выбранной аудиодорожки (`opus`, `mp4a.40.2`, …).
+  ///
+  /// `null` — состав потока ещё не разобран. Это нормально на старте: libmpv
+  /// сообщает дорожки чуть позже открытия.
+  final String? audioCodec;
+
+  /// Контейнер потока (`webm`, `mp4`, …).
+  ///
+  /// Всегда `null`: `media_kit` в Dart его не отдаёт — ни `PlayerState`, ни
+  /// `Tracks` не содержат формата контейнера. Поле оставлено, чтобы диалог
+  /// «Детали потока» показывал «нет данных» честно, а не выдуманное значение.
+  final String? container;
+
+  /// Битрейт аудиопотока в бит/с.
+  final int? bitrate;
+
+  /// Частота дискретизации, Гц.
+  final int? sampleRate;
+
+  /// Число каналов аудиопотока.
+  final int? channels;
 
   bool get isPlaying => status == PlaybackStatus.playing;
   bool get isLoading =>
@@ -60,6 +87,13 @@ class PlaybackState {
     double? speed,
     String? error,
     bool clearError = false,
+    String? audioCodec,
+    String? container,
+    int? bitrate,
+    int? sampleRate,
+    int? channels,
+    // Сбросить сведения о потоке в «неизвестно» (смена источника, стоп).
+    bool clearMediaInfo = false,
   }) {
     return PlaybackState(
       status: status ?? this.status,
@@ -69,6 +103,11 @@ class PlaybackState {
       volume: volume ?? this.volume,
       speed: speed ?? this.speed,
       error: clearError ? null : (error ?? this.error),
+      audioCodec: clearMediaInfo ? null : (audioCodec ?? this.audioCodec),
+      container: clearMediaInfo ? null : (container ?? this.container),
+      bitrate: clearMediaInfo ? null : (bitrate ?? this.bitrate),
+      sampleRate: clearMediaInfo ? null : (sampleRate ?? this.sampleRate),
+      channels: clearMediaInfo ? null : (channels ?? this.channels),
     );
   }
 
