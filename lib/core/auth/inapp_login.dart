@@ -60,7 +60,7 @@ class _LoginPageState extends State<_LoginPage> {
     if (_checking || !mounted) return;
     _checking = true;
     try {
-      final List<Cookie> cookies = await CookieManager.instance().getCookies(
+      final List<Cookie> cookies = await cookieManager().getCookies(
         url: WebUri(widget.cookieHost),
       );
       // Оставляем только домены нужного сервиса: смешивать нельзя, иначе

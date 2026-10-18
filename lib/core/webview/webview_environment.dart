@@ -36,3 +36,14 @@ Future<WebViewEnvironment?> prepareWebViewEnvironment(Directory dataDir) async {
     return null;
   }
 }
+
+/// Менеджер cookie для нашего окружения WebView2.
+///
+/// На Windows у менеджера cookie **своё** окружение: если его не передать, он
+/// читает cookie из профиля по умолчанию, а вход идёт в наш профиль — и
+/// приложение «не видит», что пользователь вошёл: окно входа не закрывается, а
+/// данные аккаунта не приходят. На остальных системах окружения нет, и параметр
+/// не нужен.
+CookieManager cookieManager() => CookieManager.instance(
+      webViewEnvironment: Platform.isWindows ? mopsWebViewEnvironment : null,
+    );
