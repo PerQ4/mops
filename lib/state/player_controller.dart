@@ -29,6 +29,12 @@ enum PlayerRepeatMode {
       };
 }
 
+/// Значение таймера сна «остановить после текущего трека».
+///
+/// Отдельная константа, а не литерал `-1` в интерфейсе: одно и то же значение
+/// читают и контроллер (в `_handleTrackEnded`), и меню выбора.
+const int kSleepTimerAfterTrack = -1;
+
 /// Полное состояние плеера, которое видит интерфейс.
 @immutable
 class PlayerUiState {
@@ -46,6 +52,7 @@ class PlayerUiState {
     this.streamNote,
     this.audioDevices = const <AudioOutputDevice>[],
     this.audioDeviceName = 'auto',
+    this.sleepTimer = 0,
   });
 
   final List<Track> queue;
@@ -76,12 +83,23 @@ class PlayerUiState {
   /// Выбранное устройство вывода (`auto` — системное).
   final String audioDeviceName;
 
+  /// Таймер сна: `0` — выключен, [kSleepTimerAfterTrack] — остановить после
+  /// текущего трека, `> 0` — сколько минут осталось до остановки.
+  ///
+  /// Хранится именно остаток, а не выбранное число минут: интерфейсу нужно
+  /// показывать, сколько ещё играть. Отсчёт идёт от дедлайна в контроллере,
+  /// поэтому подпись не «уезжает» из-за задержек тика.
+  final int sleepTimer;
+
   Track? get current =>
       (index >= 0 && index < queue.length) ? queue[index] : null;
 
   bool get hasTrack => current != null;
   bool get isPlaying => playback.isPlaying;
   bool get isLoading => resolving || downloading || playback.isLoading;
+
+  /// Таймер сна включён (в любом из режимов).
+  bool get sleepTimerActive => sleepTimer != 0;
 
   /// Треки, которые пойдут следующими (для панели очереди).
   List<Track> get upNext {
@@ -107,6 +125,7 @@ class PlayerUiState {
     String? streamNote,
     List<AudioOutputDevice>? audioDevices,
     String? audioDeviceName,
+    int? sleepTimer,
   }) {
     return PlayerUiState(
       queue: queue ?? this.queue,
@@ -122,6 +141,7 @@ class PlayerUiState {
       streamNote: streamNote ?? this.streamNote,
       audioDevices: audioDevices ?? this.audioDevices,
       audioDeviceName: audioDeviceName ?? this.audioDeviceName,
+      sleepTimer: sleepTimer ?? this.sleepTimer,
     );
   }
 }
@@ -152,10 +172,26 @@ class PlayerController extends Notifier<PlayerUiState> {
   /// этого флага очередь перескочила бы через трек.
   bool _handlingEnd = false;
 
+  /// Тик подписи таймера сна (раз в минуту).
+  Timer? _sleepTimer;
+
+  /// Одноразовый «выстрел» таймера сна — ровно в дедлайн.
+  Timer? _sleepStop;
+
+  /// Момент, когда таймер сна должен остановить звук.
+  ///
+  /// Отсчёт идёт от него, а не «минус минута за тик»: тик может опоздать
+  /// (сборка кадра, простой процесса), и накопленная ошибка растянула бы
+  /// таймер.
+  DateTime? _sleepDeadline;
+
   @override
   PlayerUiState build() {
     // Отписка от предыдущего движка (если нотификатор пересоздали).
     _engineSub?.cancel();
+    // Таймер сна — состояние сессии: при пересоздании нотификатора он не
+    // должен остаться висеть от прошлого.
+    _cancelSleepTimer();
 
     _engineSub = _engine.stateStream.listen((PlaybackState playback) {
       state = state.copyWith(playback: playback);
@@ -199,6 +235,7 @@ class PlayerController extends Notifier<PlayerUiState> {
       _engineSub = null;
       _devicesSub?.cancel();
       _devicesSub = null;
+      _cancelSleepTimer();
     });
 
     return PlayerUiState(audioDevices: _engine.audioDevices);
@@ -278,6 +315,9 @@ class PlayerController extends Notifier<PlayerUiState> {
     state = state.copyWith(queue: queue, index: queue.isEmpty ? -1 : newIndex);
 
     if (queue.isEmpty) {
+      // Очереди нет — таймеру нечего останавливать: без снятия он «выстрелил»
+      // бы позже по пустому плееру.
+      clearSleepTimer();
       _releaseStreams();
       unawaited(_engine.stop());
       return;
@@ -310,6 +350,8 @@ class PlayerController extends Notifier<PlayerUiState> {
 
   Future<void> clearQueue() async {
     _history.clear();
+    // Очередь обнуляется целиком — вместе с ней снимаем и таймер сна.
+    clearSleepTimer();
     state = const PlayerUiState();
     _releaseStreams();
     await _engine.stop();
@@ -416,6 +458,76 @@ class PlayerController extends Notifier<PlayerUiState> {
 
   void setAutoPlayRadio(bool value) {
     state = state.copyWith(autoPlayRadio: value);
+  }
+
+  // ---------------------------------------------------------- таймер сна
+
+  /// Включает таймер сна.
+  ///
+  /// [minutes] — через сколько минут остановить звук; [kSleepTimerAfterTrack]
+  /// (`-1`) — остановить после текущего трека. Ноль и меньше выключают таймер:
+  /// так вызывающий код может передать «ничего не выбрано» без отдельной
+  /// ветки.
+  void startSleepTimer(int minutes) {
+    _cancelSleepTimer();
+    if (minutes == kSleepTimerAfterTrack) {
+      // Отсчёт не нужен: остановку сделает `_handleTrackEnded`.
+      state = state.copyWith(sleepTimer: kSleepTimerAfterTrack);
+      return;
+    }
+    if (minutes <= 0) {
+      // «Ничего не выбрано» — просто выключаем: вызывающему коду не нужна
+      // отдельная ветка на этот случай.
+      clearSleepTimer();
+      return;
+    }
+
+    _sleepDeadline = DateTime.now().add(Duration(minutes: minutes));
+    state = state.copyWith(sleepTimer: minutes);
+    // Подпись обновляем раз в минуту, а звук гасит отдельный одноразовый
+    // таймер: периодический тик может прийти за миллисекунду до дедлайна, и
+    // тогда пауза сдвинулась бы на целую минуту вперёд.
+    _sleepTimer = Timer.periodic(
+      const Duration(minutes: 1),
+      (Timer _) => _tickSleepTimer(),
+    );
+    _sleepStop = Timer(Duration(minutes: minutes), _stopForSleep);
+  }
+
+  /// Снимает таймер сна — и отсчёт, и состояние.
+  void clearSleepTimer() {
+    _cancelSleepTimer();
+    if (state.sleepTimerActive) state = state.copyWith(sleepTimer: 0);
+  }
+
+  void _cancelSleepTimer() {
+    _sleepTimer?.cancel();
+    _sleepTimer = null;
+    _sleepStop?.cancel();
+    _sleepStop = null;
+    _sleepDeadline = null;
+  }
+
+  /// Обновляет остаток минут в подписи.
+  void _tickSleepTimer() {
+    final DateTime? deadline = _sleepDeadline;
+    if (deadline == null) return;
+
+    final int minutes =
+        (deadline.difference(DateTime.now()).inSeconds / 60).ceil();
+    if (minutes != state.sleepTimer) {
+      state = state.copyWith(sleepTimer: minutes);
+    }
+  }
+
+  /// Гасит звук по таймеру сна.
+  void _stopForSleep() {
+    // Снимаем отсчёт до паузы: пока идёт асинхронная остановка, интерфейс не
+    // должен показывать всё ещё активный таймер.
+    clearSleepTimer();
+    // Трек остаётся в очереди и на своей позиции — утром можно продолжить
+    // с того же места.
+    unawaited(_engine.pause());
   }
 
   /// Включена ли предзагрузка следующего трека через посредника.
@@ -552,6 +664,15 @@ class PlayerController extends Notifier<PlayerUiState> {
   }
 
   Future<void> _handleTrackEnded() async {
+    // «После трека» проверяем раньше повтора: таймер сна важнее — иначе на
+    // повторе одного трека он не сработал бы никогда.
+    if (state.sleepTimer == kSleepTimerAfterTrack) {
+      // Снимаем до паузы: иначе таймер остался бы висеть и остановил бы ещё
+      // и следующий трек.
+      clearSleepTimer();
+      await _engine.pause();
+      return;
+    }
     if (state.repeat == PlayerRepeatMode.one) {
       await _engine.seek(Duration.zero);
       await _engine.play();

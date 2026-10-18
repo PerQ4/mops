@@ -109,6 +109,31 @@ class CatalogSource {
     return BrowseParser.homeSections(res);
   }
 
+  /// Настроения и жанры — подписи категорий для чипов главной.
+  ///
+  /// Отдельный разбор: на этой странице YouTube отдаёт не полки, а сетку
+  /// кнопок `musicNavigationButtonRenderer`, которых общий разбор секций не
+  /// знает. Берём из кнопки только подпись: конкретную категорию YouTube
+  /// открывает по `params` из той же кнопки, а перехода на произвольный раздел
+  /// с параметрами в приложении нет — чип открывает поиск по названию, как и
+  /// прежний ряд настроений. Порядок и повторы — как их вернул YouTube.
+  Future<List<String>> moodCategories() async {
+    final Map<String, dynamic> res =
+        await _client.browse(ExploreSection.moods.browseId);
+
+    final List<String> titles = <String>[];
+    final Set<String> seen = <String>{};
+    for (final dynamic button
+        in traverseList(res, <String>['musicNavigationButtonRenderer'])) {
+      if (button is! Map) continue;
+      final String title =
+          (textOf(button['buttonText']) ?? textOf(button['text']) ?? '').trim();
+      if (title.isEmpty) continue;
+      if (seen.add(title)) titles.add(title);
+    }
+    return titles;
+  }
+
   // ----------------------------------------------------------------- поиск
 
   /// Общий поиск. Возвращает секции: «Треки», «Альбомы», «Исполнители»…

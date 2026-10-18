@@ -86,6 +86,8 @@
 | Диагностика источников текста: статус и время ответа по каждому источнику | `lib/state/catalog_providers.dart` (`LyricsSourceReport`), `lib/features/player/lyrics_actions.dart` | ✅ |
 | Управление плейлистом: переименовать, удалить, убрать трек (по `setVideoId`), экспорт M3U | `lib/data/sources/{library_source,browse_parser}.dart`, `lib/features/playlist/{playlist_screen,m3u_export}.dart` | ✅ |
 | Хранилище: размеры файлов данных, путь каталога, очистка кэша текстов | `lib/features/settings/storage_screen.dart`, `lib/data/local/lyrics_cache.dart` | ✅ |
+| Таймер сна: 5/10/15/30/45/60 минут или после текущего трека | `lib/state/player_controller.dart`, `lib/features/player/sleep_timer.dart` | ✅ |
+| Главная: чипы категорий из YouTube, полка «Слушать снова», блок «Быстрый выбор» | `lib/features/home/{home_screen,home_sections}.dart`, `lib/data/sources/catalog_source.dart` (`moodCategories`) | ✅ |
 
 ### Что есть у нас, но чего нет в ArchiveTune
 
@@ -123,7 +125,7 @@
 
 Чек-лист:
 
-- [ ] 1.1 Таймер сна
+- [x] 1.1 Таймер сна
 - [ ] 1.2 Восстановление очереди и позиции между запусками
 - [ ] 1.3 Скорость и питч в плеере
 - [x] 1.4 Копировать ссылку и «поделиться» треком
@@ -503,7 +505,7 @@
 - [x] 4.2 Управление плейлистом и экспорт в файл
 - [ ] 4.3 Теги плейлистов
 - [ ] 4.4 Блокировка исполнителя
-- [ ] 4.5 Главная: категории, «Слушать снова», быстрый набор
+- [x] 4.5 Главная: категории, «Слушать снова», быстрый набор
 - [ ] 4.6 Замена недоступного трека
 
 #### 4.1 Добавление в плейлист и создание плейлиста

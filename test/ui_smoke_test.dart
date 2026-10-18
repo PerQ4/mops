@@ -129,12 +129,26 @@ List<BrowseSection> _fakeHome() {
   final List<Track> tracks = _fakeTracks(8);
 
   return <BrowseSection>[
+    // Полки, которые главная вынимает из ленты: «Слушать снова» и «Быстрый
+    // выбор». Без них в эталоне не было бы новых блоков.
     BrowseSection(
       title: 'Слушать снова',
       items: tracks
           .take(5)
           .map((Track t) => TrackItem(t))
           .toList(growable: false),
+    ),
+    BrowseSection(
+      title: 'Быстрый выбор',
+      items: <BrowseItem>[
+        for (int i = 0; i < 4; i++)
+          AlbumItem(Album(
+            id: 'MPREq_$i',
+            title: 'Подборка $i',
+            artists: <ArtistRef>[ArtistRef(name: _artistNames[i % 5])],
+            year: '2026',
+          )),
+      ],
     ),
     BrowseSection(
       title: 'Новые релизы',
@@ -387,6 +401,11 @@ void main() {
           audioEngineProvider.overrideWithValue(_FakeAudioEngine()),
           homeSectionsProvider.overrideWith((ref) => _fakeHome()),
           exploreSectionsProvider.overrideWith((ref) => _fakeHome()),
+          // Чипы категорий на главной берутся из сети — в тесте задаём их
+          // заранее, иначе блок не нарисуется и эталон потеряет ряд чипов.
+          moodCategoriesProvider.overrideWith(
+            (ref) async => <String>['Поп', 'Рок', 'Джаз', 'Классика'],
+          ),
           if (player != null)
             playerControllerProvider.overrideWith(() => _StubPlayer(player)),
           ...extra,

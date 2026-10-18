@@ -23,6 +23,7 @@ import 'lyrics_view.dart';
 import 'media_info.dart';
 import 'queue_list.dart';
 import 'player_controls.dart';
+import 'sleep_timer.dart';
 
 /// Полноэкранный плеер для узких экранов.
 ///
@@ -267,6 +268,11 @@ class _Controls extends StatelessWidget {
           padding: side,
           child: PlayerVolumeControl(),
         ),
+        // Таймер сна — строкой под громкостью, а не пятой кнопкой в ряду
+        // действий: на узком экране тот ряд уже упирается в край (на 412 px
+        // лишняя кнопка давала переполнение), а строкой состояние видно
+        // текстом, без наведения на подсказку.
+        const SleepTimerButton(),
         const SizedBox(height: 30),
       ],
     );

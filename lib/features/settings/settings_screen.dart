@@ -9,8 +9,10 @@ import '../../data/local/app_settings.dart';
 import '../../data/sources/paxsenix_source.dart';
 import '../../state/auth_controller.dart';
 import '../../core/theme/layout.dart';
+import '../../state/player_controller.dart';
 import '../../state/providers.dart';
 import '../player/player_controls.dart';
+import '../player/sleep_timer.dart';
 import '../../state/ui_scale.dart';
 import '../common/navigation.dart';
 import 'settings_components.dart';
@@ -29,6 +31,11 @@ class SettingsScreen extends ConsumerWidget {
     final SettingsController controller =
         ref.read(settingsControllerProvider.notifier);
     final AuthState auth = ref.watch(authControllerProvider);
+    // Таймер сна — состояние сессии в контроллере плеера, а не настройка:
+    // в строке показываем, сколько ещё осталось, поэтому подписка нужна.
+    final int sleepTimer = ref.watch(
+      playerControllerProvider.select((PlayerUiState s) => s.sleepTimer),
+    );
     final ColorScheme scheme = Theme.of(context).colorScheme;
 
     return Scaffold(
@@ -212,6 +219,14 @@ class SettingsScreen extends ConsumerWidget {
                       'Продолжать похожими треками, когда очередь закончилась',
                   value: settings.autoPlayNext,
                   onChanged: controller.setAutoPlayNext,
+                ),
+                // Таймер сна: та же точка входа, что и кнопка в плеере, —
+                // общий выбор вариантов (`showSleepTimerMenu`).
+                SettingsRow(
+                  icon: Icons.bedtime_outlined,
+                  title: 'Таймер сна',
+                  subtitle: sleepTimerLabel(sleepTimer),
+                  onTap: () => showSleepTimerMenu(context, ref),
                 ),
                 SettingsRow(
                   icon: Icons.swipe,

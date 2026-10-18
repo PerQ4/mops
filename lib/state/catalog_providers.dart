@@ -165,6 +165,15 @@ final browseSectionProvider =
   return ref.watch(catalogSourceProvider).browseSection(browseId);
 });
 
+/// Настроения и жанры — чипы категорий на главной.
+///
+/// Отдельный запрос, а не [browseSectionProvider]: на странице настроений
+/// YouTube отдаёт сетку кнопок, а не полки, поэтому общий разбор секций её не
+/// видит (см. `CatalogSource.moodCategories`).
+final moodCategoriesProvider = FutureProvider<List<String>>((ref) async {
+  return ref.watch(catalogSourceProvider).moodCategories();
+});
+
 /// Страница альбома.
 final albumProvider = FutureProvider.family<Album, String>((ref, albumId) async {
   return ref.watch(catalogSourceProvider).album(albumId);
