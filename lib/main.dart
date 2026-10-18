@@ -1,6 +1,7 @@
 import 'dart:io';
 
 import 'package:flutter/material.dart';
+import 'package:flutter_inappwebview/flutter_inappwebview.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:media_kit/media_kit.dart';
 import 'package:shared_preferences/shared_preferences.dart';
@@ -10,6 +11,7 @@ import 'core/auth/token_store.dart';
 import 'core/net/bypass.dart';
 import 'core/theme/ui_scaler.dart';
 import 'data/local/app_settings.dart';
+import 'data/local/lyrics_cache.dart';
 import 'state/providers.dart';
 import 'state/ui_scale.dart';
 
@@ -67,6 +69,15 @@ Future<void> main() async {
   // до первого сетевого запроса — до него приложение не дойдёт.
   await BypassManager.instance.apply(settings.bypass);
 
+  // Папка данных встроенного браузера (WebView2).
+  //
+  // Почему не по умолчанию: WebView2 кладёт свои данные рядом с exe, а
+  // приложение ставится в `Program Files`, куда без прав администратора писать
+  // нельзя. Тогда встроенный браузер не открывается вовсе — а им работают и
+  // вход в аккаунт, и просмотр клипов. Кладём данные туда же, где лежат кэш
+  // текстов и правки, — туда писать можно всегда.
+  await _prepareWebView2();
+
   runApp(
     ProviderScope(
       // Тип списка выводится сам: `Override` — деталь реализации Riverpod.
@@ -83,6 +94,29 @@ Future<void> main() async {
 
 /// DPR, который сообщает движок. Если он расходится с системным масштабом,
 /// интерфейс нужно компенсировать — см. `resolveUiScale`.
+/// Готовит папку данных встроенного браузера (WebView2) на Windows.
+///
+/// WebView2 по умолчанию пишет данные рядом с exe. Для портативной сборки это
+/// нормально, а для установленной в `Program Files` — нет: без прав
+/// администратора папку создать нельзя, и встроенный браузер не открывается
+/// вовсе. Поэтому задаём папку явно — рядом с остальными данными приложения.
+Future<void> _prepareWebView2() async {
+  if (!Platform.isWindows) return;
+  try {
+    final Directory data = await appDataDirectory();
+    final Directory folder = Directory(
+      '${data.path}${Platform.pathSeparator}webview',
+    );
+    await folder.create(recursive: true);
+    await WebViewEnvironment.create(
+      settings: WebViewEnvironmentSettings(userDataFolder: folder.path),
+    );
+  } on Object catch (error) {
+    // Без встроенного браузера приложение работает: остаётся вход по cookie.
+    debugPrint('[WebView2] не удалось подготовить папку данных: $error');
+  }
+}
+
 double _engineDevicePixelRatio() {
   final views = WidgetsBinding.instance.platformDispatcher.views;
   if (views.isEmpty) return 1.0;
