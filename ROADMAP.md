@@ -70,7 +70,7 @@
 | Golden-тесты интерфейса | `test/goldens/**`, `test/ui_smoke_test.dart` | ✅ |
 | Подписки на исполнителей: кнопка на странице и общее состояние | `lib/state/library_providers.dart` (`SubscribedIdsController`), `lib/features/artist/artist_screen.dart` | ✅ |
 | Сохранение альбомов и плейлистов в библиотеку | `lib/data/sources/library_source.dart` (`setSaved`, `likedAlbums`), `lib/features/album/media_hero.dart` (`HeroSaveButton`) | ✅ |
-| Просмотр клипов во встроенном браузере (пауза своего звука, запасной путь в браузер) | `lib/features/player/clip_screen.dart`, `lib/features/common/navigation.dart` | ✅ |
+| Просмотр клипов во встроенном браузере (пауза своего звука, полный экран, всегда доступный выход во внешний браузер) | `lib/features/player/clip_screen.dart`, `lib/features/common/navigation.dart` | ✅ |
 | Клик по названию трека открывает альбом (альбом разрешается по `next` и кэшируется) | `lib/data/sources/catalog_source.dart` (`trackAlbum`), `lib/widgets/section_list.dart` | ✅ |
 | Ручной поиск текста списком: метаданные, пометка синхронизации, предпросмотр | `lib/features/player/lyrics_actions.dart`, `lib/state/catalog_providers.dart` (`lyricsHitPreviewProvider`) | ✅ |
 | Вставка-пауза отдельной строкой списка с заливающейся снизу нотой | `lib/features/player/lyrics_view.dart` | ✅ |
@@ -88,6 +88,10 @@
 | Хранилище: размеры файлов данных, путь каталога, очистка кэша текстов | `lib/features/settings/storage_screen.dart`, `lib/data/local/lyrics_cache.dart` | ✅ |
 | Таймер сна: 5/10/15/30/45/60 минут или после текущего трека | `lib/state/player_controller.dart`, `lib/features/player/sleep_timer.dart` | ✅ |
 | Главная: чипы категорий из YouTube, полка «Слушать снова», блок «Быстрый выбор» | `lib/features/home/{home_screen,home_sections}.dart`, `lib/data/sources/catalog_source.dart` (`moodCategories`) | ✅ |
+| Восстановление очереди и позиции между запусками (снимок в `shared_preferences`) | `lib/data/local/queue_snapshot.dart`, `lib/state/player_controller.dart` | ✅ |
+| Поделиться текстом картинкой (1080×1080 PNG с обложкой) | `lib/features/player/lyrics_share_image.dart`, `lib/features/player/lyrics_actions.dart` | ✅ |
+| Теги плейлистов: локальные метки и фильтр в библиотеке | `lib/data/local/playlist_tags.dart`, `lib/features/library/library_screen.dart` | ✅ |
+| Диагностика соединения по шагам на экране обхода | `lib/core/net/diagnostics.dart`, `lib/features/settings/bypass_screen.dart` | ✅ |
 
 ### Что есть у нас, но чего нет в ArchiveTune
 
@@ -126,11 +130,11 @@
 Чек-лист:
 
 - [x] 1.1 Таймер сна
-- [ ] 1.2 Восстановление очереди и позиции между запусками
+- [x] 1.2 Восстановление очереди и позиции между запусками
 - [ ] 1.3 Скорость и питч в плеере
 - [x] 1.4 Копировать ссылку и «поделиться» треком
 - [x] 1.5 Клик по строке текста — перемотка к ней
-- [ ] 1.6 Поделиться текстом картинкой
+- [x] 1.6 Поделиться текстом картинкой
 - [x] 1.7 Экспорт и импорт настроек (резервная копия)
 - [ ] 1.8 Настройки содержимого: скрыть explicit и видео, длина топа
 - [x] 1.9 Провайдеры текстов: включение и под-провайдеры Paxsenix
@@ -503,7 +507,7 @@
 
 - [x] 4.1 Добавление в плейлист и создание плейлиста
 - [x] 4.2 Управление плейлистом и экспорт в файл
-- [ ] 4.3 Теги плейлистов
+- [x] 4.3 Теги плейлистов
 - [ ] 4.4 Блокировка исполнителя
 - [x] 4.5 Главная: категории, «Слушать снова», быстрый набор
 - [ ] 4.6 Замена недоступного трека
@@ -665,7 +669,7 @@
 
 - [ ] 6.1 SponsorBlock **[LIVE]**
 - [ ] 6.2 Низкий расход трафика
-- [ ] 6.3 Диагностика соединения в интерфейсе
+- [x] 6.3 Диагностика соединения в интерфейсе
 - [x] 6.4 Управление кэшами и хранилищем
 
 #### 6.1 SponsorBlock

@@ -220,6 +220,15 @@ class SettingsScreen extends ConsumerWidget {
                   value: settings.autoPlayNext,
                   onChanged: controller.setAutoPlayNext,
                 ),
+                // Очередь прошлой сессии возвращается без автозапуска: звук
+                // пойдёт только после нажатия «играть».
+                SettingsSwitchRow(
+                  icon: Icons.restore,
+                  title: 'Восстанавливать очередь при запуске',
+                  subtitle: 'Возвращать очередь и позицию прошлой сессии',
+                  value: settings.restoreQueue,
+                  onChanged: controller.setRestoreQueue,
+                ),
                 // Таймер сна: та же точка входа, что и кнопка в плеере, —
                 // общий выбор вариантов (`showSleepTimerMenu`).
                 SettingsRow(

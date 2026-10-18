@@ -1,5 +1,8 @@
+import 'dart:async';
+
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 
+import '../data/local/playlist_tags.dart';
 import '../data/models/models.dart';
 import '../data/sources/library_source.dart';
 import 'auth_controller.dart';
@@ -405,3 +408,72 @@ class PlaylistEditor {
 
 final Provider<PlaylistEditor> playlistEditorProvider =
     Provider<PlaylistEditor>((Ref ref) => PlaylistEditor(ref));
+
+/// Хранилище локальных тегов — одно на приложение: держит файл и очередь
+/// записи.
+final Provider<PlaylistTagsStore> playlistTagsStoreProvider =
+    Provider<PlaylistTagsStore>((Ref ref) => PlaylistTagsStore());
+
+/// Теги плейлистов: «id плейлиста → набор ярлыков».
+///
+/// Теги локальные: в YouTube Music их нет, поэтому состоянием владеет только
+/// диск, а не сервер. Чтение файла асинхронное, а состояние нужно синхронно:
+/// первый кадр показывается без тегов, и они поднимаются, как только файл
+/// прочитан.
+class PlaylistTags extends Notifier<Map<String, Set<String>>> {
+  @override
+  Map<String, Set<String>> build() {
+    final PlaylistTagsStore store = ref.watch(playlistTagsStoreProvider);
+    unawaited(
+      store.readAll().then((Map<String, Set<String>> loaded) {
+        if (!ref.mounted) return;
+        // Теги, назначенные в этой сессии, важнее прочитанных: они появились
+        // позже и уже лежат на диске.
+        state = <String, Set<String>>{...loaded, ...state};
+      }),
+    );
+    return const <String, Set<String>>{};
+  }
+
+  /// Заменяет набор тегов плейлиста. Пустой набор означает «снять все теги» —
+  /// тогда запись удаляется целиком.
+  Future<void> setTags(String playlistId, Set<String> tags) async {
+    if (playlistId.isEmpty) return;
+    final PlaylistTagsStore store = ref.read(playlistTagsStoreProvider);
+
+    final Set<String> clean = <String>{};
+    for (final String raw in tags) {
+      final String? tag = normalizePlaylistTag(raw);
+      if (tag != null) clean.add(tag);
+    }
+
+    final Map<String, Set<String>> next =
+        Map<String, Set<String>>.of(state);
+    if (clean.isEmpty) {
+      next.remove(playlistId);
+      await store.remove(playlistId);
+    } else {
+      next[playlistId] = clean;
+      await store.write(playlistId, clean);
+    }
+    state = next;
+  }
+}
+
+final NotifierProvider<PlaylistTags, Map<String, Set<String>>>
+    playlistTagsProvider =
+    NotifierProvider<PlaylistTags, Map<String, Set<String>>>(PlaylistTags.new);
+
+/// Все теги, назначенные хотя бы одному плейлисту, — для чипов-фильтров.
+///
+/// Список отсортирован: порядок не должен «прыгать» между кадрами, а по
+/// алфавиту тег легче найти глазами, чем в порядке появления.
+final Provider<List<String>> playlistTagsListProvider =
+    Provider<List<String>>((Ref ref) {
+  final Map<String, Set<String>> byPlaylist = ref.watch(playlistTagsProvider);
+  final Set<String> all = <String>{};
+  for (final Set<String> tags in byPlaylist.values) {
+    all.addAll(tags);
+  }
+  return all.toList()..sort();
+});

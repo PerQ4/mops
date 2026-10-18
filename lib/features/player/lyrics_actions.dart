@@ -9,7 +9,9 @@ import '../../data/local/app_settings.dart';
 import '../../data/models/models.dart';
 import '../../state/catalog_providers.dart';
 import '../../state/lyrics_edits.dart';
+import '../../state/player_controller.dart';
 import '../../state/providers.dart';
+import 'lyrics_share_image.dart';
 
 /// Кнопка меню текста песни — одно на все поверхности плеера.
 class LyricsMenuButton extends ConsumerWidget {
@@ -219,6 +221,13 @@ class _LyricsMenuSheetState extends ConsumerState<_LyricsMenuSheet> {
                 ],
               ),
             ),
+            ListTile(
+              leading: const Icon(Icons.image_outlined),
+              title: const Text('Поделиться текстом'),
+              subtitle: const Text('Картинка с обложкой, названием и строками'),
+              contentPadding: const EdgeInsets.symmetric(horizontal: 20),
+              onTap: () => _shareAsImage(context),
+            ),
             if (widget.onToggleVisibility != null)
               SwitchListTile(
                 value: widget.lyricsVisible,
@@ -336,6 +345,84 @@ class _LyricsMenuSheetState extends ConsumerState<_LyricsMenuSheet> {
     } else if (action == 1) {
       await edits.set(request.videoId, text);
     }
+  }
+
+  /// «Поделиться текстом»: картинка с обложкой, названием и строками.
+  ///
+  /// Если текста нет — честно говорим об этом, а не открываем диалог с пустой
+  /// картинкой.
+  void _shareAsImage(BuildContext context) {
+    final LyricsRequest request = widget.request;
+    final List<String> lines = _visibleLines(ref);
+    if (lines.isEmpty) {
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(content: Text('Текст ещё не найден — делиться нечем.')),
+      );
+      return;
+    }
+
+    // Обложку и полное название берём у играющего трека: в запросе текста
+    // метаданные могли остаться от ручного поиска.
+    final Track? track = ref.read(currentTrackProvider);
+    final bool sameTrack = track != null && track.id == request.videoId;
+    final String title = (request.title?.trim().isNotEmpty ?? false)
+        ? request.title!.trim()
+        : sameTrack
+            ? track.title
+            : 'Без названия';
+    final String artist = (request.artist?.trim().isNotEmpty ?? false)
+        ? request.artist!.trim()
+        : sameTrack
+            ? track.artistLine
+            : '';
+
+    // Контекст навигатора берём до закрытия шторки: после `pop` контекст
+    // шторки уже не годится для показа нового маршрута.
+    final BuildContext navigatorContext = Navigator.of(context).context;
+    Navigator.of(context).pop();
+    unawaited(
+      showLyricsShareDialog(
+        navigatorContext,
+        LyricsShareData(
+          title: title,
+          artist: artist,
+          lines: lines,
+          artworkUrl: sameTrack ? track.artworkAt(1080) : null,
+        ),
+      ),
+    );
+  }
+
+  /// Текст, который сейчас показан в плеере: тот же выбор источника, что и в
+  /// `_editLyrics`, — иначе на картинку попал бы не тот вариант.
+  Lyrics? _currentLyrics(WidgetRef ref) {
+    final LyricsRequest request = widget.request;
+    final AppSettings settings = ref.read(settingsControllerProvider);
+    final LyricsSource current =
+        ref.read(lyricsSourceOverrideProvider)[request.videoId] ??
+            settings.lyricsSource;
+    final LyricsRequest? manual =
+        ref.read(manualLyricsRequestsProvider)[request.videoId];
+    final LyricsRequest effective = manual ?? request;
+    final LyricsSearchState search =
+        ref.read(lyricsProvider(effective)).value ??
+            const LyricsSearchState();
+    return ref.read(lyricsPickProvider)[request.videoId]?.lyrics ??
+        (current == LyricsSource.auto
+            ? search.bestByOrder(settings.lyricsProviderOrder)?.lyrics
+            : search.candidateFor(current)?.lyrics);
+  }
+
+  /// Строки, которые сейчас видит пользователь: ручная правка важнее
+  /// найденного текста — на картинку должно попасть то же, что на экране.
+  List<String> _visibleLines(WidgetRef ref) {
+    final String? edited = ref.read(lyricsEditsProvider)[widget.request.videoId];
+    final String raw = edited ?? _lyricsText(_currentLyrics(ref));
+    return raw
+        .split('\n')
+        .map((String line) => line.trim())
+        .where((String line) => line.isNotEmpty)
+        .toList();
   }
 
   /// Текущий текст строками — то, что видит пользователь в плеере.

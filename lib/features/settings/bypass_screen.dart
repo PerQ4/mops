@@ -3,7 +3,7 @@ import 'package:flutter/services.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 
 import '../../core/net/anti_dpi.dart';
-import '../../core/net/fronting.dart';
+import '../../core/net/diagnostics.dart';
 import '../../core/net/local_proxy.dart';
 import '../../data/local/app_settings.dart';
 import '../../state/providers.dart';
@@ -30,7 +30,7 @@ class _BypassScreenState extends ConsumerState<BypassScreen> {
   final TextEditingController _proxyUser = TextEditingController();
   final TextEditingController _proxyPassword = TextEditingController();
 
-  ConnectivityReport? _report;
+  DiagnosticReport? _report;
   bool _checking = false;
   bool _searching = false;
   String? _proxyResult;
@@ -308,53 +308,7 @@ class _BypassScreenState extends ConsumerState<BypassScreen> {
           if (_report != null)
             Padding(
               padding: const EdgeInsets.fromLTRB(16, 16, 16, 0),
-              child: Card(
-                color: _report!.ok
-                    ? scheme.secondaryContainer
-                    : scheme.errorContainer,
-                child: Padding(
-                  padding: const EdgeInsets.all(16),
-                  child: Column(
-                    crossAxisAlignment: CrossAxisAlignment.start,
-                    children: <Widget>[
-                      Row(
-                        children: <Widget>[
-                          Icon(
-                            _report!.ok
-                                ? Icons.check_circle_outline
-                                : Icons.error_outline,
-                            color: _report!.ok
-                                ? scheme.onSecondaryContainer
-                                : scheme.onErrorContainer,
-                          ),
-                          const SizedBox(width: 12),
-                          Expanded(
-                            child: Text(
-                              _report!.summary,
-                              style: text.titleSmall?.copyWith(
-                                fontWeight: FontWeight.w700,
-                                color: _report!.ok
-                                    ? scheme.onSecondaryContainer
-                                    : scheme.onErrorContainer,
-                              ),
-                            ),
-                          ),
-                        ],
-                      ),
-                      const SizedBox(height: 8),
-                      for (final String line in _report!.details)
-                        Text(
-                          '• $line',
-                          style: text.bodySmall?.copyWith(
-                            color: _report!.ok
-                                ? scheme.onSecondaryContainer
-                                : scheme.onErrorContainer,
-                          ),
-                        ),
-                    ],
-                  ),
-                ),
-              ),
+              child: _ReportCard(report: _report!),
             ),
 
           const Divider(height: 24),
@@ -477,12 +431,13 @@ class _BypassScreenState extends ConsumerState<BypassScreen> {
       _report = null;
     });
 
-    // Настройки могли измениться — сначала применяем их.
+    // Настройки могли измениться — сначала применяем их, чтобы проверка
+    // отражала текущий обход, а не прежний.
     await ref
         .read(settingsControllerProvider.notifier)
         .setBypass(ref.read(settingsControllerProvider).bypass);
 
-    final ConnectivityReport report = await ConnectivityCheck.run();
+    final DiagnosticReport report = await ConnectionDiagnostics.run();
     if (!mounted) return;
     setState(() {
       _checking = false;
@@ -509,4 +464,121 @@ class _SectionHeader extends StatelessWidget {
       ),
     );
   }
+}
+
+/// Карточка с пошаговым отчётом диагностики.
+class _ReportCard extends StatelessWidget {
+  const _ReportCard({required this.report});
+
+  final DiagnosticReport report;
+
+  @override
+  Widget build(BuildContext context) {
+    final TextTheme text = Theme.of(context).textTheme;
+    final ColorScheme scheme = Theme.of(context).colorScheme;
+    final Color foreground =
+        report.ok ? scheme.onSecondaryContainer : scheme.onErrorContainer;
+
+    return Card(
+      color: report.ok ? scheme.secondaryContainer : scheme.errorContainer,
+      child: Padding(
+        padding: const EdgeInsets.all(16),
+        child: Column(
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: <Widget>[
+            Row(
+              children: <Widget>[
+                Icon(
+                  report.ok ? Icons.check_circle_outline : Icons.error_outline,
+                  color: foreground,
+                ),
+                const SizedBox(width: 12),
+                Expanded(
+                  child: Text(
+                    report.summary,
+                    style: text.titleSmall?.copyWith(
+                      fontWeight: FontWeight.w700,
+                      color: foreground,
+                    ),
+                  ),
+                ),
+              ],
+            ),
+            const SizedBox(height: 12),
+            for (final DiagnosticStep step in report.steps)
+              Padding(
+                padding: const EdgeInsets.only(bottom: 8),
+                child: Row(
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  children: <Widget>[
+                    Icon(
+                      _statusIcon(step.status),
+                      size: 18,
+                      color: foreground,
+                    ),
+                    const SizedBox(width: 8),
+                    Expanded(
+                      child: Column(
+                        crossAxisAlignment: CrossAxisAlignment.start,
+                        children: <Widget>[
+                          Text(
+                            step.title,
+                            style: text.bodyMedium?.copyWith(
+                              fontWeight: FontWeight.w600,
+                              color: foreground,
+                            ),
+                          ),
+                          Text(
+                            step.detail,
+                            style: text.bodySmall?.copyWith(color: foreground),
+                          ),
+                        ],
+                      ),
+                    ),
+                  ],
+                ),
+              ),
+            if (report.advice.isNotEmpty)
+              Padding(
+                padding: const EdgeInsets.only(top: 4),
+                child: Column(
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  children: <Widget>[
+                    for (final String line in report.advice)
+                      Padding(
+                        padding: const EdgeInsets.only(top: 4),
+                        child: Row(
+                          crossAxisAlignment: CrossAxisAlignment.start,
+                          children: <Widget>[
+                            Icon(
+                              Icons.lightbulb_outline,
+                              size: 18,
+                              color: foreground,
+                            ),
+                            const SizedBox(width: 8),
+                            Expanded(
+                              child: Text(
+                                line,
+                                style: text.bodySmall?.copyWith(
+                                  color: foreground,
+                                ),
+                              ),
+                            ),
+                          ],
+                        ),
+                      ),
+                  ],
+                ),
+              ),
+          ],
+        ),
+      ),
+    );
+  }
+
+  IconData _statusIcon(DiagnosticStatus status) => switch (status) {
+        DiagnosticStatus.ok => Icons.check_circle,
+        DiagnosticStatus.failed => Icons.cancel,
+        DiagnosticStatus.unknown => Icons.help_outline,
+      };
 }

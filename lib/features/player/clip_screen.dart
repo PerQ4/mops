@@ -1,6 +1,7 @@
 import 'dart:async';
 
 import 'package:flutter/material.dart';
+import 'package:flutter/services.dart';
 import 'package:flutter_inappwebview/flutter_inappwebview.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:url_launcher/url_launcher.dart';
@@ -15,6 +16,10 @@ import '../../state/player_controller.dart';
 /// (`media_kit_libs_windows_audio`), видео в нём нет. Поэтому клип показываем
 /// встроенным браузером (WebView2 в Windows, WKWebView в macOS) — тем же
 /// механизмом, что и вход в аккаунт (см. `inAppLoginAvailable`).
+///
+/// YouTube часть клипов запрещает встраивать: страница при этом загружается,
+/// но внутри неё — «Смотрите на YouTube». Поэтому переход во внешний браузер
+/// доступен всегда, а не только при ошибке загрузки.
 class ClipScreen extends ConsumerStatefulWidget {
   const ClipScreen({required this.track, super.key});
 
@@ -25,6 +30,12 @@ class ClipScreen extends ConsumerStatefulWidget {
 }
 
 class _ClipScreenState extends ConsumerState<ClipScreen> {
+  /// Канал своей шапки окна (см. `lib/features/shell/window_title_bar.dart` и
+  /// `windows/runner/flutter_window.cpp`). Flutter не умеет управлять окном
+  /// сам, а полноэкранному клипу нужно его развернуть — для этого берём уже
+  /// существующий `toggleMaximize`, а не заводим новый нативный вызов.
+  static const MethodChannel _windowChannel = MethodChannel('mops/window');
+
   /// Есть ли на этой системе встроенный браузер: на Linux его нет, там
   /// показываем запасной вариант с переходом во внешний браузер.
   late final bool _supported = inAppLoginAvailable;
@@ -35,9 +46,34 @@ class _ClipScreenState extends ConsumerState<ClipScreen> {
   /// Документ клипа не загрузился — предлагаем открыть во внешнем браузере.
   bool _failed = false;
 
-  /// Был ли звук нашего плеера активен до открытия клипа. Если да — после
+  /// Полноэкранный режим: шапка скрыта, окно развёрнуто.
+  bool _fullscreen = false;
+
+  /// Окно развернули именно мы. Выходя из полноэкранного режима, возвращаем
+  /// прежний размер, а не оставляем окно развёрнутым.
+  bool _maximizedByFullscreen = false;
+
+  /// Звук нашего плеера был активен до открытия клипа. Если да — после
   /// закрытия вернём воспроизведение; если трек стоял на паузе, не трогаем.
-  bool _wasPlaying = false;
+  bool _pausedByUs = false;
+
+  /// Трек, который звучал (или догружался) в момент открытия клипа. Сверяем
+  /// его при закрытии: за время просмотра очередь могла уйти вперёд (радио,
+  /// горячие клавиши), и возобновлять звук уже чужого трека нельзя.
+  String? _openedTrackId;
+
+  /// Текущий трек плеера — обновляет подписка, чтобы в `dispose` не
+  /// обращаться к `ref` (виджет к тому моменту уже снимается).
+  String? _currentTrackId;
+
+  /// Играет ли наш плеер сейчас. Нужно в `dispose`: если звук уже вернулся
+  /// сам, повторный `play()` не нужен.
+  bool _playerPlaying = false;
+
+  /// Резолв ссылки шёл в момент открытия клипа: тогда `pause()` не помешает
+  /// `load(autoplay: true)` заиграть, и трек нужно погасить, когда он
+  /// действительно начнёт звучать (см. `_onPlayerChanged`).
+  bool _pauseWhenLoaded = false;
 
   /// Ссылка на контроллер плеера: держим её, чтобы дёргать паузу/возврат
   /// без обращения к `ref` в `dispose` (там виджет уже снимается).
@@ -48,7 +84,8 @@ class _ClipScreenState extends ConsumerState<ClipScreen> {
   String get _embedUrl =>
       'https://www.youtube.com/embed/${widget.track.id}?autoplay=1&rel=0';
 
-  /// Ссылка для внешнего браузера — обычная страница просмотра, а не embed.
+  /// Ссылка для внешнего браузера — обычная страница просмотра, а не embed:
+  /// только она обходит запрет на встраивание.
   Uri get _watchUrl =>
       Uri.parse('https://www.youtube.com/watch?v=${widget.track.id}');
 
@@ -61,31 +98,83 @@ class _ClipScreenState extends ConsumerState<ClipScreen> {
     // без паузы он зазвучал бы поверх клипа.
     _controller = ref.read(playerControllerProvider.notifier);
     final PlayerUiState player = ref.read(playerControllerProvider);
-    _wasPlaying = player.playback.isPlaying || player.playback.isLoading;
-    if (_wasPlaying) unawaited(_controller!.pause());
+    _openedTrackId = player.current?.id;
+    _currentTrackId = player.current?.id;
+    _playerPlaying = player.playback.isPlaying;
+    // `isLoading` включает и резолв ссылки, и загрузку в режиме обхода: трек
+    // ещё не звучит, но уже «в пути» — считать его активным нужно, чтобы
+    // вернуть воспроизведение при закрытии.
+    _pausedByUs = player.playback.isPlaying || player.isLoading;
+    _pauseWhenLoaded = player.resolving || player.downloading;
+    if (_pausedByUs) unawaited(_controller!.pause());
+  }
+
+  /// Следит за плеером, пока клип открыт.
+  ///
+  /// Нужен для двух вещей: заметить смену трека (см. [dispose]) и погасить
+  /// звук, если трек, поставленный на паузу во время резолва, всё же заиграл
+  /// после загрузки.
+  void _onPlayerChanged(PlayerUiState? previous, PlayerUiState next) {
+    _currentTrackId = next.current?.id;
+    _playerPlaying = next.playback.isPlaying;
+    if (_pauseWhenLoaded &&
+        next.current?.id == _openedTrackId &&
+        next.playback.isPlaying) {
+      _pauseWhenLoaded = false;
+      unawaited(_controller!.pause());
+    }
   }
 
   @override
   void dispose() {
     // Возвращаем звук как было: играло — продолжаем, стояло — не трогаем.
     // `play()` возвращает Future, но здесь ждать нечего: маршрут уже снят.
-    if (_wasPlaying) unawaited(_controller?.play());
+    // Трек сверяем: если за время клипа очередь ушла вперёд, его звук не наш.
+    if (_pausedByUs && _currentTrackId == _openedTrackId && !_playerPlaying) {
+      unawaited(_controller?.play());
+    }
+    // Полноэкранный режим снимаем и при закрытии экрана, а не только по
+    // кнопке: иначе окно осталось бы развёрнутым, а панели — скрытыми.
+    if (_fullscreen) _restoreWindow();
     super.dispose();
   }
 
   @override
   Widget build(BuildContext context) {
+    // `listen`, а не `watch`: экран не должен перестраиваться на каждый тик
+    // плеера, но обязан знать о смене трека и возврате звука.
+    ref.listen<PlayerUiState>(playerControllerProvider, _onPlayerChanged);
+
     return Scaffold(
       // Клип — «тёмная комната»: чёрный фон не спорит с видео и интерфейсом.
       backgroundColor: Colors.black,
       body: SafeArea(
-        child: Column(
+        child: Stack(
           children: <Widget>[
-            _ClipHeader(
-              track: widget.track,
-              onClose: () => Navigator.maybePop(context),
+            Column(
+              children: <Widget>[
+                if (!_fullscreen)
+                  _ClipHeader(
+                    track: widget.track,
+                    onClose: () => Navigator.maybePop(context),
+                    onOpenExternal: _openExternal,
+                    onToggleFullscreen: _toggleFullscreen,
+                  ),
+                Expanded(child: _content()),
+              ],
             ),
-            Expanded(child: _content()),
+            // В полноэкранном режиме шапки нет, поэтому выход и закрытие
+            // держим поверх видео полупрозрачными кнопками.
+            if (_fullscreen)
+              Positioned(
+                top: 8,
+                right: 8,
+                child: _FullscreenOverlay(
+                  onOpenExternal: _openExternal,
+                  onExit: _toggleFullscreen,
+                  onClose: () => Navigator.maybePop(context),
+                ),
+              ),
           ],
         ),
       ),
@@ -139,6 +228,53 @@ class _ClipScreenState extends ConsumerState<ClipScreen> {
     );
   }
 
+  /// Включает/выключает полноэкранный режим.
+  void _toggleFullscreen() {
+    setState(() => _fullscreen = !_fullscreen);
+    if (_fullscreen) {
+      unawaited(_enterFullscreen());
+    } else {
+      _restoreWindow();
+    }
+  }
+
+  /// Разворачивает окно и убирает системные панели.
+  Future<void> _enterFullscreen() async {
+    // На десктопе системных панелей нет и вызов ничего не делает; на
+    // мобильных он убирает строку состояния и навигации.
+    unawaited(
+      SystemChrome.setEnabledSystemUIMode(SystemUiMode.immersiveSticky)
+          .catchError((Object _) {}),
+    );
+    try {
+      final bool maximized =
+          await _windowChannel.invokeMethod<bool>('isMaximized') ?? false;
+      // Разворачиваем, только если окно ещё не развёрнуто: иначе выход
+      // вернул бы его в размер, которого пользователь не выбирал.
+      if (!maximized && mounted && _fullscreen) {
+        await _windowChannel.invokeMethod<void>('toggleMaximize');
+        _maximizedByFullscreen = true;
+      }
+    } on Object {
+      // Канал есть только на Windows — на других системах разворачивать
+      // нечего, размером окна управляет оконная система.
+    }
+  }
+
+  /// Возвращает системные панели и прежний размер окна.
+  void _restoreWindow() {
+    unawaited(
+      SystemChrome.setEnabledSystemUIMode(SystemUiMode.edgeToEdge)
+          .catchError((Object _) {}),
+    );
+    if (_maximizedByFullscreen) {
+      _maximizedByFullscreen = false;
+      _windowChannel
+          .invokeMethod<void>('toggleMaximize')
+          .catchError((Object _) {});
+    }
+  }
+
   /// Открывает клип во внешнем браузере системы.
   Future<void> _openExternal() async {
     bool ok = false;
@@ -155,12 +291,19 @@ class _ClipScreenState extends ConsumerState<ClipScreen> {
   }
 }
 
-/// Шапка: кнопка закрытия и название клипа.
+/// Шапка: закрытие, название клипа, переход во внешний браузер и полный экран.
 class _ClipHeader extends StatelessWidget {
-  const _ClipHeader({required this.track, required this.onClose});
+  const _ClipHeader({
+    required this.track,
+    required this.onClose,
+    required this.onOpenExternal,
+    required this.onToggleFullscreen,
+  });
 
   final Track track;
   final VoidCallback onClose;
+  final Future<void> Function() onOpenExternal;
+  final VoidCallback onToggleFullscreen;
 
   @override
   Widget build(BuildContext context) {
@@ -198,7 +341,107 @@ class _ClipHeader extends StatelessWidget {
               ],
             ),
           ),
+          // Кнопка есть всегда: часть клипов YouTube не отдаёт для встраивания,
+          // и страница внутри выглядит загруженной, хотя играть там нечего.
+          IconButton(
+            tooltip: 'Открыть во внешнем браузере',
+            icon: const Icon(Icons.open_in_new, color: Colors.white),
+            onPressed: () => onOpenExternal(),
+          ),
+          IconButton(
+            tooltip: 'Во весь экран',
+            icon: const Icon(Icons.fullscreen, color: Colors.white),
+            onPressed: onToggleFullscreen,
+          ),
         ],
+      ),
+    );
+  }
+}
+
+/// Кнопки поверх видео в полноэкранном режиме: во внешний браузер, выход из
+/// полного экрана и закрытие клипа.
+class _FullscreenOverlay extends StatelessWidget {
+  const _FullscreenOverlay({
+    required this.onOpenExternal,
+    required this.onExit,
+    required this.onClose,
+  });
+
+  final Future<void> Function() onOpenExternal;
+  final VoidCallback onExit;
+  final VoidCallback onClose;
+
+  @override
+  Widget build(BuildContext context) {
+    return Row(
+      mainAxisSize: MainAxisSize.min,
+      children: <Widget>[
+        _OverlayButton(
+          icon: Icons.open_in_new,
+          tooltip: 'Открыть во внешнем браузере',
+          onTap: () => onOpenExternal(),
+        ),
+        const SizedBox(width: 8),
+        _OverlayButton(
+          icon: Icons.fullscreen_exit,
+          tooltip: 'Выйти из полноэкранного режима',
+          onTap: onExit,
+        ),
+        const SizedBox(width: 8),
+        _OverlayButton(
+          icon: Icons.close_rounded,
+          tooltip: 'Закрыть',
+          onTap: onClose,
+        ),
+      ],
+    );
+  }
+}
+
+/// Полупрозрачная кнопка поверх видео: глиф видно всегда, фон проявляется
+/// при наведении — иначе над видео висели бы тяжёлые плашки.
+class _OverlayButton extends StatefulWidget {
+  const _OverlayButton({
+    required this.icon,
+    required this.tooltip,
+    required this.onTap,
+  });
+
+  final IconData icon;
+  final String tooltip;
+  final VoidCallback onTap;
+
+  @override
+  State<_OverlayButton> createState() => _OverlayButtonState();
+}
+
+class _OverlayButtonState extends State<_OverlayButton> {
+  bool _hover = false;
+
+  @override
+  Widget build(BuildContext context) {
+    return Tooltip(
+      message: widget.tooltip,
+      child: MouseRegion(
+        cursor: SystemMouseCursors.click,
+        onEnter: (_) => setState(() => _hover = true),
+        onExit: (_) => setState(() => _hover = false),
+        child: GestureDetector(
+          behavior: HitTestBehavior.opaque,
+          onTap: widget.onTap,
+          child: AnimatedContainer(
+            duration: const Duration(milliseconds: 120),
+            curve: Curves.easeOut,
+            width: 40,
+            height: 40,
+            decoration: BoxDecoration(
+              shape: BoxShape.circle,
+              color: Colors.black.withValues(alpha: _hover ? 0.65 : 0.3),
+            ),
+            child: Icon(widget.icon, size: 22, color: Colors.white),
+          ),
+        ),
       ),
     );
   }

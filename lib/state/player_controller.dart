@@ -3,8 +3,10 @@ import 'dart:math';
 
 import 'package:flutter/foundation.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
+import 'package:shared_preferences/shared_preferences.dart';
 
 import '../core/audio/audio_engine.dart';
+import '../data/local/queue_snapshot.dart';
 import '../data/models/models.dart';
 import '../data/sources/stream_downloader.dart';
 import '../data/sources/stream_proxy.dart';
@@ -185,6 +187,21 @@ class PlayerController extends Notifier<PlayerUiState> {
   /// таймер.
   DateTime? _sleepDeadline;
 
+  /// Очередь восстановлена из снимка, но трек ещё не загружен в движок.
+  ///
+  /// Пока это так, «idle» от движка (например, от установки громкости) не
+  /// должен затирать сохранённую позицию, которую показывает интерфейс.
+  bool _restorePending = false;
+
+  /// Позиция, с которой нужно продолжить восстановленный трек.
+  Duration _restorePosition = Duration.zero;
+
+  /// Периодическая запись снимка очереди.
+  Timer? _snapshotTimer;
+
+  /// Последний записанный снимок — чтобы не писать на диск одно и то же.
+  String? _lastSnapshot;
+
   @override
   PlayerUiState build() {
     // Отписка от предыдущего движка (если нотификатор пересоздали).
@@ -194,6 +211,11 @@ class PlayerController extends Notifier<PlayerUiState> {
     _cancelSleepTimer();
 
     _engineSub = _engine.stateStream.listen((PlaybackState playback) {
+      // Пока восстановленный трек не запущен, в движке ничего нет: его «idle»
+      // затирал бы сохранённую позицию, которую показывает интерфейс.
+      if (_restorePending && playback.status == PlaybackStatus.idle) {
+        return;
+      }
       state = state.copyWith(playback: playback);
       if (playback.status == PlaybackStatus.error && playback.error != null) {
         state = state.copyWith(error: playback.error);
@@ -220,6 +242,19 @@ class PlayerController extends Notifier<PlayerUiState> {
     unawaited(_engine.setVolume(settings.lastVolume));
     unawaited(_engine.setSpeed(settings.lastSpeed));
 
+    // Очередь прошлой сессии читаем до возврата состояния: она должна быть на
+    // экране с первого кадра, а не появиться через мгновение. Восстанавливаем
+    // без автозапуска — звук пойдёт только после нажатия «играть».
+    final QueueSnapshot? snapshot = settings.restoreQueue
+        ? QueueSnapshot.decode(
+            ref.read(sharedPreferencesProvider).getString(kQueueSnapshotKey),
+          )
+        : null;
+    if (snapshot != null) {
+      _restorePending = true;
+      _restorePosition = snapshot.position;
+    }
+
     // Устройства вывода: список приходит от движка и меняется на лету.
     // В `build()` состояние читать нельзя — начальный список отдаём через
     // возвращаемое значение, а дальше обновляем из потока.
@@ -230,15 +265,42 @@ class PlayerController extends Notifier<PlayerUiState> {
       },
     );
 
+    // Позицию сохраняем по таймеру, а не на каждое её обновление: движок шлёт
+    // её несколько раз в секунду, и столько же записей на диск было бы лишним.
+    _snapshotTimer?.cancel();
+    _snapshotTimer = Timer.periodic(
+      const Duration(seconds: 5),
+      (Timer _) => _persistSnapshot(),
+    );
+
     ref.onDispose(() {
       _engineSub?.cancel();
       _engineSub = null;
       _devicesSub?.cancel();
       _devicesSub = null;
+      _snapshotTimer?.cancel();
+      _snapshotTimer = null;
       _cancelSleepTimer();
     });
 
-    return PlayerUiState(audioDevices: _engine.audioDevices);
+    return PlayerUiState(
+      queue: snapshot?.tracks ?? const <Track>[],
+      index: snapshot?.index ?? -1,
+      playback: _restoredPlayback(snapshot),
+      audioDevices: _engine.audioDevices,
+    );
+  }
+
+  /// Состояние воспроизведения восстановленной очереди: трек выбран, но не
+  /// загружен — показываем сохранённую позицию и длительность, статус «пауза».
+  PlaybackState _restoredPlayback(QueueSnapshot? snapshot) {
+    final Track? track = snapshot?.current;
+    if (track == null) return PlaybackState.initial;
+    return PlaybackState(
+      status: PlaybackStatus.paused,
+      position: snapshot!.position,
+      duration: track.duration,
+    );
   }
 
   // ------------------------------------------------------------- запуск
@@ -281,6 +343,7 @@ class PlayerController extends Notifier<PlayerUiState> {
   void enqueue(Track track) {
     final List<Track> queue = <Track>[...state.queue, track];
     state = state.copyWith(queue: queue);
+    _persistSnapshot();
   }
 
   /// Ставит трек сразу после текущего.
@@ -292,6 +355,7 @@ class PlayerController extends Notifier<PlayerUiState> {
     final List<Track> queue = <Track>[...state.queue];
     queue.insert(state.index + 1, track);
     state = state.copyWith(queue: queue);
+    _persistSnapshot();
   }
 
   void removeFromQueue(int index) {
@@ -313,6 +377,7 @@ class PlayerController extends Notifier<PlayerUiState> {
       newIndex = queue.isEmpty ? -1 : state.index.clamp(0, queue.length - 1);
     }
     state = state.copyWith(queue: queue, index: queue.isEmpty ? -1 : newIndex);
+    _persistSnapshot();
 
     if (queue.isEmpty) {
       // Очереди нет — таймеру нечего останавливать: без снятия он «выстрелил»
@@ -346,12 +411,15 @@ class PlayerController extends Notifier<PlayerUiState> {
       currentIndex = state.index + 1;
     }
     state = state.copyWith(queue: queue, index: currentIndex);
+    _persistSnapshot();
   }
 
   Future<void> clearQueue() async {
     _history.clear();
     // Очередь обнуляется целиком — вместе с ней снимаем и таймер сна.
     clearSleepTimer();
+    // И снимок: при следующем запуске восстанавливать нечего.
+    _clearSnapshot();
     state = const PlayerUiState();
     _releaseStreams();
     await _engine.stop();
@@ -371,18 +439,35 @@ class PlayerController extends Notifier<PlayerUiState> {
     if (!state.hasTrack) return;
     if (state.isPlaying) {
       await _engine.pause();
+      // Пауза — удобный момент зафиксировать позицию: дальше она не меняется.
+      _persistSnapshot();
     } else {
-      await _engine.play();
+      await play();
     }
   }
 
-  Future<void> play() => _engine.play();
+  Future<void> play() {
+    // Восстановленный трек в движке ещё не загружен — сначала загружаем его,
+    // и только потом возвращаем сохранённую позицию.
+    if (_restorePending && state.hasTrack) return _resumeRestored();
+    return _engine.play();
+  }
 
-  Future<void> pause() => _engine.pause();
+  Future<void> pause() async {
+    await _engine.pause();
+    _persistSnapshot();
+  }
 
   Future<void> next() => _advance(manual: true);
 
   Future<void> previous() async {
+    // Восстановленный трек в движке ещё не загружен: перематывать нечего —
+    // «назад» начинает его с начала.
+    if (_restorePending && state.hasTrack) {
+      await _resumeRestored(position: Duration.zero);
+      return;
+    }
+
     // Как в большинстве плееров: если трек проигран больше 3 секунд —
     // «назад» перематывает в начало, а не переключает трек.
     if (state.playback.position > const Duration(seconds: 3)) {
@@ -528,6 +613,55 @@ class PlayerController extends Notifier<PlayerUiState> {
     // Трек остаётся в очереди и на своей позиции — утром можно продолжить
     // с того же места.
     unawaited(_engine.pause());
+    // Пауза — удобный момент зафиксировать позицию: дальше она не изменится.
+    _persistSnapshot();
+  }
+
+  // ------------------------------------------------------- снимок очереди
+
+  /// Записывает компактный снимок очереди в `shared_preferences`.
+  ///
+  /// Вызывается на изменениях очереди и по таймеру. Одинаковый снимок не
+  /// пишем повторно: на паузе позиция не меняется, и лишние записи на диск
+  /// были бы бесполезны.
+  void _persistSnapshot() {
+    final PlayerUiState current = state;
+    if (current.queue.isEmpty) {
+      // Пустую очередь в снимке хранить нечего — она ничего не восстановит.
+      if (_lastSnapshot != null) _clearSnapshot();
+      return;
+    }
+
+    final String encoded = QueueSnapshot(
+      tracks: current.queue,
+      index: current.index,
+      position: current.playback.position,
+    ).encode();
+    if (encoded == _lastSnapshot) return;
+    _lastSnapshot = encoded;
+
+    final SharedPreferences prefs = ref.read(sharedPreferencesProvider);
+    unawaited(prefs.setString(kQueueSnapshotKey, encoded));
+  }
+
+  /// Убирает снимок: очередь обнулена, восстанавливать нечего.
+  void _clearSnapshot() {
+    _lastSnapshot = null;
+    final SharedPreferences prefs = ref.read(sharedPreferencesProvider);
+    unawaited(prefs.remove(kQueueSnapshotKey));
+  }
+
+  /// Запускает восстановленный трек с сохранённой позиции.
+  ///
+  /// Обычный путь воспроизведения начинается с нуля, а здесь позицию нужно
+  /// вернуть: трек был не загружен, движок про неё не знает. [position]
+  /// позволяет начать и не с сохранённого места — так делает «назад».
+  Future<void> _resumeRestored({Duration? position}) async {
+    final Duration target = position ?? _restorePosition;
+    await _loadCurrent();
+    if (target > Duration.zero && state.current != null) {
+      await seek(target);
+    }
   }
 
   /// Включена ли предзагрузка следующего трека через посредника.
@@ -557,6 +691,11 @@ class PlayerController extends Notifier<PlayerUiState> {
   // -------------------------------------------------------------- private
 
   Future<void> _loadCurrent() async {
+    // Любая настоящая загрузка снимает «восстановленный» режим: дальше
+    // позицию ведёт движок, а не снимок.
+    _restorePending = false;
+    _restorePosition = Duration.zero;
+
     final Track? track = state.current;
     if (track == null) return;
 
@@ -608,6 +747,10 @@ class PlayerController extends Notifier<PlayerUiState> {
         downloading: false,
         error: 'Ошибка воспроизведения: $error',
       );
+    } finally {
+      // Движок обнулил позицию при остановке прошлого трека — снимок хранит
+      // новый трек с началом, а не позицию предыдущего.
+      _persistSnapshot();
     }
   }
 

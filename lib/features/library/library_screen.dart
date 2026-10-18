@@ -4,6 +4,7 @@ import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 
 import '../../core/theme/layout.dart';
+import '../../data/local/playlist_tags.dart';
 import '../../data/models/models.dart';
 import '../../state/auth_controller.dart';
 import '../../state/library_providers.dart';
@@ -330,35 +331,330 @@ class _LibraryOverview extends ConsumerWidget {
   }
 }
 
-class _PlaylistsGrid extends ConsumerWidget {
+class _PlaylistsGrid extends ConsumerStatefulWidget {
   const _PlaylistsGrid();
 
   @override
-  Widget build(BuildContext context, WidgetRef ref) {
+  ConsumerState<_PlaylistsGrid> createState() => _PlaylistsGridState();
+}
+
+class _PlaylistsGridState extends ConsumerState<_PlaylistsGrid> {
+  /// Выбранный тег-фильтр; `null` — показывать все плейлисты.
+  String? _tag;
+
+  @override
+  Widget build(BuildContext context) {
     final AsyncValue<List<Playlist>> playlists = ref.watch(
       likedPlaylistsProvider,
     );
+    final Map<String, Set<String>> tags = ref.watch(playlistTagsProvider);
+    final List<String> allTags = ref.watch(playlistTagsListProvider);
 
     return playlists.when(
-      data: (List<Playlist> data) => _TileGrid(
-        items: data.map<BrowseItem>(PlaylistItem.new).toList(),
-        emptyIcon: Icons.playlist_add,
-        emptyTitle: 'Плейлистов нет',
-        onItemLongPress: (BrowseItem item) {
-          // У плитки библиотеки нет данных о владении плейлистом, поэтому
-          // правимость лист определит сам (всё, кроме «Мне нравится»), а
-          // чужой плейлист сервер честно отклонит.
-          if (item is PlaylistItem) {
-            showPlaylistActionsSheet(context, item.playlist);
-          }
-        },
-      ),
+      data: (List<Playlist> data) {
+        // Снятый с последнего плейлиста тег исчезает из списка чипов — тогда
+        // фильтр по нему пришлось бы сбрасывать только вручную, а показывать
+        // было бы нечего. Считаем его снятым сразу.
+        final String? selected =
+            _tag != null && allTags.contains(_tag) ? _tag : null;
+        final List<Playlist> visible = selected == null
+            ? data
+            : data
+                .where(
+                  (Playlist p) => tags[p.id]?.contains(selected) ?? false,
+                )
+                .toList();
+
+        return Column(
+          children: <Widget>[
+            if (allTags.isNotEmpty)
+              _TagFilterChips(
+                tags: allTags,
+                selected: selected,
+                onSelected: (String? tag) => setState(() => _tag = tag),
+              ),
+            Expanded(
+              child: _TileGrid(
+                items: visible.map<BrowseItem>(PlaylistItem.new).toList(),
+                emptyIcon: Icons.playlist_add,
+                emptyTitle: selected == null
+                    ? 'Плейлистов нет'
+                    : 'С этим тегом плейлистов нет',
+                onItemLongPress: (BrowseItem item) {
+                  // У плитки библиотеки нет данных о владении плейлистом,
+                  // поэтому правимость лист определит сам (всё, кроме «Мне
+                  // нравится»), а чужой плейлист сервер честно отклонит.
+                  if (item is PlaylistItem) {
+                    showPlaylistActionsSheet(context, item.playlist);
+                  }
+                },
+                itemOverlay: (BuildContext context, BrowseItem item) {
+                  if (item is! PlaylistItem) return null;
+                  return _TagButton(
+                    playlist: item.playlist,
+                    hasTags:
+                        (tags[item.playlist.id] ?? const <String>{}).isNotEmpty,
+                  );
+                },
+              ),
+            ),
+          ],
+        );
+      },
       loading: () => const _LibraryGridSkeleton(),
       error: (Object error, StackTrace _) => ErrorState(
         message: describeError(error),
         onRetry: () => ref.invalidate(likedPlaylistsProvider),
       ),
     );
+  }
+}
+
+/// Ряд чипов-фильтров по тегам над сеткой плейлистов.
+///
+/// Первый чип — «Все»: без него снять фильтр можно было бы только выбором
+/// другого тега, а вернуться к полному списку было бы нечем.
+class _TagFilterChips extends StatelessWidget {
+  const _TagFilterChips({
+    required this.tags,
+    required this.selected,
+    required this.onSelected,
+  });
+
+  final List<String> tags;
+  final String? selected;
+  final ValueChanged<String?> onSelected;
+
+  @override
+  Widget build(BuildContext context) {
+    return HorizontalList(
+      height: 48,
+      padding: const EdgeInsets.symmetric(horizontal: 24, vertical: 4),
+      showScrollbar: false,
+      separator: 8,
+      itemCount: tags.length + 1,
+      itemBuilder: (BuildContext context, int index) {
+        if (index == 0) {
+          return _TagCapsule(
+            label: 'Все',
+            selected: selected == null,
+            onTap: () => onSelected(null),
+          );
+        }
+        final String tag = tags[index - 1];
+        return _TagCapsule(
+          label: tag,
+          selected: tag == selected,
+          onTap: () => onSelected(tag),
+        );
+      },
+    );
+  }
+}
+
+/// Капсула тега — та же форма, что у чипов разделов, но без значка: тегов
+/// может быть много, и значок у каждого только мешал бы.
+class _TagCapsule extends StatelessWidget {
+  const _TagCapsule({
+    required this.label,
+    required this.selected,
+    required this.onTap,
+  });
+
+  final String label;
+  final bool selected;
+  final VoidCallback onTap;
+
+  @override
+  Widget build(BuildContext context) {
+    final ColorScheme scheme = Theme.of(context).colorScheme;
+    final Color background = selected
+        ? scheme.secondaryContainer
+        : scheme.surfaceContainerHighest.withValues(alpha: 0.5);
+    final Color foreground = selected
+        ? scheme.onSecondaryContainer
+        : scheme.onSurfaceVariant;
+
+    return Material(
+      color: background,
+      shape: const StadiumBorder(),
+      clipBehavior: Clip.antiAlias,
+      child: InkWell(
+        onTap: onTap,
+        child: Padding(
+          padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 6),
+          child: Text(
+            label,
+            style: Theme.of(context).textTheme.labelLarge?.copyWith(
+              fontWeight: FontWeight.w600,
+              color: foreground,
+            ),
+          ),
+        ),
+      ),
+    );
+  }
+}
+
+/// Кнопка тегов в углу плитки плейлиста.
+///
+/// Залитая метка — у плейлиста есть теги, контурная — ещё нет: так видно, где
+/// разметка уже сделана, не открывая диалог.
+class _TagButton extends StatelessWidget {
+  const _TagButton({required this.playlist, required this.hasTags});
+
+  final Playlist playlist;
+  final bool hasTags;
+
+  @override
+  Widget build(BuildContext context) {
+    final ColorScheme scheme = Theme.of(context).colorScheme;
+    return Material(
+      color: scheme.surface.withValues(alpha: 0.9),
+      shape: const CircleBorder(),
+      clipBehavior: Clip.antiAlias,
+      child: IconButton(
+        tooltip: hasTags ? 'Теги плейлиста' : 'Назначить теги',
+        iconSize: 18,
+        padding: EdgeInsets.zero,
+        constraints: const BoxConstraints.tightFor(width: 34, height: 34),
+        icon: Icon(hasTags ? Icons.label : Icons.label_outline),
+        onPressed: () => showPlaylistTagsDialog(context, playlist),
+      ),
+    );
+  }
+}
+
+/// Диалог назначения тегов плейлисту.
+///
+/// Показывает и уже назначенные теги, и все прочие: тег можно переиспользовать
+/// одним нажатием, а не набирать заново. Теги локальные — в YouTube Music их
+/// нет, поэтому диалог меняет только локальное хранилище.
+Future<void> showPlaylistTagsDialog(
+  BuildContext context,
+  Playlist playlist,
+) {
+  return showDialog<void>(
+    context: context,
+    builder: (BuildContext dialogContext) =>
+        _PlaylistTagsDialog(playlist: playlist),
+  );
+}
+
+class _PlaylistTagsDialog extends ConsumerStatefulWidget {
+  const _PlaylistTagsDialog({required this.playlist});
+
+  final Playlist playlist;
+
+  @override
+  ConsumerState<_PlaylistTagsDialog> createState() =>
+      _PlaylistTagsDialogState();
+}
+
+class _PlaylistTagsDialogState extends ConsumerState<_PlaylistTagsDialog> {
+  final TextEditingController _field = TextEditingController();
+
+  /// Выбранные теги. Заполняется из хранилища при первом кадре, дальше набор
+  /// правит пользователь: подмешивать состояние провайдера нельзя — иначе
+  /// каждое нажатие чипа «откатывалось» бы сохранённым значением.
+  Set<String>? _selected;
+
+  @override
+  void dispose() {
+    _field.dispose();
+    super.dispose();
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    final Map<String, Set<String>> byPlaylist =
+        ref.watch(playlistTagsProvider);
+    final List<String> known = ref.watch(playlistTagsListProvider);
+    final Set<String> selected =
+        _selected ??= <String>{...?byPlaylist[widget.playlist.id]};
+
+    final List<String> shown = <String>{...known, ...selected}.toList()..sort();
+
+    return AlertDialog(
+      title: Text(
+        widget.playlist.title,
+        maxLines: 1,
+        overflow: TextOverflow.ellipsis,
+      ),
+      content: SizedBox(
+        width: 360,
+        child: Column(
+          mainAxisSize: MainAxisSize.min,
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: <Widget>[
+            if (shown.isEmpty)
+              Text(
+                'Тегов пока нет — добавьте первый.',
+                style: Theme.of(context).textTheme.bodyMedium?.copyWith(
+                  color: Theme.of(context).colorScheme.onSurfaceVariant,
+                ),
+              )
+            else
+              Wrap(
+                spacing: 8,
+                runSpacing: 8,
+                children: <Widget>[
+                  for (final String tag in shown)
+                    FilterChip(
+                      label: Text(tag),
+                      selected: selected.contains(tag),
+                      onSelected: (bool value) => setState(() {
+                        if (value) {
+                          selected.add(tag);
+                        } else {
+                          selected.remove(tag);
+                        }
+                      }),
+                    ),
+                ],
+              ),
+            const SizedBox(height: 16),
+            TextField(
+              controller: _field,
+              decoration: const InputDecoration(
+                labelText: 'Новый тег',
+                isDense: true,
+              ),
+              onSubmitted: _addTag,
+            ),
+          ],
+        ),
+      ),
+      actions: <Widget>[
+        TextButton(
+          onPressed: () => Navigator.pop(context),
+          child: const Text('Отмена'),
+        ),
+        FilledButton(
+          onPressed: _save,
+          child: const Text('Сохранить'),
+        ),
+      ],
+    );
+  }
+
+  /// Добавляет набранный тег в набор. Пустой ввод молча игнорируется — это не
+  /// ошибка, а незаконченный ввод.
+  void _addTag(String raw) {
+    final String? tag = normalizePlaylistTag(raw);
+    if (tag == null) return;
+    setState(() {
+      _selected = <String>{...?_selected, tag};
+      _field.clear();
+    });
+  }
+
+  Future<void> _save() async {
+    await ref
+        .read(playlistTagsProvider.notifier)
+        .setTags(widget.playlist.id, _selected ?? const <String>{});
+    if (!mounted) return;
+    Navigator.pop(context);
   }
 }
 
@@ -714,6 +1010,7 @@ class _TileGrid extends StatelessWidget {
     required this.emptyTitle,
     this.emptyIcon = Icons.inbox_outlined,
     this.onItemLongPress,
+    this.itemOverlay,
   });
 
   final List<BrowseItem> items;
@@ -722,6 +1019,10 @@ class _TileGrid extends StatelessWidget {
 
   /// Действие долгого нажатия на плитку (если у раздела оно есть).
   final ValueChanged<BrowseItem>? onItemLongPress;
+
+  /// Значок в углу плитки (если у раздела он есть). Возвращает `null`, когда
+  /// элементу накладывать нечего, — тогда плитка остаётся без наложения.
+  final Widget? Function(BuildContext context, BrowseItem item)? itemOverlay;
 
   @override
   Widget build(BuildContext context) {
@@ -742,15 +1043,27 @@ class _TileGrid extends StatelessWidget {
               sliver: SliverGrid(
                 gridDelegate: _libraryGridDelegate(constraints.maxWidth),
                 delegate: SliverChildBuilderDelegate(
-                  (BuildContext context, int index) => GestureDetector(
-                    onLongPress: onItemLongPress == null
-                        ? null
-                        : () => onItemLongPress!(items[index]),
-                    child: LibrarySpotlightTile(
+                  (BuildContext context, int index) {
+                    final Widget tile = LibrarySpotlightTile(
                       item: items[index],
                       onTap: () => _openItem(context, items[index]),
-                    ),
-                  ),
+                    );
+                    final Widget? overlay =
+                        itemOverlay?.call(context, items[index]);
+                    return GestureDetector(
+                      onLongPress: onItemLongPress == null
+                          ? null
+                          : () => onItemLongPress!(items[index]),
+                      child: overlay == null
+                          ? tile
+                          : Stack(
+                              children: <Widget>[
+                                tile,
+                                Positioned(top: 8, right: 8, child: overlay),
+                              ],
+                            ),
+                    );
+                  },
                   childCount: items.length,
                 ),
               ),

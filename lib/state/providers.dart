@@ -219,6 +219,10 @@ class SettingsController extends Notifier<AppSettings> {
   Future<void> setAutoPlayNext(bool value) =>
       update((AppSettings s) => s.copyWith(autoPlayNext: value));
 
+  /// Восстанавливать очередь и позицию прошлой сессии при запуске.
+  Future<void> setRestoreQueue(bool value) =>
+      update((AppSettings s) => s.copyWith(restoreQueue: value));
+
   Future<void> setStreamingRegion(String region) =>
       update((AppSettings s) => s.copyWith(streamingRegion: region));
 

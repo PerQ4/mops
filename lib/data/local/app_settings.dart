@@ -358,6 +358,7 @@ class AppSettings {
     this.romanizeHindi = true,
     this.romanizeOther = true,
     this.autoPlayNext = true,
+    this.restoreQueue = true,
     this.searchSource = SearchSource.online,
     this.miniSwipeSensitivity = SwipeSensitivity.normal,
     this.trackSwipeAction = TrackSwipeAction.off,
@@ -458,6 +459,13 @@ class AppSettings {
   final bool romanizeOther;
 
   final bool autoPlayNext;
+
+  /// Восстанавливать очередь и позицию прошлой сессии при запуске.
+  ///
+  /// По умолчанию включено: вернуться к тому, что играло, — ожидаемое
+  /// поведение. Восстановление идёт без автозапуска: очередь на месте, но звук
+  /// пойдёт только после нажатия «играть».
+  final bool restoreQueue;
 
   /// Где искать: по всему YouTube Music или только по своей библиотеке.
   final SearchSource searchSource;
@@ -588,6 +596,7 @@ class AppSettings {
     bool? romanizeHindi,
     bool? romanizeOther,
     bool? autoPlayNext,
+    bool? restoreQueue,
     SearchSource? searchSource,
     SwipeSensitivity? miniSwipeSensitivity,
     TrackSwipeAction? trackSwipeAction,
@@ -642,6 +651,7 @@ class AppSettings {
       romanizeHindi: romanizeHindi ?? this.romanizeHindi,
       romanizeOther: romanizeOther ?? this.romanizeOther,
       autoPlayNext: autoPlayNext ?? this.autoPlayNext,
+      restoreQueue: restoreQueue ?? this.restoreQueue,
       searchSource: searchSource ?? this.searchSource,
       miniSwipeSensitivity: miniSwipeSensitivity ?? this.miniSwipeSensitivity,
       trackSwipeAction: trackSwipeAction ?? this.trackSwipeAction,
@@ -701,6 +711,7 @@ class AppSettings {
         'romanizeHindi': romanizeHindi,
         'romanizeOther': romanizeOther,
         'autoPlayNext': autoPlayNext,
+        'restoreQueue': restoreQueue,
         'searchSource': searchSource.name,
         'miniSwipeSensitivity': miniSwipeSensitivity.name,
         'trackSwipeAction': trackSwipeAction.name,
@@ -764,6 +775,7 @@ class AppSettings {
       romanizeHindi: json['romanizeHindi'] as bool? ?? true,
       romanizeOther: json['romanizeOther'] as bool? ?? true,
       autoPlayNext: json['autoPlayNext'] as bool? ?? true,
+      restoreQueue: json['restoreQueue'] as bool? ?? true,
       searchSource: SearchSource.fromName(json['searchSource'] as String?),
       miniSwipeSensitivity:
           SwipeSensitivity.fromName(json['miniSwipeSensitivity'] as String?),
