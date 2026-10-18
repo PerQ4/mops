@@ -16,6 +16,7 @@ import 'data/local/app_settings.dart';
 import 'features/shell/app_shell.dart';
 import 'features/shell/app_shortcuts.dart';
 import 'features/shell/content_navigator.dart';
+import 'features/shell/title_bar_visibility.dart';
 import 'features/shell/window_title_bar.dart';
 import 'widgets/back_gesture.dart';
 import 'state/providers.dart';
@@ -193,7 +194,15 @@ class _MopsAppState extends ConsumerState<MopsApp> {
         if (!hasCustomTitleBar) return app;
         return Column(
           children: <Widget>[
-            const WindowTitleBar(),
+            // Шапка может быть погашена из экрана клипа в полном экране
+            // (см. `title_bar_visibility.dart`): она висит выше навигатора,
+            // поэтому сам экран её не видит и убрать иначе не может.
+            ValueListenableBuilder<bool>(
+              valueListenable: titleBarVisible,
+              child: const WindowTitleBar(),
+              builder: (BuildContext context, bool visible, Widget? child) =>
+                  visible ? child! : const SizedBox.shrink(),
+            ),
             Expanded(child: app),
           ],
         );

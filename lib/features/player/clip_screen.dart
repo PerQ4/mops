@@ -10,6 +10,7 @@ import '../../core/auth/inapp_login.dart';
 import '../../core/webview/webview_environment.dart';
 import '../../data/models/models.dart';
 import '../../state/player_controller.dart';
+import '../shell/title_bar_visibility.dart';
 import 'clip_embed.dart';
 
 /// Просмотр клипа трека во встроенном браузере.
@@ -359,6 +360,10 @@ class _ClipScreenState extends ConsumerState<ClipScreen> {
 
   /// Разворачивает окно и убирает системные панели.
   Future<void> _enterFullscreen() async {
+    // Свою шапку окна гасим сразу, не дожидаясь нативного разворота: она
+    // нарисована выше навигатора (см. `app.dart`), и из дерева экрана её не
+    // видно — единственный способ убрать её в полном экране.
+    titleBarVisible.value = false;
     // На десктопе системных панелей нет и вызов ничего не делает; на
     // мобильных он убирает строку состояния и навигации.
     unawaited(
@@ -382,6 +387,9 @@ class _ClipScreenState extends ConsumerState<ClipScreen> {
 
   /// Возвращает системные панели и прежний размер окна.
   void _restoreWindow() {
+    // Шапку окна возвращаем здесь же: так она восстанавливается и при выходе
+    // из полного экрана, и при закрытии экрана прямо в нём (см. `dispose`).
+    titleBarVisible.value = true;
     unawaited(
       SystemChrome.setEnabledSystemUIMode(SystemUiMode.edgeToEdge)
           .catchError((Object _) {}),

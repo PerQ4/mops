@@ -459,6 +459,10 @@ class CatalogSource {
           ) ??
           Duration.zero,
       thumbnails: thumbs,
+      // Панель очереди — та же разметка, что и строки каталога, поэтому
+      // признак клипа берём общим разбором; без него у клипа из радио
+      // не появлялся пункт «Смотреть клип».
+      isVideo: BrowseParser.isVideo(renderer),
     );
   }
 
@@ -701,8 +705,8 @@ class CatalogSource {
   /// Оставляет только то, что пользователь не просил прятать.
   ///
   /// Признак explicit/видео приходит из разбора. Если разбор его не отдал
-  /// (`isVideo` сейчас не заполняется — см. отчёт), трек остаётся: настройка
-  /// не должна прятать всё подряд.
+  /// (`isVideo` не разобран), трек остаётся: настройка не должна прятать
+  /// всё подряд.
   bool _keepTrack(Track track) {
     final ContentFilter filter = CatalogSource.contentFilter;
     if (filter.hideExplicit && track.isExplicit) return false;

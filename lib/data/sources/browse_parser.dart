@@ -71,20 +71,6 @@ class BrowseParser {
           'playlistSetVideoId'],
     ]);
 
-    // `musicVideoType` различает клип и обычный трек: `MUSIC_VIDEO_TYPE_OMV`
-    // — официальный клип, `MUSIC_VIDEO_TYPE_UGC` — пользовательское видео,
-    // `MUSIC_VIDEO_TYPE_ATV` — обычная аудиодорожка (то, что в YouTube Music
-    // называется песней). Признак нужен настройке «Скрыть видео».
-    final String? videoType = _firstString(renderer, <List<String>>[
-      <String>[
-        'navigationEndpoint',
-        'watchEndpoint',
-        'watchEndpointMusicSupportedConfigs',
-        'watchEndpointMusicConfig',
-        'musicVideoType',
-      ],
-    ]);
-
     return Track(
       id: videoId,
       title: title,
@@ -95,9 +81,29 @@ class BrowseParser {
       isExplicit: _hasBadge(renderer, 'MUSIC_EXPLICIT_BADGE'),
       playlistId: playlistId,
       setVideoId: setVideoId,
-      isVideo: videoType == 'MUSIC_VIDEO_TYPE_OMV' ||
-          videoType == 'MUSIC_VIDEO_TYPE_UGC',
+      isVideo: isVideo(renderer),
     );
+  }
+
+  /// Признак клипа: `musicVideoType` = `MUSIC_VIDEO_TYPE_OMV` (официальный
+  /// клип) или `MUSIC_VIDEO_TYPE_UGC` (пользовательское видео). Обычная
+  /// аудиодорожка — то, что в YouTube Music называется песней, — помечена
+  /// `MUSIC_VIDEO_TYPE_ATV`.
+  ///
+  /// Путь одинаков у строки списка (`musicResponsiveListItemRenderer`) и у
+  /// панели очереди (`playlistPanelVideoRenderer`, она же радио), поэтому
+  /// разбор живёт здесь: признак нужен и настройке «Скрыть видео», и пункту
+  /// «Смотреть клип» в меню трека.
+  static bool isVideo(dynamic renderer) {
+    final String? videoType = traverseString(renderer, <String>[
+      'navigationEndpoint',
+      'watchEndpoint',
+      'watchEndpointMusicSupportedConfigs',
+      'watchEndpointMusicConfig',
+      'musicVideoType',
+    ]);
+    return videoType == 'MUSIC_VIDEO_TYPE_OMV' ||
+        videoType == 'MUSIC_VIDEO_TYPE_UGC';
   }
 
   /// Разбирает строку `musicResponsiveListItemRenderer` любого вида.

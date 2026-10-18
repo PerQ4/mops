@@ -192,37 +192,70 @@ List<BrowseSection> _fakeHome() {
 
 /// ------------------------------------------------------------------ шрифты
 
-/// В тестовой среде системных шрифтов нет — текст рисуется «квадратиками».
-/// Подгружаем Roboto и MaterialIcons с диска, чтобы эталоны были читаемыми.
+/// Шрифты темы: Poppins рисует латиницу, Montserrat — фоллбек с полной
+/// кириллицей (`lib/core/theme/app_theme.dart`). Оба семейства лежат в
+/// репозитории, поэтому грузим их из `assets/fonts`, а не из системных
+/// каталогов: иначе рендер зависел бы от машины, а на Windows (где шрифтов
+/// Linux нет) в эталонах были бы «квадратики».
+const Map<String, List<String>> _themeFonts = <String, List<String>>{
+  'Poppins': <String>[
+    'Poppins-400.ttf',
+    'Poppins-500.ttf',
+    'Poppins-600.ttf',
+    'Poppins-700.ttf',
+  ],
+  'Montserrat': <String>[
+    'Montserrat-400.ttf',
+    'Montserrat-500.ttf',
+    'Montserrat-600.ttf',
+    'Montserrat-700.ttf',
+  ],
+};
+
+/// В тестовой среде системных шрифтов нет — без подгрузки текст рисуется
+/// «квадратиками»: тестовый движок подставляет вместо неизвестного семейства
+/// свой шрифт-заглушку.
 Future<void> _loadFonts() async {
-  await _loadFamily('Roboto', <String>[
-    '/usr/share/fonts/TTF/Roboto-Regular.ttf',
-    '/usr/share/fonts/TTF/Roboto-Medium.ttf',
-    '/usr/share/fonts/TTF/Roboto-Bold.ttf',
-  ]);
+  final String root = _packageRoot();
 
+  for (final MapEntry<String, List<String>> family in _themeFonts.entries) {
+    await _loadFamily(family.key, <String>[
+      for (final String file in family.value) '$root/assets/fonts/$file',
+    ]);
+  }
+
+  // Иконки — отдельным шрифтом из кэша Flutter SDK: в поставку приложения он
+  // не входит. Имя файла в кэше пишется в нижнем регистре; прежнее
+  // «MaterialIcons-Regular.otf» находилось только на регистронезависимой
+  // файловой системе Windows.
+  final String? flutterRoot = _flutterRoot();
+  if (flutterRoot == null) return;
   await _loadFamily('MaterialIcons', <String>[
-    '${_flutterRoot()}/bin/cache/artifacts/material_fonts/MaterialIcons-Regular.otf',
-  ]);
-
-  // Шрифты темы: основной и фоллбек для кириллицы. Без них в эталонах
-  // вместо текста «квадратики»: тестовая среда подставляет свой шрифт
-  // только для известных семейств.
-  await _loadFamily('Poppins', <String>[
-    'assets/fonts/Poppins-400.ttf',
-    'assets/fonts/Poppins-500.ttf',
-    'assets/fonts/Poppins-600.ttf',
-    'assets/fonts/Poppins-700.ttf',
-  ]);
-  await _loadFamily('Montserrat', <String>[
-    'assets/fonts/Montserrat-400.ttf',
-    'assets/fonts/Montserrat-500.ttf',
-    'assets/fonts/Montserrat-600.ttf',
-    'assets/fonts/Montserrat-700.ttf',
+    for (final String name in <String>[
+      'materialicons-regular.otf',
+      'MaterialIcons-Regular.otf',
+    ])
+      '$flutterRoot/bin/cache/artifacts/material_fonts/$name',
   ]);
 }
 
-String _flutterRoot() {
+/// Корень пакета: `flutter test` запускается из каталога проекта, но из IDE
+/// рабочим каталогом бывает подпапка — поднимаемся до `pubspec.yaml`.
+String _packageRoot() {
+  Directory dir = Directory.current;
+  for (int i = 0; i < 8; i++) {
+    final String marker = '${dir.path}${Platform.pathSeparator}pubspec.yaml';
+    if (File(marker).existsSync()) return dir.path;
+    final Directory parent = dir.parent;
+    if (parent.path == dir.path) break;
+    dir = parent;
+  }
+  return Directory.current.path;
+}
+
+/// Корень Flutter SDK: тестовый движок `flutter test` лежит в
+/// `<sdk>/bin/cache/artifacts/engine/<платформа>/flutter_tester`.
+String? _flutterRoot() {
   final String fromEnv = Platform.environment['FLUTTER_ROOT'] ?? '';
   if (fromEnv.isNotEmpty && Directory(fromEnv).existsSync()) return fromEnv;
 
@@ -232,7 +265,7 @@ String _flutterRoot() {
   if (cacheIndex > 1) {
     return parts.sublist(0, cacheIndex - 1).join(Platform.pathSeparator);
   }
-  return '/home/perqa/flutter';
+  return null;
 }
 
 Future<void> _loadFamily(String family, List<String> paths) async {
@@ -423,6 +456,30 @@ void main() {
     await tester.pump(const Duration(milliseconds: 400));
   }
 
+  /// Подмена обоих провайдеров текста состоянием «текста нет».
+  ///
+  /// На играющем треке их спрашивает сам плеер, а настоящий поиск заводит
+  /// таймер-дедлайн (`_lyricsSearchDeadline`, 6 секунд) и пятисекундный
+  /// бюджет на каждый источник. Тест до срабатывания таймера не доживает, и
+  /// обвязка падает на «A Timer is still pending even after the widget tree
+  /// was disposed». Сети в тестовой среде всё равно нет (запросы падают
+  /// сразу), поэтому состояние задаём заранее — как это делают случаи с
+  /// экраном поиска текста.
+  List<dynamic> noLyrics() {
+    return <dynamic>[
+      lyricsProvider.overrideWith(
+        (ref, LyricsRequest request) => Stream<LyricsSearchState>.value(
+          const LyricsSearchState(loading: false),
+        ),
+      ),
+      lyricsVariantsProvider.overrideWith(
+        (ref, LyricsRequest request) => Stream<LyricsSearchState>.value(
+          const LyricsSearchState(loading: false),
+        ),
+      ),
+    ];
+  }
+
   PlayerUiState playingState() {
     final List<Track> tracks = _fakeTracks(6);
     return PlayerUiState(
@@ -481,6 +538,7 @@ void main() {
       const MopsApp(),
       size: const Size(1600, 1000),
       player: playingState(),
+      extra: noLyrics(),
     );
 
     expect(tester.takeException(), isNull);
@@ -531,6 +589,7 @@ void main() {
       const _Harness(child: NowPlayingScreen()),
       size: const Size(412, 880),
       player: playingState(),
+      extra: noLyrics(),
     );
 
     expect(tester.takeException(), isNull);
