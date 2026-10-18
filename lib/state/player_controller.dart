@@ -344,8 +344,7 @@ class PlayerController extends Notifier<PlayerUiState> {
   ///
   /// В отличие от [_extendWithRadio], который дописывает конец очереди, здесь
   /// очередь заменяется целиком: это осознанный выбор пользователя, а не
-  /// автоматическое продление. Снимок очереди сохранит [playQueue] →
-  /// [_loadCurrent].
+  /// автоматическое продление.
   Future<void> startRadio(Track seed) async {
     try {
       final List<Track> radio =
@@ -356,6 +355,20 @@ class PlayerController extends Notifier<PlayerUiState> {
         seed,
         ...radio.where((Track t) => t.id != seed.id).take(25),
       ];
+
+      // Seed уже звучит: `playQueue` перезагрузил бы его с нуля и оборвал
+      // музыку. Меняем только очередь — трек и позиция остаются на месте.
+      if (state.current?.id == seed.id) {
+        _history.clear();
+        state = state.copyWith(
+          queue: List<Track>.of(queue),
+          index: 0,
+          clearError: true,
+        );
+        _persistSnapshot();
+        return;
+      }
+
       await playQueue(queue);
     } on Exception catch (error) {
       state = state.copyWith(error: 'Не удалось загрузить рекомендации: $error');

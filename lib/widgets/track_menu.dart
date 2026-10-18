@@ -1,3 +1,5 @@
+import 'dart:async';
+
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
@@ -19,10 +21,9 @@ import 'artwork.dart';
 /// плеера; держать их копии в каждом экране — значит гарантированно получить
 /// расхождения (где-то переход к исполнителю есть, где-то нет).
 ///
-/// [rootNavigator] нужен полноэкранному плееру: он открыт в корневом
-/// навигаторе, и переход во вложенном навигаторе остался бы у него «под»
-/// экраном. Из островка и из списков переход идёт во вложенный навигатор —
-/// так плавающий док остаётся видимым (см. [AppRoutes]).
+/// [rootNavigator] ставит полноэкранный плеер: он сам открыт в корневом
+/// навигаторе, и лист из него должен лежать там же, поверх плеера. Переходы
+/// к исполнителю и альбому при этом сначала сворачивают плеер — см. [AppRoutes].
 Future<void> showTrackMenu(
   BuildContext context,
   Track track, {
@@ -32,6 +33,7 @@ Future<void> showTrackMenu(
   return showModalBottomSheet<void>(
     context: context,
     showDragHandle: true,
+    useRootNavigator: rootNavigator,
     // Меню выше стандартных 9/16 экрана (обложка + действия), поэтому
     // разрешаем занять больше и добавляем прокрутку — на низком окне
     // последние пункты иначе были бы обрезаны.
@@ -42,7 +44,6 @@ Future<void> showTrackMenu(
     builder: (BuildContext sheetContext) => _TrackMenuSheet(
       track: track,
       hostContext: context,
-      rootNavigator: rootNavigator,
       onMediaInfo: onMediaInfo,
     ),
   );
@@ -52,7 +53,6 @@ class _TrackMenuSheet extends ConsumerWidget {
   const _TrackMenuSheet({
     required this.track,
     required this.hostContext,
-    required this.rootNavigator,
     this.onMediaInfo,
   });
 
@@ -61,8 +61,6 @@ class _TrackMenuSheet extends ConsumerWidget {
   /// Контекст, из которого меню открыли. Нужен, чтобы навигацию выполнять
   /// после закрытия листа: контекст листа к этому моменту уже недействителен.
   final BuildContext hostContext;
-
-  final bool rootNavigator;
 
   /// Показ параметров играющего потока. Задаёт только плеер: у трека из списка
   /// никакого потока ещё нет, и пункт там был бы враньём.
@@ -222,12 +220,14 @@ class _TrackMenuSheet extends ConsumerWidget {
 
   void _openArtist(BuildContext sheetContext, ArtistRef artist) {
     Navigator.pop(sheetContext);
-    AppRoutes.artist(hostContext, artist.id!, root: rootNavigator);
+    // Переход делает [AppRoutes]: из полноэкранного плеера он сначала
+    // сворачивает его, иначе страница осталась бы под плеером.
+    unawaited(AppRoutes.artistFromMenu(hostContext, artist.id!));
   }
 
   void _openAlbum(BuildContext sheetContext, AlbumRef album) {
     Navigator.pop(sheetContext);
-    AppRoutes.album(hostContext, album.id!, root: rootNavigator);
+    unawaited(AppRoutes.albumFromMenu(hostContext, album.id!));
   }
 
   void _openClip(BuildContext sheetContext) {

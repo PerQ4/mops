@@ -5,7 +5,6 @@ import '../../core/audio/audio_level_monitor.dart';
 import '../../core/theme/app_theme.dart';
 import '../../core/theme/layout.dart';
 import '../common/navigation.dart';
-import '../shell/content_navigator.dart';
 import '../../core/utils/artwork_urls.dart';
 import '../../core/utils/format.dart';
 import '../../data/local/app_settings.dart';
@@ -728,15 +727,11 @@ class _InfoRow extends ConsumerWidget {
                               style: text.titleMedium?.copyWith(
                                 color: scheme.onSurfaceVariant,
                               ),
-                              // Сначала сворачиваем плеер, и только потом
-                              // открываем исполнителя в основном экране: если
-                              // открыть сразу, страница окажется под плеером
-                              // или ляжет поверх него вторым слоем.
-                              onArtistTap: (ArtistRef artist) async {
-                                await rootNavigatorKey.currentState?.maybePop();
-                                if (!context.mounted) return;
-                                await AppRoutes.artist(context, artist.id!);
-                              },
+                              // Переход сам сворачивает плеер (см. [AppRoutes]):
+                              // иначе страница оказалась бы под ним или легла
+                              // бы поверх вторым слоем.
+                              onArtistTap: (ArtistRef artist) =>
+                                  AppRoutes.artistFromMenu(context, artist.id!),
                             ),
                     ),
                     const SizedBox(width: 8),
@@ -768,7 +763,8 @@ class _InfoRow extends ConsumerWidget {
           const SizedBox(width: 10),
           // «…» открывает то же меню, что и из островка: исполнитель, альбом,
           // очередь и лайк. rootNavigator: плеер сам лежит в корневом
-          // навигаторе — иначе переход остался бы под его экраном.
+          // навигаторе — лист должен лежать там же, поверх плеера; переходы из
+          // него при этом сначала сворачивают плеер (см. [AppRoutes]).
           _PlayerActionButton(
             tooltip: 'Действия',
             icon: Icons.more_vert,

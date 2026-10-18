@@ -82,22 +82,45 @@ abstract final class AppRoutes {
     );
   }
 
-  /// [root] — открыть поверх всего. Нужно полноэкранному плееру: он сам
-  /// лежит в корневом навигаторе, и подэкран во вложенном навигаторе остался
-  /// бы у него «под» экраном (см. `showTrackMenu`).
-  static Future<void> album(
-    BuildContext context,
-    String albumId, {
-    bool root = false,
-  }) =>
-      _push<void>(context, AlbumScreen(albumId: albumId), root: root);
+  static Future<void> album(BuildContext context, String albumId) =>
+      _push<void>(context, AlbumScreen(albumId: albumId));
 
-  static Future<void> artist(
+  static Future<void> artist(BuildContext context, String artistId) =>
+      _push<void>(context, ArtistScreen(artistId: artistId));
+
+  /// Исполнитель из меню трека.
+  ///
+  /// Меню открывают и в списках, и в полноэкранном плеере, поэтому переход
+  /// идёт через [_openInMainWindow]: из плеера страница должна открыться после
+  /// его сворачивания.
+  static Future<void> artistFromMenu(BuildContext context, String artistId) =>
+      _openInMainWindow(context, ArtistScreen(artistId: artistId));
+
+  /// Альбом из меню трека — см. [artistFromMenu].
+  static Future<void> albumFromMenu(BuildContext context, String albumId) =>
+      _openInMainWindow(context, AlbumScreen(albumId: albumId));
+
+  /// Открывает страницу основного окна, свернув полноэкранный маршрут.
+  ///
+  /// Полноэкранный плеер лежит в корневом навигаторе поверх оболочки: открытая
+  /// во вложенном навигаторе страница осталась бы под ним, а открытая в
+  /// корневом — легла бы сверху вторым слоем. Поэтому сначала сворачиваем
+  /// верхний маршрут корневого навигатора, и только потом открываем страницу —
+  /// так же, как сворачивается плеер при нажатии на имя исполнителя в нём.
+  static Future<void> _openInMainWindow(
     BuildContext context,
-    String artistId, {
-    bool root = false,
-  }) =>
-      _push<void>(context, ArtistScreen(artistId: artistId), root: root);
+    Widget page,
+  ) async {
+    // Признак — сам стек: маршрут над оболочкой есть только у полноэкранных
+    // экранов (плеер, клип). Флаг `rootNavigator` у меню ненадёжен: очередь
+    // внутри плеера открывает то же меню, не зная, что она в плеере.
+    final NavigatorState? root = rootNavigatorKey.currentState;
+    if (root != null && root.canPop()) {
+      await root.maybePop();
+    }
+    if (!context.mounted) return;
+    await _push<void>(context, page);
+  }
 
   static Future<void> playlist(BuildContext context, String playlistId) =>
       _push<void>(context, PlaylistScreen(playlistId: playlistId));
