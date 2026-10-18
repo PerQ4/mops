@@ -373,12 +373,10 @@ class LibrarySource {
     // префиксом `VL` (`VLPL…`, `VLLM`), а мутация принимает «сырой» id, как и
     // очередь (ср. `likedPlaylistQueueId`). Снимаем префикс — так же, как это
     // делает `_editPlaylist` ниже.
-    final String target =
-        playlistId.startsWith('VL') ? playlistId.substring(2) : playlistId;
     return _client.mutate(
       saved ? 'like/like' : 'like/removelike',
       <String, dynamic>{
-        'target': <String, dynamic>{'playlistId': target},
+        'target': <String, dynamic>{'playlistId': _rawPlaylistId(playlistId)},
       },
     );
   }
@@ -424,19 +422,53 @@ class LibrarySource {
 
   /// Удаляет трек из плейлиста.
   ///
-  /// Одного `removedVideoId` серверу мало — ему нужен ещё `setVideoId` записи
-  /// (он приходит вместе с треком на странице плейлиста), поэтому метод пока
-  /// не используется: им займётся задача 4.2.
-  Future<void> removeFromPlaylist(String playlistId, String videoId) {
+  /// Серверу мало одного `removedVideoId`: нужен ещё `setVideoId` записи —
+  /// YouTube отдаёт его вместе с треком на странице плейлиста
+  /// (`Track.setVideoId`), и только для плейлистов, которые пользователь
+  /// может править. Без него удаление отклоняется, поэтому он обязателен.
+  Future<void> removeFromPlaylist(
+    String playlistId,
+    String videoId, {
+    required String setVideoId,
+  }) {
     return _editPlaylist(
       playlistId,
       <Map<String, dynamic>>[
         <String, dynamic>{
           'action': 'ACTION_REMOVE_VIDEO',
+          'setVideoId': setVideoId,
           'removedVideoId': videoId,
         },
       ],
     );
+  }
+
+  /// Переименовывает плейлист.
+  ///
+  /// Действие `ACTION_SET_PLAYLIST_NAME` с полем `playlistName` — как в
+  /// ArchiveTune (`EditPlaylistBody.RenamePlaylistAction`) и ytmusicapi.
+  Future<void> renamePlaylist(String playlistId, String title) {
+    return _editPlaylist(
+      playlistId,
+      <Map<String, dynamic>>[
+        <String, dynamic>{
+          'action': 'ACTION_SET_PLAYLIST_NAME',
+          'playlistName': title,
+        },
+      ],
+    );
+  }
+
+  /// Удаляет плейлист целиком.
+  ///
+  /// Отдельный эндпоинт `playlist/delete`, а не действие правки: так же
+  /// удаляет и ArchiveTune, и ytmusicapi.
+  Future<void> deletePlaylist(String playlistId) async {
+    final Map<String, dynamic> response = await _client.mutate(
+      'playlist/delete',
+      <String, dynamic>{'playlistId': _rawPlaylistId(playlistId)},
+    );
+    _requireSucceeded(response, 'удалить плейлист');
   }
 
   /// Правка плейлиста одним запросом (`browse/edit_playlist`).
@@ -447,15 +479,31 @@ class LibrarySource {
   Future<void> _editPlaylist(
     String playlistId,
     List<Map<String, dynamic>> actions,
-  ) {
-    final String target =
-        playlistId.startsWith('VL') ? playlistId.substring(2) : playlistId;
-    return _client.mutate(
+  ) async {
+    final Map<String, dynamic> response = await _client.mutate(
       'browse/edit_playlist',
       <String, dynamic>{
-        'playlistId': target,
+        'playlistId': _rawPlaylistId(playlistId),
         'actions': actions,
       },
     );
+    _requireSucceeded(response, 'изменить плейлист');
+  }
+
+  /// «Сырой» id плейлиста — то, что принимают мутации (`browse` просит `VL`).
+  static String _rawPlaylistId(String playlistId) =>
+      playlistId.startsWith('VL') ? playlistId.substring(2) : playlistId;
+
+  /// Проверяет статус ответа мутации плейлиста.
+  ///
+  /// `browse/edit_playlist` и `playlist/delete` возвращают поле `status`; при
+  /// отказе (например, правка чужого плейлиста) там не `STATUS_SUCCEEDED`.
+  /// Раньше это молча считалось успехом — интерфейс сообщал об изменении,
+  /// которого не произошло. Если поля нет вовсе, запрос считаем успешным:
+  /// его содержат не все ответы.
+  static void _requireSucceeded(Map<String, dynamic> response, String action) {
+    final dynamic status = response['status'];
+    if (status is! String || status == 'STATUS_SUCCEEDED') return;
+    throw InnerTubeException('Не удалось $action: сервер ответил «$status».');
   }
 }

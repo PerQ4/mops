@@ -76,6 +76,7 @@ class Track {
     this.thumbnails = const <Thumbnail>[],
     this.isExplicit = false,
     this.playlistId,
+    this.setVideoId,
     this.isVideo = false,
     this.played = false,
   });
@@ -91,6 +92,15 @@ class Track {
 
   /// Если трек получен из плейлиста — его id нужен для корректного queue/next.
   final String? playlistId;
+
+  /// Идентификатор записи внутри плейлиста (`playlistSetVideoId`).
+  ///
+  /// YouTube отдаёт его вместе с треком только для плейлистов, которые
+  /// пользователь может править, и требует вместе с `videoId` при удалении:
+  /// одного `removedVideoId` серверу мало. `null` — записи в правимом
+  /// плейлисте нет, удалить её нельзя.
+  final String? setVideoId;
+
   final bool isVideo;
 
   /// Отмечался ли трек как прослушанный (для отображения в плейлистах).
@@ -133,16 +143,22 @@ class Track {
         thumbnails: thumbnails ?? this.thumbnails,
         isExplicit: isExplicit,
         playlistId: playlistId,
+        setVideoId: setVideoId,
         isVideo: isVideo,
         played: played ?? this.played,
       );
 
   @override
   bool operator ==(Object other) =>
-      other is Track && other.id == id && other.playlistId == playlistId;
+      other is Track &&
+      other.id == id &&
+      other.playlistId == playlistId &&
+      // Запись внутри плейлиста — часть личности трека: у одного и того же
+      // видео в плейлисте может быть своя запись, и удалять нужно именно её.
+      other.setVideoId == setVideoId;
 
   @override
-  int get hashCode => Object.hash(id, playlistId);
+  int get hashCode => Object.hash(id, playlistId, setVideoId);
 }
 
 /// Альбом.

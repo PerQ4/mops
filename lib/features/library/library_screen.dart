@@ -14,6 +14,7 @@ import '../../widgets/empty_state.dart';
 import '../../widgets/section_list.dart';
 import '../../widgets/track_tile.dart';
 import '../common/navigation.dart';
+import '../playlist/playlist_screen.dart';
 import 'library_empty_state.dart';
 import 'library_spotlight_tile.dart';
 
@@ -343,6 +344,14 @@ class _PlaylistsGrid extends ConsumerWidget {
         items: data.map<BrowseItem>(PlaylistItem.new).toList(),
         emptyIcon: Icons.playlist_add,
         emptyTitle: 'Плейлистов нет',
+        onItemLongPress: (BrowseItem item) {
+          // У плитки библиотеки нет данных о владении плейлистом, поэтому
+          // правимость лист определит сам (всё, кроме «Мне нравится»), а
+          // чужой плейлист сервер честно отклонит.
+          if (item is PlaylistItem) {
+            showPlaylistActionsSheet(context, item.playlist);
+          }
+        },
       ),
       loading: () => const _LibraryGridSkeleton(),
       error: (Object error, StackTrace _) => ErrorState(
@@ -704,11 +713,15 @@ class _TileGrid extends StatelessWidget {
     required this.items,
     required this.emptyTitle,
     this.emptyIcon = Icons.inbox_outlined,
+    this.onItemLongPress,
   });
 
   final List<BrowseItem> items;
   final IconData emptyIcon;
   final String emptyTitle;
+
+  /// Действие долгого нажатия на плитку (если у раздела оно есть).
+  final ValueChanged<BrowseItem>? onItemLongPress;
 
   @override
   Widget build(BuildContext context) {
@@ -729,9 +742,14 @@ class _TileGrid extends StatelessWidget {
               sliver: SliverGrid(
                 gridDelegate: _libraryGridDelegate(constraints.maxWidth),
                 delegate: SliverChildBuilderDelegate(
-                  (BuildContext context, int index) => LibrarySpotlightTile(
-                    item: items[index],
-                    onTap: () => _openItem(context, items[index]),
+                  (BuildContext context, int index) => GestureDetector(
+                    onLongPress: onItemLongPress == null
+                        ? null
+                        : () => onItemLongPress!(items[index]),
+                    child: LibrarySpotlightTile(
+                      item: items[index],
+                      onTap: () => _openItem(context, items[index]),
+                    ),
                   ),
                   childCount: items.length,
                 ),

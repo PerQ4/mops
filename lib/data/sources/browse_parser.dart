@@ -59,6 +59,18 @@ class BrowseParser {
         ]) ??
         fallbackPlaylistId;
 
+    // `playlistSetVideoId` — идентификатор записи внутри плейлиста. Без него
+    // сервер не удаляет трек (`ACTION_REMOVE_VIDEO` принимает и `videoId`, и
+    // этот id). YouTube кладёт его только для правимых пользователем
+    // плейлистов, поэтому `null` здесь означает «удалить эту запись нельзя».
+    final String? setVideoId = _firstString(renderer, <List<String>>[
+      <String>['playlistItemData', 'playlistSetVideoId'],
+      <String>['navigationEndpoint', 'watchEndpoint', 'playlistSetVideoId'],
+      <String>['overlay', 'musicItemThumbnailOverlayRenderer', 'content',
+          'musicPlayButtonRenderer', 'playNavigationEndpoint', 'watchEndpoint',
+          'playlistSetVideoId'],
+    ]);
+
     return Track(
       id: videoId,
       title: title,
@@ -68,6 +80,7 @@ class BrowseParser {
       thumbnails: _thumbnails(renderer),
       isExplicit: _hasBadge(renderer, 'MUSIC_EXPLICIT_BADGE'),
       playlistId: playlistId,
+      setVideoId: setVideoId,
     );
   }
 
