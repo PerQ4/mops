@@ -44,8 +44,12 @@ class SettingsScreen extends ConsumerWidget {
       // его, как и остальные экраны приложения.
       body: ContentWidth(
         child: ListView(
+          // Отступ снизу — не только «воздух» экрана: под списком плавает
+          // островок плеера, и без его запаса последняя строка оказывалась под
+          // ним. Так же сделано на остальных экранах (`AppLayout`).
           padding: const EdgeInsets.only(
-            bottom: SettingsDims.screenBottomPadding,
+            bottom: SettingsDims.screenBottomPadding +
+                AppLayout.floatingDockClearance,
           ),
           children: <Widget>[
             // Акценты групп повторяют назначение из ArchiveTune
