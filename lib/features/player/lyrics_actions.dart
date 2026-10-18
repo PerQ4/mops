@@ -1083,8 +1083,6 @@ class _SearchInputPane extends ConsumerStatefulWidget {
 class _SearchInputPaneState extends ConsumerState<_SearchInputPane> {
   late final TextEditingController _title;
   late final TextEditingController _artist;
-  late final TextEditingController _album;
-  late final TextEditingController _duration;
 
   @override
   void initState() {
@@ -1092,34 +1090,27 @@ class _SearchInputPaneState extends ConsumerState<_SearchInputPane> {
     final LyricsRequest base = widget.base;
     _title = TextEditingController(text: base.title ?? '');
     _artist = TextEditingController(text: base.artist ?? '');
-    _album = TextEditingController(text: base.album ?? '');
-    _duration = TextEditingController(
-      text: (base.duration == null || base.duration == Duration.zero)
-          ? ''
-          : '${base.duration!.inSeconds}',
-    );
   }
 
   @override
   void dispose() {
     _title.dispose();
     _artist.dispose();
-    _album.dispose();
-    _duration.dispose();
     super.dispose();
   }
 
+  /// Запрос собираем из двух полей, а альбом и длительность берём из трека —
+  /// как `SearchLyricsInputDialog` в ArchiveTune: править их незачем, а нужны
+  /// они источникам для отсева чужих записей.
   LyricsRequest _buildRequest() {
     final String t = _title.text.trim();
     final String a = _artist.text.trim();
-    final String al = _album.text.trim();
-    final int? d = int.tryParse(_duration.text.trim());
     return LyricsRequest(
       videoId: widget.videoId,
       title: t.isEmpty ? null : t,
       artist: a.isEmpty ? null : a,
-      album: al.isEmpty ? null : al,
-      duration: (d == null || d <= 0) ? null : Duration(seconds: d),
+      album: widget.base.album,
+      duration: widget.base.duration,
     );
   }
 
@@ -1189,6 +1180,9 @@ class _SearchInputPaneState extends ConsumerState<_SearchInputPane> {
             ),
           ),
           const SizedBox(height: 16),
+          // Альбом и длительность не правим — они из трека. Так же, как в
+          // `SearchLyricsInputDialog`: полей два, а остальное берётся из
+          // метаданных.
           TextField(
             controller: _artist,
             textInputAction: TextInputAction.search,
@@ -1198,36 +1192,6 @@ class _SearchInputPaneState extends ConsumerState<_SearchInputPane> {
               border: OutlineInputBorder(),
               prefixIcon: Icon(Icons.person_outline),
             ),
-          ),
-          const SizedBox(height: 16),
-          // Альбом и длительность оставляем редактируемыми: по ним источники
-          // отсеивают чужие записи, и без них поиск по другим метаданным
-          // находил бы не то.
-          Row(
-            children: <Widget>[
-              Expanded(
-                flex: 3,
-                child: TextField(
-                  controller: _album,
-                  decoration: const InputDecoration(
-                    labelText: 'Альбом',
-                    border: OutlineInputBorder(),
-                  ),
-                ),
-              ),
-              const SizedBox(width: 12),
-              Expanded(
-                flex: 2,
-                child: TextField(
-                  controller: _duration,
-                  keyboardType: TextInputType.number,
-                  decoration: const InputDecoration(
-                    labelText: 'Секунд',
-                    border: OutlineInputBorder(),
-                  ),
-                ),
-              ),
-            ],
           ),
           const SizedBox(height: 20),
           Wrap(

@@ -1076,6 +1076,17 @@ Stream<LyricsSearchState> _searchLyrics(
   final String? album = request.album;
   final Duration? duration = request.duration;
 
+  // Ручной поиск: метаданные задал пользователь. Длительность трека в нём —
+  // чужое ограничение: он мог искать другую версию (лайв, ремикс, радио), и
+  // жёсткая сверка по времени её бы отсеяла. В обычном поиске длительность
+  // передаём — она отсеивает чужие записи.
+  final bool manualSearch = ref.watch(
+    manualLyricsRequestsProvider.select(
+      (Map<String, LyricsRequest> m) => m[request.videoId] != null,
+    ),
+  );
+  final Duration? queryDuration = manualSearch ? null : duration;
+
   // Ограничиваем ожидание каждой базы: если она недоступна (бывает за
   // блокировками), не заставляем пользователя ждать её таймаут — вариант
   // просто не попадёт в список.
@@ -1096,7 +1107,7 @@ Stream<LyricsSearchState> _searchLyrics(
           title: title,
           artist: artist,
           album: album,
-          duration: duration,
+          duration: queryDuration,
         ));
       // Остальные базы ищут по названию и исполнителю: без них — пропуск.
       case LyricsSource.betterLyrics:
@@ -1105,7 +1116,7 @@ Stream<LyricsSearchState> _searchLyrics(
           title: title!,
           artist: artist!,
           album: album,
-          duration: duration,
+          duration: queryDuration,
           // Сервис привязывает песню к видео — передаём идентификатор.
           videoId: request.videoId,
         ));
@@ -1115,7 +1126,7 @@ Stream<LyricsSearchState> _searchLyrics(
           title: title!,
           artist: artist!,
           album: album,
-          duration: duration,
+          duration: queryDuration,
         ));
       case LyricsSource.lrclib:
         if (!externalOk) return Future<Lyrics>.value(Lyrics.none);
@@ -1123,14 +1134,14 @@ Stream<LyricsSearchState> _searchLyrics(
           title: title!,
           artist: artist!,
           album: album,
-          duration: duration,
+          duration: queryDuration,
         ));
       case LyricsSource.kugou:
         if (!externalOk) return Future<Lyrics>.value(Lyrics.none);
         return bounded(kugou.fetch(
           title: title!,
           artist: artist!,
-          duration: duration,
+          duration: queryDuration,
         ));
       case LyricsSource.musixmatch:
         // Paxsenix требует ключ, а его каталоги включаются по отдельности;
@@ -1142,7 +1153,7 @@ Stream<LyricsSearchState> _searchLyrics(
           title: title!,
           artist: artist!,
           apiKey: musixmatchKey,
-          duration: duration,
+          duration: queryDuration,
           options: paxsenixOptions,
         ));
       case LyricsSource.auto:
@@ -1167,21 +1178,21 @@ Stream<LyricsSearchState> _searchLyrics(
           title: title!,
           artist: artist!,
           album: album,
-          duration: duration,
+          duration: queryDuration,
         ));
       case LyricsSource.kugou:
         if (!externalOk) return Future<List<Lyrics>>.value(const <Lyrics>[]);
         return boundedAll(kugou.fetchAll(
           title: title!,
           artist: artist!,
-          duration: duration,
+          duration: queryDuration,
         ));
       case LyricsSource.unison:
         return boundedAll(unison.fetchAll(
           title: title ?? '',
           artist: artist ?? '',
           album: album,
-          duration: duration,
+          duration: queryDuration,
         ));
       case LyricsSource.musixmatch:
         if (!externalOk || musixmatchKey.isEmpty || !paxsenixOptions.any) {
@@ -1191,7 +1202,7 @@ Stream<LyricsSearchState> _searchLyrics(
           title: title!,
           artist: artist!,
           apiKey: musixmatchKey,
-          duration: duration,
+          duration: queryDuration,
           options: paxsenixOptions,
         ));
       // Эти базы отдают один текст — спрашиваем обычным путём.
