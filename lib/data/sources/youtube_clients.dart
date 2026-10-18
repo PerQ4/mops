@@ -123,6 +123,11 @@ abstract final class YoutubeClients {
   ///
   /// Пустой список означает «клиент библиотеки по умолчанию» — тогда запрос
   /// делает `youtube_explode_dart` своим обычным клиентом.
+  ///
+  /// Встраиваемый клиент телевизора (`TVHTML5_SIMPLY_EMBEDDED_PLAYER`) пробовали
+  /// добавить, когда эти три профиля начали отвечать «войдите, чтобы
+  /// подтвердить, что вы не робот»: YouTube ответил «больше не поддерживается
+  /// в этом приложении или на этом устройстве», поэтому его здесь нет.
   static List<YoutubeClientProfile> forChoice(StreamSource choice) {
     switch (choice) {
       case StreamSource.auto:

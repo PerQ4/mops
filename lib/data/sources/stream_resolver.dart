@@ -193,8 +193,26 @@ class YoutubeStreamResolver implements StreamResolver {
     }
 
     debugPrint('Не удалось получить поток для $videoId: ${failures.join("; ")}');
+    // YouTube на часть видео отвечает «войдите, чтобы подтвердить, что вы не
+    // бот» — и тогда честнее сказать это прямо, чем отправлять человека
+    // проверять соединение, которое в порядке.
+    final bool needsLogin = failures.any((String f) =>
+        f.contains('LOGIN_REQUIRED') ||
+        f.contains('Войдите') ||
+        f.contains('Sign in'));
+    // Библиотека отвечает «видео недоступно», когда YouTube не отдал поток ни
+    // одному клиенту: обычно это ограничение по региону или требование входа.
+    final bool unavailable = failures.any((String f) =>
+        f.contains('unavailable') || f.contains('недоступно'));
     throw StreamResolutionException(
-      'Не удалось получить аудиопоток. Проверьте соединение и попробуйте снова.',
+      needsLogin
+          ? 'YouTube требует вход в аккаунт для этого видео. '
+              'Войдите в приложении и попробуйте снова.'
+          : unavailable
+              ? 'YouTube не отдаёт это видео: оно недоступно в вашем регионе '
+                  'или требует вход в аккаунт.'
+              : 'Не удалось получить аудиопоток. '
+                  'Проверьте соединение и попробуйте снова.',
     );
   }
 
