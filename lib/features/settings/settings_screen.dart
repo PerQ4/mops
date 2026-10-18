@@ -324,6 +324,26 @@ class SettingsScreen extends ConsumerWidget {
                   subtitle: settings.searchSource.description,
                   onTap: () => _pickSearchSource(context, controller, settings),
                 ),
+                SettingsSwitchRow(
+                  icon: Icons.explicit,
+                  title: 'Скрыть explicit',
+                  subtitle: 'Не показывать треки с пометкой «мат»',
+                  value: settings.hideExplicit,
+                  onChanged: controller.setHideExplicit,
+                ),
+                SettingsSwitchRow(
+                  icon: Icons.slow_motion_video,
+                  title: 'Скрыть видео',
+                  subtitle: 'Не показывать клипы в выдаче и поиске',
+                  value: settings.hideVideo,
+                  onChanged: controller.setHideVideo,
+                ),
+                SettingsRow(
+                  icon: Icons.trending_up,
+                  title: 'Длина топа',
+                  subtitle: '${settings.topSize.label} элементов в чартах и топах',
+                  onTap: () => _pickTopSize(context, controller, settings),
+                ),
               ],
             ),
             const SizedBox(height: SettingsDims.sectionSpacing),
@@ -1084,6 +1104,21 @@ class SettingsScreen extends ConsumerWidget {
       label: (SearchSource v) => v.label,
     );
     if (result != null) await controller.setSearchSource(result);
+  }
+
+  Future<void> _pickTopSize(
+    BuildContext context,
+    SettingsController controller,
+    AppSettings settings,
+  ) async {
+    final TopSize? result = await _showChoice<TopSize>(
+      context,
+      title: 'Длина топа',
+      current: settings.topSize,
+      values: TopSize.values,
+      label: (TopSize v) => v.label,
+    );
+    if (result != null) await controller.setTopSize(result);
   }
 
   Future<void> _pickPaletteStyle(

@@ -71,6 +71,20 @@ class BrowseParser {
           'playlistSetVideoId'],
     ]);
 
+    // `musicVideoType` различает клип и обычный трек: `MUSIC_VIDEO_TYPE_OMV`
+    // — официальный клип, `MUSIC_VIDEO_TYPE_UGC` — пользовательское видео,
+    // `MUSIC_VIDEO_TYPE_ATV` — обычная аудиодорожка (то, что в YouTube Music
+    // называется песней). Признак нужен настройке «Скрыть видео».
+    final String? videoType = _firstString(renderer, <List<String>>[
+      <String>[
+        'navigationEndpoint',
+        'watchEndpoint',
+        'watchEndpointMusicSupportedConfigs',
+        'watchEndpointMusicConfig',
+        'musicVideoType',
+      ],
+    ]);
+
     return Track(
       id: videoId,
       title: title,
@@ -81,6 +95,8 @@ class BrowseParser {
       isExplicit: _hasBadge(renderer, 'MUSIC_EXPLICIT_BADGE'),
       playlistId: playlistId,
       setVideoId: setVideoId,
+      isVideo: videoType == 'MUSIC_VIDEO_TYPE_OMV' ||
+          videoType == 'MUSIC_VIDEO_TYPE_UGC',
     );
   }
 

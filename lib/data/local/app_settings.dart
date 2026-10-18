@@ -262,6 +262,30 @@ enum SearchSource {
       );
 }
 
+/// Длина топов и чартов.
+///
+/// Как `TopSize` в ArchiveTune (`ContentSettings.kt`), только не строкой, а
+/// набором: серверу длину не передать, поэтому каталог обрезает уже разобранные
+/// полки. Значение по умолчанию — 50, как в оригинале.
+enum TopSize {
+  ten('10', 10),
+  twenty('20', 20),
+  fifty('50', 50),
+  hundred('100', 100);
+
+  const TopSize(this.label, this.value);
+
+  final String label;
+
+  /// Сколько элементов оставлять в полке топа.
+  final int value;
+
+  static TopSize fromName(String? name) => TopSize.values.firstWhere(
+        (TopSize v) => v.name == name,
+        orElse: () => TopSize.fifty,
+      );
+}
+
 /// Чувствительность свайпа по островку плеера.
 enum SwipeSensitivity {
   low('Низкая', 0.40),
@@ -360,6 +384,12 @@ class AppSettings {
     this.autoPlayNext = true,
     this.restoreQueue = true,
     this.searchSource = SearchSource.online,
+    // Что прятать в выдаче каталога и поиска, как `HideExplicitKey` и
+    // `HideVideoKey` в ArchiveTune. По умолчанию ничего не прячем.
+    this.hideExplicit = false,
+    this.hideVideo = false,
+    // Длина топов и чартов (как `TopSize`).
+    this.topSize = TopSize.fifty,
     this.miniSwipeSensitivity = SwipeSensitivity.normal,
     this.trackSwipeAction = TrackSwipeAction.off,
     this.streamingRegion = 'RU',
@@ -469,6 +499,15 @@ class AppSettings {
 
   /// Где искать: по всему YouTube Music или только по своей библиотеке.
   final SearchSource searchSource;
+
+  /// Прятать explicit-треки (мат) в выдаче каталога и поиска.
+  final bool hideExplicit;
+
+  /// Прятать клипы (видео) в выдаче каталога и поиска.
+  final bool hideVideo;
+
+  /// Сколько элементов оставлять в топах и чартах.
+  final TopSize topSize;
 
   /// Насколько охотно свайп по островку плеера переключает трек.
   final SwipeSensitivity miniSwipeSensitivity;
@@ -598,6 +637,9 @@ class AppSettings {
     bool? autoPlayNext,
     bool? restoreQueue,
     SearchSource? searchSource,
+    bool? hideExplicit,
+    bool? hideVideo,
+    TopSize? topSize,
     SwipeSensitivity? miniSwipeSensitivity,
     TrackSwipeAction? trackSwipeAction,
     String? streamingRegion,
@@ -653,6 +695,9 @@ class AppSettings {
       autoPlayNext: autoPlayNext ?? this.autoPlayNext,
       restoreQueue: restoreQueue ?? this.restoreQueue,
       searchSource: searchSource ?? this.searchSource,
+      hideExplicit: hideExplicit ?? this.hideExplicit,
+      hideVideo: hideVideo ?? this.hideVideo,
+      topSize: topSize ?? this.topSize,
       miniSwipeSensitivity: miniSwipeSensitivity ?? this.miniSwipeSensitivity,
       trackSwipeAction: trackSwipeAction ?? this.trackSwipeAction,
       streamingRegion: streamingRegion ?? this.streamingRegion,
@@ -713,6 +758,9 @@ class AppSettings {
         'autoPlayNext': autoPlayNext,
         'restoreQueue': restoreQueue,
         'searchSource': searchSource.name,
+        'hideExplicit': hideExplicit,
+        'hideVideo': hideVideo,
+        'topSize': topSize.name,
         'miniSwipeSensitivity': miniSwipeSensitivity.name,
         'trackSwipeAction': trackSwipeAction.name,
         'streamingRegion': streamingRegion,
@@ -777,6 +825,9 @@ class AppSettings {
       autoPlayNext: json['autoPlayNext'] as bool? ?? true,
       restoreQueue: json['restoreQueue'] as bool? ?? true,
       searchSource: SearchSource.fromName(json['searchSource'] as String?),
+      hideExplicit: json['hideExplicit'] as bool? ?? false,
+      hideVideo: json['hideVideo'] as bool? ?? false,
+      topSize: TopSize.fromName(json['topSize'] as String?),
       miniSwipeSensitivity:
           SwipeSensitivity.fromName(json['miniSwipeSensitivity'] as String?),
       trackSwipeAction:

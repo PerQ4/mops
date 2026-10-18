@@ -9,6 +9,7 @@ import '../core/net/anti_dpi.dart';
 import '../core/theme/seed_colors.dart';
 import '../core/theme/ui_scaler.dart';
 import '../data/local/app_settings.dart';
+import '../data/sources/catalog_source.dart';
 import '../data/sources/paxsenix_source.dart';
 import '../data/sources/romanization.dart';
 import '../data/sources/stream_downloader.dart';
@@ -53,10 +54,15 @@ final Provider<AuthSession?> initialSessionProvider = Provider<AuthSession?>(
 /// Запись намеренно не блокирует UI: сначала меняем состояние, затем сохраняем.
 class SettingsController extends Notifier<AppSettings> {
   @override
-  AppSettings build() => ref.watch(initialSettingsProvider);
+  AppSettings build() {
+    final AppSettings settings = ref.watch(initialSettingsProvider);
+    _publishContentFilter(settings);
+    return settings;
+  }
 
   Future<void> _persist(AppSettings next) async {
     state = next;
+    _publishContentFilter(next);
     final SharedPreferences prefs = ref.read(sharedPreferencesProvider);
     await prefs.setString(kSettingsKey, next.encode());
   }
@@ -129,6 +135,18 @@ class SettingsController extends Notifier<AppSettings> {
   /// Где искать: онлайн или только в библиотеке.
   Future<void> setSearchSource(SearchSource source) =>
       update((AppSettings s) => s.copyWith(searchSource: source));
+
+  /// Прятать explicit-треки в выдаче каталога и поиска.
+  Future<void> setHideExplicit(bool value) =>
+      update((AppSettings s) => s.copyWith(hideExplicit: value));
+
+  /// Прятать клипы в выдаче каталога и поиска.
+  Future<void> setHideVideo(bool value) =>
+      update((AppSettings s) => s.copyWith(hideVideo: value));
+
+  /// Длина топов и чартов.
+  Future<void> setTopSize(TopSize size) =>
+      update((AppSettings s) => s.copyWith(topSize: size));
 
   /// Чувствительность свайпа по островку плеера.
   Future<void> setMiniSwipeSensitivity(SwipeSensitivity value) =>
@@ -294,6 +312,20 @@ class SettingsController extends Notifier<AppSettings> {
 
 final NotifierProvider<SettingsController, AppSettings> settingsControllerProvider =
     NotifierProvider<SettingsController, AppSettings>(SettingsController.new);
+
+/// Передаёт источнику каталога настройки содержимого: что прятать и какой длины
+/// отдавать топы.
+///
+/// Источник каталога создаётся в `catalog_providers.dart` без настроек, а
+/// `catalog_source.dart` импортируют консольные инструменты, поэтому настройки
+/// туда не тянутся: значение кладётся в одно поле класса при каждом изменении.
+void _publishContentFilter(AppSettings settings) {
+  CatalogSource.contentFilter = ContentFilter(
+    hideExplicit: settings.hideExplicit,
+    hideVideo: settings.hideVideo,
+    topSize: settings.topSize.value,
+  );
+}
 
 /// ---------------------------------------------------------------------------
 /// Проверка ключа Paxsenix

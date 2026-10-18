@@ -19,7 +19,13 @@ import 'audio_engine.dart';
 /// [AudioEngine] — от 0.0 до 1.0, поэтому на границе класса значение
 /// переводится туда и обратно.
 class MediaKitEngine implements AudioEngine {
-  MediaKitEngine({Player? player}) : _player = player ?? Player() {
+  MediaKitEngine({Player? player})
+      : _player = player ??
+            // `pitch: true` включает в libmpv независимый сдвиг высоты тона:
+            // media_kit ставит фильтр `scaletempo` и отключает автокоррекцию
+            // высоты, а темп и питч раскладывает между `speed` и `af`. Без
+            // этого `setPitch` бросает ArgumentError.
+            Player(configuration: const PlayerConfiguration(pitch: true)) {
     _attach();
   }
 
@@ -52,6 +58,20 @@ class MediaKitEngine implements AudioEngine {
   String? _lastSource;
   bool _lastIsLocal = false;
   bool _sourceLoaded = false;
+
+  /// Выбранный темп.
+  ///
+  /// Храним сами: `speed`/`af` — глобальные свойства libmpv, и после `open`
+  /// нового потока их нужно задать заново, иначе темп «потеряется» при
+  /// переходе к следующему треку.
+  double _speed = 1.0;
+
+  /// Выбранная высота тона.
+  ///
+  /// Питч относится к конкретному прослушиванию, а не к сессии: при загрузке
+  /// нового трека он возвращается к 1.0 (см. [load]). Повторное открытие того
+  /// же потока (`stop`, конец трека) питч сохраняет.
+  double _pitch = 1.0;
 
   @override
   Stream<PlaybackState> get stateStream => _controller.stream;
@@ -281,11 +301,18 @@ class MediaKitEngine implements AudioEngine {
     _lastIsLocal = isLocal;
     _sourceLoaded = false;
     _opening = true;
+
+    // Новый трек: высота тона возвращается к натуральной. Запоминаем, был ли
+    // сдвиг, чтобы снять его в libmpv, а не только в состоянии.
+    final bool pitchWasShifted = _pitch != 1.0;
+    _pitch = 1.0;
+
     _emit(_state.copyWith(
       status: PlaybackStatus.loading,
       position: Duration.zero,
       duration: Duration.zero,
       buffered: Duration.zero,
+      pitch: 1.0,
       clearError: true,
       // Новый источник — прежние кодек и битрейт к нему не относятся.
       clearMediaInfo: true,
@@ -294,6 +321,7 @@ class MediaKitEngine implements AudioEngine {
     try {
       await _player.open(_mediaFor(source, isLocal), play: autoplay);
       _sourceLoaded = true;
+      await _applyTempoPitch(resetPitch: pitchWasShifted);
       if (autoplay) {
         // Часть событий приходит с задержкой — показываем старт сразу,
         // `_opening` снимается настоящим `playing = true` или ошибкой.
@@ -398,6 +426,7 @@ class MediaKitEngine implements AudioEngine {
         play: true,
       );
       _sourceLoaded = true;
+      await _applyTempoPitch();
       if (_state.status == PlaybackStatus.loading) {
         _emit(_state.copyWith(
           status: PlaybackStatus.playing,
@@ -447,8 +476,41 @@ class MediaKitEngine implements AudioEngine {
   @override
   Future<void> setSpeed(double speed) async {
     final double clamped = speed.clamp(0.5, 2.0);
+    _speed = clamped;
     await _player.setRate(clamped);
     _emit(_state.copyWith(speed: clamped));
+  }
+
+  @override
+  bool get supportsPitch => true;
+
+  @override
+  Future<void> setPitch(double pitch) async {
+    final double clamped = pitch.clamp(0.5, 2.0);
+    _pitch = clamped;
+    await _player.setPitch(clamped);
+    _emit(_state.copyWith(pitch: clamped));
+  }
+
+  /// Возвращает выбранные темп и высоту тона после открытия потока.
+  ///
+  /// `speed` и `af` — глобальные свойства libmpv: новое `open` может их
+  /// сбросить, а прошлый сдвиг высоты — остаться. Поэтому значения задаются
+  /// заново: темп не теряется между треками, а сброшенный питч не «прилипает»
+  /// с предыдущего.
+  Future<void> _applyTempoPitch({bool resetPitch = false}) async {
+    try {
+      // Питч задаём первым: он же выставляет `speed`. Затем темп пересчитывает
+      // `af` уже с учётом питча — media_kit делит scale на pitch.
+      if (resetPitch || _pitch != 1.0) {
+        await _player.setPitch(_pitch);
+      }
+      if (_speed != 1.0) {
+        await _player.setRate(_speed);
+      }
+    } on Object catch (error) {
+      debugPrint('Не удалось применить темп/питч: $error');
+    }
   }
 
   @override

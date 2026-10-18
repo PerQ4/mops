@@ -64,6 +64,13 @@ class _FakeAudioEngine implements AudioEngine {
   @override
   Future<void> setSpeed(double speed) async {}
 
+  // У заглушки независимого питча нет — как у любого движка без scaletempo.
+  @override
+  bool get supportsPitch => false;
+
+  @override
+  Future<void> setPitch(double pitch) async {}
+
   // Устройств вывода в тестовой среде нет — поток пустой, выбор ни на что
   // не влияет.
   @override

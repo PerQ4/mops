@@ -526,6 +526,13 @@ class PlayerController extends Notifier<PlayerUiState> {
     await ref.read(settingsControllerProvider.notifier).setLastSpeed(speed);
   }
 
+  /// Меняет высоту тона относительно темпа (1.0 — без сдвига).
+  ///
+  /// В настройках для питча поля нет: сдвинутая высота — свойство конкретного
+  /// прослушивания, а не привычка, поэтому между запусками она не сохраняется
+  /// и сбрасывается при загрузке нового трека (это делает движок).
+  Future<void> setPitch(double pitch) => _engine.setPitch(pitch);
+
   /// Выбирает устройство вывода звука (`auto` — системное).
   Future<void> setAudioDevice(String name) async {
     state = state.copyWith(audioDeviceName: name);

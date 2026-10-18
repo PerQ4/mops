@@ -29,6 +29,7 @@ class PlaybackState {
     this.buffered = Duration.zero,
     this.volume = 1.0,
     this.speed = 1.0,
+    this.pitch = 1.0,
     this.error,
     this.audioCodec,
     this.container,
@@ -43,6 +44,13 @@ class PlaybackState {
   final Duration buffered;
   final double volume;
   final double speed;
+
+  /// Высота тона относительно темпа (1.0 — без сдвига).
+  ///
+  /// Темп сюда не входит: при изменении скорости высота остаётся натуральной,
+  /// а этот множитель сдвигает её отдельно (см. [AudioEngine.setPitch]).
+  final double pitch;
+
   final String? error;
 
   /// Кодек выбранной аудиодорожки (`opus`, `mp4a.40.2`, …).
@@ -85,6 +93,7 @@ class PlaybackState {
     Duration? buffered,
     double? volume,
     double? speed,
+    double? pitch,
     String? error,
     bool clearError = false,
     String? audioCodec,
@@ -102,6 +111,7 @@ class PlaybackState {
       buffered: buffered ?? this.buffered,
       volume: volume ?? this.volume,
       speed: speed ?? this.speed,
+      pitch: pitch ?? this.pitch,
       error: clearError ? null : (error ?? this.error),
       audioCodec: clearMediaInfo ? null : (audioCodec ?? this.audioCodec),
       container: clearMediaInfo ? null : (container ?? this.container),
@@ -173,7 +183,23 @@ abstract class AudioEngine {
   Future<void> setVolume(double volume);
 
   /// Скорость воспроизведения (1.0 — обычная).
+  ///
+  /// Высота тона при этом не меняется: компенсацию берёт на себя движок
+  /// (libmpv — через `scaletempo`).
   Future<void> setSpeed(double speed);
+
+  /// Доступно ли независимое управление высотой тона.
+  ///
+  /// Питч — не универсальная возможность бэкенда: чтобы менять высоту отдельно
+  /// от темпа, нужен фильтр и отключённая автокоррекция высоты. Там, где
+  /// этого нет, интерфейс честно пишет «недоступно», а не делает вид, что
+  /// сдвиг работает.
+  bool get supportsPitch;
+
+  /// Высота тона относительно темпа (1.0 — без сдвига).
+  ///
+  /// Темп не меняется: движок сам компенсирует вызванное сдвигом ускорение.
+  Future<void> setPitch(double pitch);
 
   /// Доступные устройства вывода звука.
   List<AudioOutputDevice> get audioDevices;

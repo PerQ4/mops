@@ -31,6 +31,12 @@ const double _kSimpleInactiveTrackAlpha = 0.15;
 /// подписями времени.
 const double _kPlayerHorizontalPadding = 32;
 
+/// Границы и шаг темпа и питча — диалог `tempo_and_pitch` в ArchiveTune:
+/// 0.5–2.0 с шагом 0.05 (30 делений ползунка).
+const double kTempoPitchMin = 0.5;
+const double kTempoPitchMax = 2.0;
+const double kTempoPitchStep = 0.05;
+
 /// Полоса перемотки со временем по краям и отметкой качества в центре.
 ///
 /// Используется и в панели плеера на десктопе, и в полноэкранном плеере на
@@ -402,6 +408,137 @@ class QualityBadge extends StatelessWidget {
   }
 }
 
+/// Открывает диалог «Темп и питч».
+///
+/// Значения применяются сразу: темп слышно на играющем треке, и отдельная
+/// кнопка «применить» только мешала бы. «Сбросить» возвращает 1.0 обоим.
+///
+/// Питч — не универсальная возможность бэкенда (см. [AudioEngine.supportsPitch]):
+/// если движок его не умеет, ползунок отключён, а причина подписана текстом —
+/// вместо молча неработающего сдвига.
+Future<void> showTempoPitchDialog(BuildContext context, WidgetRef ref) async {
+  final PlayerController controller =
+      ref.read(playerControllerProvider.notifier);
+  final PlaybackState playback = ref.read(playerControllerProvider).playback;
+  final bool pitchSupported = ref.read(audioEngineProvider).supportsPitch;
+
+  // Локальные значения — для плавного движения ползунка: состояние движка
+  // приходит через поток, и без своей копии ползунок отставал бы от пальца.
+  double speed = playback.speed;
+  double pitch = playback.pitch;
+  final int divisions =
+      ((kTempoPitchMax - kTempoPitchMin) / kTempoPitchStep).round();
+
+  await showDialog<void>(
+    context: context,
+    builder: (BuildContext dialogContext) => StatefulBuilder(
+      builder: (BuildContext context, StateSetter setState) {
+        final ColorScheme scheme = Theme.of(context).colorScheme;
+        final TextTheme text = Theme.of(context).textTheme;
+
+        Widget block({
+          required String title,
+          required String note,
+          required double value,
+          required bool enabled,
+          required ValueChanged<double> onChanged,
+        }) {
+          return Column(
+            crossAxisAlignment: CrossAxisAlignment.start,
+            children: <Widget>[
+              Row(
+                children: <Widget>[
+                  Text(title, style: text.titleSmall),
+                  const Spacer(),
+                  Text(
+                    '${value.toStringAsFixed(2)}×',
+                    style: text.labelLarge?.copyWith(
+                      color: enabled ? scheme.primary : scheme.onSurfaceVariant,
+                      fontFeatures: const <FontFeature>[
+                        FontFeature.tabularFigures(),
+                      ],
+                    ),
+                  ),
+                ],
+              ),
+              Slider(
+                value: value.clamp(kTempoPitchMin, kTempoPitchMax),
+                min: kTempoPitchMin,
+                max: kTempoPitchMax,
+                divisions: divisions,
+                label: '${value.toStringAsFixed(2)}×',
+                onChanged: enabled ? onChanged : null,
+              ),
+              Text(
+                note,
+                style: text.bodySmall?.copyWith(color: scheme.onSurfaceVariant),
+              ),
+            ],
+          );
+        }
+
+        return AlertDialog(
+          title: const Text('Темп и питч'),
+          content: ConstrainedBox(
+            // Ширина ограничена, но не задана жёстко: на узком экране диалог
+            // должен ужиматься, а не вылезать за край.
+            constraints: const BoxConstraints(maxWidth: 360),
+            child: Column(
+              mainAxisSize: MainAxisSize.min,
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: <Widget>[
+                block(
+                  title: 'Темп',
+                  note: 'Скорость без изменения высоты тона.',
+                  value: speed,
+                  enabled: true,
+                  onChanged: (double v) {
+                    setState(() => speed = v);
+                    controller.setSpeed(v);
+                  },
+                ),
+                const SizedBox(height: 12),
+                block(
+                  title: 'Питч',
+                  note: pitchSupported
+                      ? 'Высота тона без изменения темпа. Сдвиг делает libmpv '
+                          'через scaletempo — на крайних значениях возможен '
+                          'лёгкий призвук.'
+                      : 'Недоступно: этот движок не умеет менять высоту тона '
+                          'отдельно от темпа.',
+                  value: pitch,
+                  enabled: pitchSupported,
+                  onChanged: (double v) {
+                    setState(() => pitch = v);
+                    controller.setPitch(v);
+                  },
+                ),
+              ],
+            ),
+          ),
+          actions: <Widget>[
+            TextButton(
+              onPressed: () {
+                setState(() {
+                  speed = 1.0;
+                  pitch = 1.0;
+                });
+                controller.setSpeed(1.0);
+                if (pitchSupported) controller.setPitch(1.0);
+              },
+              child: const Text('Сбросить'),
+            ),
+            FilledButton(
+              onPressed: () => Navigator.of(dialogContext).pop(),
+              child: const Text('Готово'),
+            ),
+          ],
+        );
+      },
+    ),
+  );
+}
+
 /// Кнопки транспорта: назад, играть/пауза, вперёд.
 ///
 /// Перемешивание и повтор сюда не входят: они переехали в строку с названием
@@ -577,6 +714,18 @@ class PlayerTransportBar extends ConsumerWidget {
                         onPressed: controller.cycleRepeat,
                       ),
                     ],
+                    // Темп и питч — всегда в блоке управления: это настройка
+                    // воспроизведения, а не режим очереди, поэтому она не
+                    // прячется за `showModes`.
+                    SizedBox(width: gap),
+                    _TempoButton(
+                      speed: player.playback.speed,
+                      pitch: player.playback.pitch,
+                      size: small,
+                      radius: smallRadius,
+                      iconSize: smallIcon,
+                      onPressed: () => showTempoPitchDialog(context, ref),
+                    ),
                   ],
                 ),
               ),
@@ -634,6 +783,48 @@ class _TransportButton extends StatelessWidget {
           ),
         ),
       ),
+    );
+  }
+}
+
+/// Кнопка «Темп и питч» в блоке управления.
+///
+/// Подсвечена, когда темп или питч отличаются от 1.0: иначе сдвинутое
+/// воспроизведение выглядело бы как обычное, и причину пришлось бы искать.
+/// Текущие значения — в подсказке и в самом диалоге.
+class _TempoButton extends StatelessWidget {
+  const _TempoButton({
+    required this.speed,
+    required this.pitch,
+    required this.size,
+    required this.radius,
+    required this.iconSize,
+    required this.onPressed,
+  });
+
+  final double speed;
+  final double pitch;
+  final double size;
+  final double radius;
+  final double iconSize;
+  final VoidCallback onPressed;
+
+  @override
+  Widget build(BuildContext context) {
+    final Color onBackground = Theme.of(context).colorScheme.onSurface;
+    final bool active = speed != 1.0 || pitch != 1.0;
+    final String value = active
+        ? 'темп ${speed.toStringAsFixed(2)}×, питч ${pitch.toStringAsFixed(2)}×'
+        : 'темп и питч обычные';
+    return _TransportButton(
+      tooltip: 'Темп и питч ($value)',
+      icon: Icons.speed,
+      size: size,
+      radius: radius,
+      iconSize: iconSize,
+      background: onBackground.withValues(alpha: active ? 0.2 : 0.08),
+      foreground: onBackground.withValues(alpha: active ? 1 : 0.6),
+      onPressed: onPressed,
     );
   }
 }

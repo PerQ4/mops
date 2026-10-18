@@ -92,6 +92,8 @@
 | Поделиться текстом картинкой (1080×1080 PNG с обложкой) | `lib/features/player/lyrics_share_image.dart`, `lib/features/player/lyrics_actions.dart` | ✅ |
 | Теги плейлистов: локальные метки и фильтр в библиотеке | `lib/data/local/playlist_tags.dart`, `lib/features/library/library_screen.dart` | ✅ |
 | Диагностика соединения по шагам на экране обхода | `lib/core/net/diagnostics.dart`, `lib/features/settings/bypass_screen.dart` | ✅ |
+| Темп и питч: диалог, кнопка в транспорте, питч через `scaletempo` | `lib/features/player/player_controls.dart`, `lib/core/audio/{audio_engine,media_kit_engine}.dart` | ✅ |
+| Фильтры содержимого: скрыть explicit и видео, длина топа; признак видео разбирается из `musicVideoType` | `lib/data/local/app_settings.dart` (`TopSize`), `lib/data/sources/{catalog_source,browse_parser}.dart` | ✅ |
 
 ### Что есть у нас, но чего нет в ArchiveTune
 
@@ -131,12 +133,12 @@
 
 - [x] 1.1 Таймер сна
 - [x] 1.2 Восстановление очереди и позиции между запусками
-- [ ] 1.3 Скорость и питч в плеере
+- [x] 1.3 Скорость и питч в плеере
 - [x] 1.4 Копировать ссылку и «поделиться» треком
 - [x] 1.5 Клик по строке текста — перемотка к ней
 - [x] 1.6 Поделиться текстом картинкой
 - [x] 1.7 Экспорт и импорт настроек (резервная копия)
-- [ ] 1.8 Настройки содержимого: скрыть explicit и видео, длина топа
+- [x] 1.8 Настройки содержимого: скрыть explicit и видео, длина топа
 - [x] 1.9 Провайдеры текстов: включение и под-провайдеры Paxsenix
 - [x] 1.10 Романизация: выбор набора языков — сделано раньше (пять отдельных переключателей, язык определяется по тексту)
 

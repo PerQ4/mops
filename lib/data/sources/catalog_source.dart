@@ -36,6 +36,33 @@ enum ExploreSection {
   final String browseId;
 }
 
+/// Что прятать в выдаче каталога и поиска и какой длины отдавать топы.
+///
+/// Живёт в источнике каталога, а не в `AppSettings`: `catalog_source.dart`
+/// импортируют консольные инструменты (`dart run tool/...`), а `app_settings`
+/// тянет за собой Flutter. Значение одно на класс, и его ставит слой состояния
+/// (`SettingsController`): источник каталога создаётся без настроек
+/// (`catalogSourceProvider`), поэтому передать их в конструктор нечем.
+class ContentFilter {
+  const ContentFilter({
+    this.hideExplicit = false,
+    this.hideVideo = false,
+    this.topSize = 50,
+  });
+
+  /// Прятать explicit-треки (мат).
+  final bool hideExplicit;
+
+  /// Прятать клипы (видео).
+  final bool hideVideo;
+
+  /// Сколько элементов оставлять в полке топа или чарта.
+  final int topSize;
+
+  /// Есть ли что прятать: если нет, полки остаются нетронутыми.
+  bool get hidesAnything => hideExplicit || hideVideo;
+}
+
 /// Профиль клиента, которым запрашиваются субтитры.
 ///
 /// Субтитры отдаёт только «плеер» мобильного/очкового клиента; веб-клиент
@@ -59,6 +86,10 @@ class CatalogSource {
   CatalogSource(this._client);
 
   final InnerTubeClient _client;
+
+  /// Фильтр содержимого, общий для всех источников каталога. Ставит его слой
+  /// состояния при чтении и изменении настроек — см. [ContentFilter].
+  static ContentFilter contentFilter = const ContentFilter();
 
   static const String _browseHome = 'FEmusic_home';
   static const String _browseExplore = 'FEmusic_explore';
@@ -84,7 +115,7 @@ class CatalogSource {
       authenticated: _client.hasAuth,
     );
     return (
-      sections: BrowseParser.homeSections(res),
+      sections: _applyContentFilter(BrowseParser.homeSections(res)),
       continuation: BrowseParser.continuationToken(res),
     );
   }
@@ -100,13 +131,16 @@ class CatalogSource {
   /// Раздел «Обзор» (новые релизы, чарты, настроения).
   Future<List<BrowseSection>> explore() async {
     final Map<String, dynamic> res = await _client.browse(_browseExplore);
-    return BrowseParser.homeSections(res);
+    return _applyContentFilter(BrowseParser.homeSections(res), limitTop: true);
   }
 
   /// Произвольный публичный раздел.
+  ///
+  /// Чарты и топы обрезаются до длины из настроек: серверу длину не передать,
+  /// поэтому полку укорачиваем уже после разбора.
   Future<List<BrowseSection>> browseSection(String browseId) async {
     final Map<String, dynamic> res = await _client.browse(browseId);
-    return BrowseParser.homeSections(res);
+    return _applyContentFilter(BrowseParser.homeSections(res), limitTop: true);
   }
 
   /// Настроения и жанры — подписи категорий для чипов главной.
@@ -145,7 +179,7 @@ class CatalogSource {
       query,
       params: filter.params,
     );
-    return BrowseParser.sectionsFrom(res);
+    return _applyContentFilter(BrowseParser.sectionsFrom(res));
   }
 
   /// Подсказки по мере ввода.
@@ -250,9 +284,10 @@ class CatalogSource {
       for (final BrowseItem item in section.items) {
         switch (item) {
           case TrackItem(:final Track track):
-            if (title.contains('песн') ||
-                title.contains('song') ||
-                title.contains('трек')) {
+            if ((title.contains('песн') ||
+                    title.contains('song') ||
+                    title.contains('трек')) &&
+                _keepTrack(track)) {
               topTracks.add(track);
             }
           case AlbumItem(album: final Album album):
@@ -276,7 +311,9 @@ class CatalogSource {
     // «Популярные треки» часто лежат в musicShelfRenderer, который без заголовка
     // не попал в секции — добираем напрямую.
     if (topTracks.isEmpty) {
-      topTracks.addAll(_tracksFrom(res, fallbackPlaylistId: null));
+      topTracks.addAll(
+        _tracksFrom(res, fallbackPlaylistId: null).where(_keepTrack),
+      );
     }
 
     final String artistName = BrowseParser.pageTitle(res) ?? 'Исполнитель';
@@ -288,11 +325,11 @@ class CatalogSource {
       thumbnails: artistThumbs,
       description: BrowseParser.pageDescription(res),
       subscribers: BrowseParser.pageSubtitle(res),
-      topTracks: _withHeaderFallback(
+      topTracks: _limitTop(_withHeaderFallback(
         topTracks,
         artists: <ArtistRef>[ArtistRef(name: artistName, id: artistId)],
         thumbnails: artistThumbs,
-      ),
+      )),
       albums: albums,
       singles: singles,
       related: related,
@@ -660,6 +697,67 @@ class CatalogSource {
   }
 
   // --------------------------------------------------------------- helpers
+
+  /// Оставляет только то, что пользователь не просил прятать.
+  ///
+  /// Признак explicit/видео приходит из разбора. Если разбор его не отдал
+  /// (`isVideo` сейчас не заполняется — см. отчёт), трек остаётся: настройка
+  /// не должна прятать всё подряд.
+  bool _keepTrack(Track track) {
+    final ContentFilter filter = CatalogSource.contentFilter;
+    if (filter.hideExplicit && track.isExplicit) return false;
+    if (filter.hideVideo && track.isVideo) return false;
+    return true;
+  }
+
+  /// Укорачивает список до длины топа из настроек.
+  List<Track> _limitTop(List<Track> tracks) {
+    final int size = CatalogSource.contentFilter.topSize;
+    if (size <= 0 || tracks.length <= size) return tracks;
+    return tracks.take(size).toList(growable: false);
+  }
+
+  /// Применяет настройки содержимого к полкам: прячет explicit и видео, а у
+  /// топов и чартов ([limitTop]) обрезает длину.
+  ///
+  /// Полка, целиком состоявшая из скрытого, убирается совсем: пустой ряд на
+  /// экране только мешает.
+  List<BrowseSection> _applyContentFilter(
+    List<BrowseSection> sections, {
+    bool limitTop = false,
+  }) {
+    final ContentFilter filter = CatalogSource.contentFilter;
+    if (!filter.hidesAnything && !limitTop) return sections;
+
+    final List<BrowseSection> result = <BrowseSection>[];
+    for (final BrowseSection section in sections) {
+      List<BrowseItem> items = section.items;
+      if (filter.hidesAnything) {
+        items = items
+            .where((BrowseItem item) =>
+                item is! TrackItem || _keepTrack(item.track))
+            .toList(growable: false);
+      }
+      if (limitTop && items.length > filter.topSize) {
+        items = items.take(filter.topSize).toList(growable: false);
+      }
+      if (items.isEmpty && section.items.isNotEmpty && filter.hidesAnything) {
+        continue;
+      }
+      if (identical(items, section.items)) {
+        result.add(section);
+      } else {
+        result.add(BrowseSection(
+          title: section.title,
+          subtitle: section.subtitle,
+          items: items,
+          browseId: section.browseId,
+          params: section.params,
+        ));
+      }
+    }
+    return result;
+  }
 
   List<Track> _tracksFrom(dynamic response, {String? fallbackPlaylistId}) {
     final List<Track> tracks = <Track>[];
