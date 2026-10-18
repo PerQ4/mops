@@ -3,7 +3,6 @@ import 'dart:ui' show PathMetric, Tangent;
 
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
-import 'package:material_3_expressive/material_3_expressive.dart' as m3e;
 
 import '../../state/player_controller.dart';
 
@@ -13,12 +12,15 @@ import '../../state/player_controller.dart';
 /// обложки и показывает позицию трека, пока трек грузится — неопределённое
 /// (крутится).
 ///
+/// В `material_3_expressive` есть готовый `M3EProgressIndicator.circularWavy`,
+/// но он гонит волну постоянно, даже когда значение известно. Для кольца это
+/// лишнее: островок и панель крутили бы кадры без остановки (и `pumpAndSettle`
+/// в тестах не дожидался бы тишины). Поэтому волну рисуем сами по той же
+/// формуле, что и пакет (`radius + amplitude * sin(arcLength * waveK)`):
+/// у определённого кольца она стоит, у неопределённого — крутится.
+///
 /// Форму кольца задаёт форма обложки: в островке обложка круглая, в правой
 /// панели — скруглённый квадрат (как и крупная обложка полноэкранного плеера).
-/// Круг рисует готовая [m3e.M3EProgressIndicator.circularWavy] из
-/// `material_3_expressive` — это прямой аналог эталонного компонента. Для
-/// скруглённого квадрата в пакете варианта нет (там только круг), поэтому его
-/// рисует [_WavyRRectPainter] по той же волновой формуле.
 ///
 /// Позицию слушаем точечно (`select`): тик позиции перестраивает только кольцо,
 /// а не обложку и не всё вокруг.
@@ -33,7 +35,7 @@ class ArtworkProgressRing extends ConsumerWidget {
   /// Сторона обложки, вокруг которой идёт кольцо.
   final double side;
 
-  /// Скругление обложки. Полностью круглое — рисуем кругом.
+  /// Скругление обложки. Полностью круглое — кольцо выйдет кругом.
   final BorderRadius shape;
 
   /// Толщина кольца — как у дорожки полосы перемотки.
@@ -42,8 +44,7 @@ class ArtworkProgressRing extends ConsumerWidget {
   /// Амплитуда волны, логические пиксели.
   ///
   /// Столько же закладывает пакет (`M3ECircularProgressTheme.waveAmplitude`
-  /// = 1.6); держим то же значение, чтобы кольца в островке и панели выглядели
-  /// одинаково.
+  /// = 1.6); держим то же значение, чтобы кольцо читалось как эталонное.
   static const double waveAmplitude = 1.6;
 
   /// Толщина кольца в правой панели: обложка крупная, тонкая линия на ней
@@ -63,8 +64,8 @@ class ArtworkProgressRing extends ConsumerWidget {
   Widget build(BuildContext context, WidgetRef ref) {
     final ColorScheme scheme = Theme.of(context).colorScheme;
     // Прогресс и загрузку берём одним значением: запись сравнивается по
-    // значению, поэтому перестройка приходит только на смену позиции,
-    // состояния загрузки или воспроизведения.
+    // значению, поэтому перестройка приходит только на смену позиции или
+    // состояния загрузки.
     final (double progress, bool loading) = ref.watch(
       playerControllerProvider.select(
         (PlayerUiState s) => (_progressOf(s), s.isLoading),
@@ -72,47 +73,36 @@ class ArtworkProgressRing extends ConsumerWidget {
     );
     final double box = extent(side, strokeWidth);
 
-    final Widget ring;
-    if (_isCircular) {
-      ring = m3e.M3EProgressIndicator.circularWavy(
-        // Пока трек грузится — неопределённое кольцо (крутится), как в эталоне.
-        value: loading ? null : progress,
-        size: box,
-        strokeWidth: strokeWidth,
-        trackStrokeWidth: strokeWidth,
-        color: scheme.primary,
-        trackColor: scheme.onSurface.withValues(alpha: 0.16),
-      );
-    } else {
-      // Осевая линия кольца: контур обложки, раздутый на полтолщины, — тогда
-      // внутренний край штриха ложится ровно на кромку обложки.
-      final RRect axis = RRect.fromRectAndRadius(
-        Rect.fromCenter(
-          center: Offset(box / 2, box / 2),
-          width: side + strokeWidth,
-          height: side + strokeWidth,
-        ),
-        Radius.circular(shape.topLeft.x + strokeWidth / 2),
-      );
-      ring = _WavyRRectRing(
-        progress: loading ? null : progress,
-        size: box,
-        axis: axis,
-        strokeWidth: strokeWidth,
-        activeColor: scheme.primary,
-        trackColor: scheme.onSurface.withValues(alpha: 0.16),
-      );
-    }
+    // Осевая линия кольца: контур обложки, раздутый на полтолщины, — тогда
+    // внутренний край штриха ложится ровно на кромку обложки. Круг — частный
+    // случай: радиус равен половине стороны.
+    final RRect axis = RRect.fromRectAndRadius(
+      Rect.fromCenter(
+        center: Offset(box / 2, box / 2),
+        width: side + strokeWidth,
+        height: side + strokeWidth,
+      ),
+      Radius.circular(shape.topLeft.x + strokeWidth / 2),
+    );
 
     // Кольцо только показывает прогресс: нажатия по обложке (и по всему
     // островку) оно не перехватывает.
     return IgnorePointer(
-      child: SizedBox(width: box, height: box, child: ring),
+      child: SizedBox(
+        width: box,
+        height: box,
+        child: _WavyRing(
+          // Пока трек грузится — неопределённое кольцо (крутится), как в эталоне.
+          progress: loading ? null : progress,
+          size: box,
+          axis: axis,
+          strokeWidth: strokeWidth,
+          activeColor: scheme.primary,
+          trackColor: scheme.onSurface.withValues(alpha: 0.16),
+        ),
+      ),
     );
   }
-
-  /// Круглая ли обложка: тогда кольцо рисует готовый компонент пакета.
-  bool get _isCircular => shape.topLeft.x >= side / 2 - 0.5;
 }
 
 /// Прогресс от 0 до 1 с тем же запасным источником длительности, что и у
@@ -127,14 +117,9 @@ double _progressOf(PlayerUiState s) {
       .clamp(0.0, 1.0);
 }
 
-/// Кольцо вдоль скруглённого квадрата — для обложки правой панели.
-///
-/// Пакет рисует только круг, поэтому форму обложки повторяем сами. Волну
-/// гоним по той же формуле, что и круговой индикатор пакета
-/// (`radius + amplitude * sin(phase + arcLength * waveK)`), — тогда кольца в
-/// островке и панели выглядят одинаково.
-class _WavyRRectRing extends StatefulWidget {
-  const _WavyRRectRing({
+/// Кольцо вдоль осевой линии [axis] — круга или скруглённого квадрата.
+class _WavyRing extends StatefulWidget {
+  const _WavyRing({
     required this.progress,
     required this.size,
     required this.axis,
@@ -154,17 +139,35 @@ class _WavyRRectRing extends StatefulWidget {
   final Color trackColor;
 
   @override
-  State<_WavyRRectRing> createState() => _WavyRRectRingState();
+  State<_WavyRing> createState() => _WavyRingState();
 }
 
-class _WavyRRectRingState extends State<_WavyRRectRing>
+class _WavyRingState extends State<_WavyRing>
     with SingleTickerProviderStateMixin {
-  /// Один оборот волны в секунду — тот же ход, что у кругового индикатора
-  /// пакета (там фаза идёт от прошедшего времени при `waveSpeed = wavelength`).
+  /// Оборот неопределённого кольца в секунду. Определённое кольцо контроллер
+  /// не крутит: волна у него стоит.
   late final AnimationController _controller = AnimationController(
     vsync: this,
     duration: const Duration(seconds: 1),
-  )..repeat();
+  );
+
+  @override
+  void initState() {
+    super.initState();
+    if (widget.progress == null) _controller.repeat();
+  }
+
+  @override
+  void didUpdateWidget(_WavyRing oldWidget) {
+    super.didUpdateWidget(oldWidget);
+    // Вращение нужно только неопределённому кольцу; переключаем на ходу,
+    // чтобы загрузка не оставляла за собой бегущие кадры.
+    if (widget.progress == null) {
+      if (!_controller.isAnimating) _controller.repeat();
+    } else if (_controller.isAnimating) {
+      _controller.stop();
+    }
+  }
 
   @override
   void dispose() {
@@ -178,20 +181,18 @@ class _WavyRRectRingState extends State<_WavyRRectRing>
       child: AnimatedBuilder(
         animation: _controller,
         builder: (BuildContext context, Widget? _) {
-          final double turn = _controller.value * 2 * math.pi;
           return CustomPaint(
             size: Size.square(widget.size),
-            painter: _WavyRRectPainter(
+            painter: _WavyRingPainter(
               progress: widget.progress,
               axis: widget.axis,
               strokeWidth: widget.strokeWidth,
               activeColor: widget.activeColor,
               trackColor: widget.trackColor,
               amplitude: ArtworkProgressRing.waveAmplitude,
-              // Определённое кольцо «дышит» бегущей волной, неопределённое —
-              // крутится целиком.
-              phase: widget.progress == null ? 0 : turn,
-              rotation: widget.progress == null ? turn : 0,
+              rotation: widget.progress == null
+                  ? _controller.value * 2 * math.pi
+                  : 0,
             ),
           );
         },
@@ -200,15 +201,14 @@ class _WavyRRectRingState extends State<_WavyRRectRing>
   }
 }
 
-class _WavyRRectPainter extends CustomPainter {
-  _WavyRRectPainter({
+class _WavyRingPainter extends CustomPainter {
+  _WavyRingPainter({
     required this.progress,
     required this.axis,
     required this.strokeWidth,
     required this.activeColor,
     required this.trackColor,
     required this.amplitude,
-    required this.phase,
     required this.rotation,
   });
 
@@ -219,7 +219,8 @@ class _WavyRRectPainter extends CustomPainter {
   final Color activeColor;
   final Color trackColor;
   final double amplitude;
-  final double phase;
+
+  /// Поворот всего кольца — для неопределённого состояния.
   final double rotation;
 
   /// Длина волны, логические пиксели — как `wavelength` у кругового
@@ -241,35 +242,26 @@ class _WavyRRectPainter extends CustomPainter {
 
     // Старт — сверху по центру, как у кругового индикатора (там −90°).
     final double start = axis.width / 2 - axis.tlRadiusX;
+    final Offset center = axis.center;
 
     canvas.save();
     if (rotation != 0) {
-      final Offset center = size.center(Offset.zero);
+      final Offset pivot = size.center(Offset.zero);
       canvas
-        ..translate(center.dx, center.dy)
+        ..translate(pivot.dx, pivot.dy)
         ..rotate(rotation)
-        ..translate(-center.dx, -center.dy);
+        ..translate(-pivot.dx, -pivot.dy);
     }
 
-    final Offset center = axis.center;
     final double? p = progress;
     if (p == null) {
-      // Неопределённое: плоская дорожка плюс бегущая волнистая дуга.
+      // Неопределённое: плоская дорожка плюс бегущая по кругу волнистая дуга.
       canvas.drawPath(
-        _segment(metric, center, total, start, total, 0, 0, waveK),
+        _segment(metric, center, total, start, total, 0, waveK),
         trackPaint,
       );
       canvas.drawPath(
-        _segment(
-          metric,
-          center,
-          total,
-          start,
-          total * 0.3,
-          amplitude,
-          phase,
-          waveK,
-        ),
+        _segment(metric, center, total, start, total * 0.3, amplitude, waveK),
         activePaint,
       );
     } else {
@@ -277,7 +269,7 @@ class _WavyRRectPainter extends CustomPainter {
       final double active = clamped * total;
       if (clamped >= 1.0) {
         canvas.drawPath(
-          _segment(metric, center, total, start, total, amplitude, phase, waveK),
+          _segment(metric, center, total, start, total, amplitude, waveK),
           activePaint,
         );
       } else {
@@ -293,7 +285,6 @@ class _WavyRRectPainter extends CustomPainter {
               start + active + gap,
               trackLength,
               0,
-              0,
               waveK,
             ),
             trackPaint,
@@ -301,16 +292,7 @@ class _WavyRRectPainter extends CustomPainter {
         }
         if (active > 0) {
           canvas.drawPath(
-            _segment(
-              metric,
-              center,
-              total,
-              start,
-              active,
-              amplitude,
-              phase,
-              waveK,
-            ),
+            _segment(metric, center, total, start, active, amplitude, waveK),
             activePaint,
           );
         }
@@ -340,7 +322,6 @@ class _WavyRRectPainter extends CustomPainter {
     double offset,
     double length,
     double amplitude,
-    double phase,
     double waveK,
   ) {
     final Path path = Path();
@@ -358,7 +339,7 @@ class _WavyRRectPainter extends CustomPainter {
       if (normal.dx * radial.dx + normal.dy * radial.dy < 0) {
         normal = -normal;
       }
-      final double wave = amplitude * math.sin(phase + distance * waveK);
+      final double wave = amplitude * math.sin(distance * waveK);
       final Offset point = tangent.position + normal * wave;
       if (i == 0) {
         path.moveTo(point.dx, point.dy);
@@ -370,13 +351,12 @@ class _WavyRRectPainter extends CustomPainter {
   }
 
   @override
-  bool shouldRepaint(_WavyRRectPainter old) =>
+  bool shouldRepaint(_WavyRingPainter old) =>
       old.progress != progress ||
       old.axis != axis ||
       old.strokeWidth != strokeWidth ||
       old.activeColor != activeColor ||
       old.trackColor != trackColor ||
       old.amplitude != amplitude ||
-      old.phase != phase ||
       old.rotation != rotation;
 }
