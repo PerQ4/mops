@@ -1,3 +1,5 @@
+import 'dart:math' as math;
+
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 
@@ -13,6 +15,7 @@ import '../../widgets/artist_line.dart';
 import '../../widgets/artwork.dart';
 import '../../widgets/track_menu.dart';
 import '../../widgets/track_tile.dart';
+import '../player/artwork_progress_ring.dart';
 import '../player/lyrics_view.dart';
 import '../player/player_controls.dart';
 import '../player/queue_list.dart';
@@ -176,9 +179,19 @@ class _PlayerRightPanelState extends ConsumerState<PlayerRightPanel> {
       child: LayoutBuilder(
         builder: (BuildContext context, BoxConstraints constraints) {
           // Обложка — от доступной высоты, а не фиксированная: на низком окне
-          // фиксированные 260 не влезали и панель переполнялась снизу.
-          final double artSide =
-              (constraints.maxHeight * 0.30).clamp(96.0, 260.0);
+          // фиксированные 260 не влезали и панель переполнялась снизу. Ширину
+          // тоже учитываем: кольцу нужно место снаружи обложки, и на узкой
+          // панели обложка с кольцом иначе вылезала бы за край.
+          final double ringSpace = 2 *
+              (ArtworkProgressRing.panelStroke +
+                  ArtworkProgressRing.waveAmplitude);
+          final double artSide = math.min(
+            (constraints.maxHeight * 0.30).clamp(96.0, 260.0),
+            (constraints.maxWidth -
+                    _PanelArtwork.horizontalPadding * 2 -
+                    ringSpace)
+                .clamp(72.0, 260.0),
+          );
           return Column(
             crossAxisAlignment: CrossAxisAlignment.stretch,
             children: <Widget>[
@@ -249,27 +262,58 @@ class _PlayerRightPanelState extends ConsumerState<PlayerRightPanel> {
 }
 
 /// Крупная обложка играющего трека — для режима «Плеер».
+///
+/// Вокруг обложки идёт волнистое кольцо прогресса, как у мини-плеера
+/// ArchiveTune. Обложка в панели — скруглённый квадрат (как и на полном
+/// экране), поэтому кольцо повторяет её форму.
 class _PanelArtwork extends StatelessWidget {
   const _PanelArtwork({required this.track, required this.side});
 
   final Track track;
   final double side;
 
+  /// Боковой отступ обложки в панели — из раскладки выше.
+  static const double horizontalPadding = 20;
+
   @override
   Widget build(BuildContext context) {
     final List<String> variants = track.artworkFallbacks(kArtworkLarge);
+    final BorderRadius shape = BorderRadius.circular(AppLayout.radiusL);
+    final double extent = ArtworkProgressRing.extent(
+      side,
+      ArtworkProgressRing.panelStroke,
+    );
 
     return Padding(
-      padding: const EdgeInsets.symmetric(horizontal: 20, vertical: 4),
+      padding: const EdgeInsets.symmetric(
+        horizontal: horizontalPadding,
+        vertical: 4,
+      ),
       child: Center(
         child: SizedBox(
-          width: side,
-          height: side,
-          child: Artwork(
-            url: variants.isEmpty ? null : variants.first,
-            fallbacks:
-                variants.length > 1 ? variants.sublist(1) : const <String>[],
-            radius: BorderRadius.circular(AppLayout.radiusL),
+          width: extent,
+          height: extent,
+          child: Stack(
+            alignment: Alignment.center,
+            children: <Widget>[
+              // Кольцо под обложкой: позицию слушает само, нажатий не ловит.
+              ArtworkProgressRing(
+                side: side,
+                shape: shape,
+                strokeWidth: ArtworkProgressRing.panelStroke,
+              ),
+              SizedBox(
+                width: side,
+                height: side,
+                child: Artwork(
+                  url: variants.isEmpty ? null : variants.first,
+                  fallbacks: variants.length > 1
+                      ? variants.sublist(1)
+                      : const <String>[],
+                  radius: shape,
+                ),
+              ),
+            ],
           ),
         ),
       ),

@@ -19,6 +19,7 @@ import '../shell/content_navigator.dart';
 import '../shell/destinations.dart';
 import '../shell/player_panel.dart';
 import '../../state/shell.dart';
+import 'artwork_progress_ring.dart';
 import 'lyrics_actions.dart';
 import 'lyrics_view.dart';
 import 'queue_list.dart';
@@ -385,8 +386,32 @@ class _PlayerIslandState extends ConsumerState<_PlayerIsland> {
 
   @override
   Widget build(BuildContext context) {
-    final PlayerUiState player = ref.watch(playerControllerProvider);
-    final Track track = player.current!;
+    // Позицию сюда не подмешиваем: её слушает только кольцо прогресса
+    // (`ArtworkProgressRing`), и тик позиции не должен перестраивать весь
+    // островок. Запись сравнивается по значению, поэтому подписка срабатывает
+    // лишь на смену трека, состояния загрузки или очереди.
+    final (
+      Track? current,
+      bool isPlaying,
+      bool isLoading,
+      bool downloading,
+      double downloadProgress,
+      String? error,
+      List<Track> queue,
+    ) = ref.watch(
+      playerControllerProvider.select(
+        (PlayerUiState s) => (
+          s.current,
+          s.isPlaying,
+          s.isLoading,
+          s.downloading,
+          s.downloadProgress,
+          s.error,
+          s.queue,
+        ),
+      ),
+    );
+    final Track track = current!;
     final bool wide = context.isExpandedLayout;
 
     // Насколько жест набран: подмешиваем акцент к поверхности островка, чтобы
@@ -429,15 +454,26 @@ class _PlayerIslandState extends ConsumerState<_PlayerIsland> {
             mainAxisSize: MainAxisSize.min,
             children: <Widget>[
               const SizedBox(width: 10),
-              _ArtworkWithProgress(track: track, player: player),
+              _ArtworkWithProgress(track: track),
               const SizedBox(width: 12),
               // Ширина подписи ограничена: островок не должен растягиваться
               // на всю ширину монитора.
               SizedBox(
                 width: wide ? 220 : 150,
-                child: _IslandTitles(track: track, player: player),
+                child: _IslandTitles(
+                  track: track,
+                  downloading: downloading,
+                  downloadProgress: downloadProgress,
+                  error: error,
+                ),
               ),
-              _IslandControls(player: player, wide: wide),
+              _IslandControls(
+                isPlaying: isPlaying,
+                isLoading: isLoading,
+                queue: queue,
+                current: current,
+                wide: wide,
+              ),
               const SizedBox(width: 8),
             ],
           ),
@@ -544,46 +580,35 @@ class _PlayerIslandState extends ConsumerState<_PlayerIsland> {
   }
 }
 
-/// Обложка с кольцом прогресса — вместо отдельной полосы перемотки.
+/// Обложка с волнистым кольцом прогресса — вместо отдельной полосы перемотки.
 class _ArtworkWithProgress extends StatelessWidget {
-  const _ArtworkWithProgress({required this.track, required this.player});
+  const _ArtworkWithProgress({required this.track});
 
   final Track track;
-  final PlayerUiState player;
+
+  /// Толщина кольца в островке — тоньше, чем у дорожки панели: обложка мелкая.
+  static const double _ringStroke = 3.5;
 
   @override
   Widget build(BuildContext context) {
-    final ColorScheme scheme = Theme.of(context).colorScheme;
     const double side = 44;
-    // Кольцо заметнее, пока играет: у паузы оно тоньше и бледнее, поэтому
-    // состояние читается без отдельной подписи.
-    final bool playing = player.isPlaying;
-    final double ring = playing ? 3.5 : 2.5;
+    final double extent = ArtworkProgressRing.extent(side, _ringStroke);
     final List<String> variants = track.artworkFallbacks(
       (side * MediaQuery.devicePixelRatioOf(context)).round(),
     );
 
     return SizedBox(
-      width: side + ring * 2,
-      height: side + ring * 2,
+      width: extent,
+      height: extent,
       child: Stack(
         alignment: Alignment.center,
         children: <Widget>[
-          SizedBox(
-            width: side + ring * 2,
-            height: side + ring * 2,
-            child: CircularProgressIndicator(
-              // Пока длительность неизвестна, кольцо остаётся пустым:
-              // «бегущий» индикатор здесь дублировал бы кнопку загрузки.
-              value: player.playback.duration > Duration.zero
-                  ? player.playback.progress
-                  : 0,
-              strokeWidth: ring,
-              strokeCap: StrokeCap.round,
-              color: scheme.primary,
-              backgroundColor:
-                  scheme.onSurface.withValues(alpha: playing ? 0.18 : 0.10),
-            ),
+          // Кольцо под обложкой: оно само слушает позицию, а нажатия по
+          // обложке не перехватывает.
+          ArtworkProgressRing(
+            side: side,
+            shape: BorderRadius.circular(side / 2),
+            strokeWidth: _ringStroke,
           ),
           SizedBox(
             width: side,
@@ -606,18 +631,25 @@ class _ArtworkWithProgress extends StatelessWidget {
 }
 
 class _IslandTitles extends StatelessWidget {
-  const _IslandTitles({required this.track, required this.player});
+  const _IslandTitles({
+    required this.track,
+    required this.downloading,
+    required this.downloadProgress,
+    required this.error,
+  });
 
   final Track track;
-  final PlayerUiState player;
+  final bool downloading;
+  final double downloadProgress;
+  final String? error;
 
   @override
   Widget build(BuildContext context) {
     final TextTheme text = Theme.of(context).textTheme;
     final ColorScheme scheme = Theme.of(context).colorScheme;
-    final String subtitle = player.downloading
-        ? 'Загрузка ${(player.downloadProgress * 100).round()}%'
-        : player.error ?? track.artistLine;
+    final String subtitle = downloading
+        ? 'Загрузка ${(downloadProgress * 100).round()}%'
+        : error ?? track.artistLine;
 
     return InkWell(
       onTap: () => AppRoutes.nowPlaying(context),
@@ -640,7 +672,7 @@ class _IslandTitles extends StatelessWidget {
               maxLines: 1,
               overflow: TextOverflow.ellipsis,
               style: text.bodySmall?.copyWith(
-                color: player.error != null
+                color: error != null
                     ? scheme.error
                     : scheme.onSurfaceVariant,
               ),
@@ -654,9 +686,21 @@ class _IslandTitles extends StatelessWidget {
 
 /// Управление внутри островка.
 class _IslandControls extends ConsumerWidget {
-  const _IslandControls({required this.player, required this.wide});
+  const _IslandControls({
+    required this.isPlaying,
+    required this.isLoading,
+    required this.queue,
+    required this.current,
+    required this.wide,
+  });
 
-  final PlayerUiState player;
+  final bool isPlaying;
+  final bool isLoading;
+  final List<Track> queue;
+
+  /// Текущий трек: нужен кнопкам лайка и «…».
+  final Track? current;
+
   final bool wide;
 
   @override
@@ -681,7 +725,7 @@ class _IslandControls extends ConsumerWidget {
     // в полноэкранном плеере всегда показывают одно и то же.
     final bool liked = ref.watch(
       likedIdsProvider.select(
-        (Set<String> ids) => ids.contains(player.current?.id),
+        (Set<String> ids) => ids.contains(current?.id),
       ),
     );
 
@@ -692,7 +736,7 @@ class _IslandControls extends ConsumerWidget {
           tooltip: 'Предыдущий',
           iconSize: 24,
           icon: const Icon(Icons.skip_previous_rounded),
-          onPressed: player.queue.isEmpty ? null : controller.previous,
+          onPressed: queue.isEmpty ? null : controller.previous,
         ),
         // Один индикатор загрузки на весь островок: пока идёт подготовка,
         // вместо иконки воспроизведения показываем круг. Раньше их было
@@ -700,16 +744,16 @@ class _IslandControls extends ConsumerWidget {
         SizedBox(
           width: 40,
           height: 40,
-          child: player.isLoading
+          child: isLoading
               ? const Padding(
                   padding: EdgeInsets.all(9),
                   child: CircularProgressIndicator(strokeWidth: 2.5),
                 )
               : IconButton.filled(
-                  tooltip: player.isPlaying ? 'Пауза' : 'Играть',
+                  tooltip: isPlaying ? 'Пауза' : 'Играть',
                   iconSize: 24,
                   icon: Icon(
-                    player.isPlaying
+                    isPlaying
                         ? Icons.pause_rounded
                         : Icons.play_arrow_rounded,
                   ),
@@ -720,7 +764,7 @@ class _IslandControls extends ConsumerWidget {
           tooltip: 'Следующий',
           iconSize: 24,
           icon: const Icon(Icons.skip_next_rounded),
-          onPressed: player.queue.isEmpty ? null : controller.next,
+          onPressed: queue.isEmpty ? null : controller.next,
         ),
         IconButton(
           tooltip: liked ? 'Убрать из «Мне нравится»' : 'Нравится',
@@ -729,8 +773,8 @@ class _IslandControls extends ConsumerWidget {
             liked ? Icons.favorite : Icons.favorite_border,
             color: liked ? scheme.primary : null,
           ),
-          onPressed: signedIn && player.current != null
-              ? () => _like(context, ref, player.current!)
+          onPressed: signedIn && current != null
+              ? () => _like(context, ref, current!)
               : null,
         ),
         IconButton(
@@ -762,9 +806,9 @@ class _IslandControls extends ConsumerWidget {
           tooltip: 'Действия',
           iconSize: 20,
           icon: const Icon(Icons.more_vert),
-          onPressed: player.current == null
+          onPressed: current == null
               ? null
-              : () => showTrackMenu(context, player.current!),
+              : () => showTrackMenu(context, current!),
         ),
       ],
     );

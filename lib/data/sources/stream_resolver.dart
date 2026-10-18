@@ -318,6 +318,13 @@ class YoutubeStreamResolver implements StreamResolver {
   }
 
   /// Выбирает дорожку под желаемое качество.
+  ///
+  /// «Максимум» — лучшая доступная дорожка, «экономия» — самая дешёвая,
+  /// «среднее» — ближайшая к целевым 128 kbps. Для «среднего» важна именно
+  /// близость, а не «строго не выше цели»: YouTube отдаёт фактический битрейт
+  /// дорожки, а не номинальный, — у itag 140 это 130–131 kbps при номинале 128,
+  /// и отбор «не выше 128» промахивался мимо него, роняя «среднее» до
+  /// ~70 kbps Opus, хотя рядом лежала дорожка ~128 kbps.
   ResolvedStream? _pickCandidate(
     List<_AudioCandidate> candidates,
     AudioQuality quality,
@@ -327,17 +334,12 @@ class YoutubeStreamResolver implements StreamResolver {
     candidates.sort((_AudioCandidate a, _AudioCandidate b) =>
         a.bitrateKbps.compareTo(b.bitrateKbps));
 
+    // Список отсортирован по возрастанию, поэтому «экономия» — это первый.
     _AudioCandidate chosen = candidates.first;
     if (quality == AudioQuality.high) {
       chosen = candidates.last;
-    } else {
-      for (final _AudioCandidate candidate in candidates) {
-        if (candidate.bitrateKbps <= quality.targetKbps) {
-          chosen = candidate;
-        } else {
-          break;
-        }
-      }
+    } else if (quality == AudioQuality.medium) {
+      chosen = _nearestToTarget(candidates, quality.targetKbps);
     }
 
     return ResolvedStream(
@@ -348,6 +350,22 @@ class YoutubeStreamResolver implements StreamResolver {
       userAgent: chosen.userAgent,
       expiresAt: DateTime.now().add(const Duration(hours: 5)),
     );
+  }
+
+  /// Дорожка, ближайшая к целевому битрейту; при равной близости — дешевле
+  /// (список отсортирован по возрастанию, строгое «<» оставляет прежнюю).
+  _AudioCandidate _nearestToTarget(
+    List<_AudioCandidate> candidates,
+    int targetKbps,
+  ) {
+    _AudioCandidate best = candidates.first;
+    for (final _AudioCandidate candidate in candidates) {
+      if ((candidate.bitrateKbps - targetKbps).abs() <
+          (best.bitrateKbps - targetKbps).abs()) {
+        best = candidate;
+      }
+    }
+    return best;
   }
 
   @override

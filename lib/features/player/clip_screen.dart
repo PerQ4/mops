@@ -10,6 +10,7 @@ import '../../core/auth/inapp_login.dart';
 import '../../core/webview/webview_environment.dart';
 import '../../data/models/models.dart';
 import '../../state/player_controller.dart';
+import 'clip_embed.dart';
 
 /// Просмотр клипа трека во встроенном браузере.
 ///
@@ -18,9 +19,11 @@ import '../../state/player_controller.dart';
 /// встроенным браузером (WebView2 в Windows, WKWebView в macOS) — тем же
 /// механизмом, что и вход в аккаунт (см. `inAppLoginAvailable`).
 ///
-/// YouTube часть клипов запрещает встраивать: страница при этом загружается,
-/// но внутри неё — «Смотрите на YouTube». Поэтому переход во внешний браузер
-/// доступен всегда, а не только при ошибке загрузки.
+/// Страницу клипа открываем с заголовком `Referer` (см. [clipReferer]): без
+/// него YouTube отвечает «Ошибка 153». Часть клипов владелец всё равно
+/// запрещает встраивать — тогда страница загружается, но играть нечему.
+/// Поэтому переход во внешний браузер доступен всегда, а отказ плеера мы
+/// распознаём и показываем вместо пустого окна понятное сообщение.
 class ClipScreen extends ConsumerStatefulWidget {
   const ClipScreen({required this.track, super.key});
 
@@ -46,6 +49,31 @@ class _ClipScreenState extends ConsumerState<ClipScreen> {
 
   /// Документ клипа не загрузился — предлагаем открыть во внешнем браузере.
   bool _failed = false;
+
+  /// Плеер отказался играть клип (запрет встраивания и подобное) — вместо
+  /// страницы YouTube показываем своё объяснение.
+  bool _embedRefused = false;
+
+  /// Домен, с которого сейчас открыт клип. Начинаем с обычного `youtube.com`,
+  /// при отказе один раз пробуем `youtube-nocookie.com`.
+  ClipEmbedHost _host = ClipEmbedHost.youTube;
+
+  /// Вторую попытку (nocookie) уже сделали — больше не повторяем.
+  bool _retriedNoCookie = false;
+
+  /// Проверяем отказ плеера не только сразу после загрузки, но и с небольшой
+  /// задержкой: страница-отказ собирается скриптом уже после `onLoadStop`.
+  Timer? _probeTimer;
+
+  /// Проверка страницы уже идёт: вторую не запускаем, иначе две проверки
+  /// решали бы судьбу клипа наперегонки (одна ещё видит старую страницу,
+  /// вторая — уже новую).
+  bool _probeInFlight = false;
+
+  /// Ссылка на встроенный браузер: нужна, чтобы сменить адрес клипа при
+  /// повторной попытке (уже созданный WebView новый `initialUrlRequest` не
+  /// читает).
+  InAppWebViewController? _webController;
 
   /// Полноэкранный режим: шапка скрыта, окно развёрнуто.
   bool _fullscreen = false;
@@ -80,10 +108,12 @@ class _ClipScreenState extends ConsumerState<ClipScreen> {
   /// без обращения к `ref` в `dispose` (там виджет уже снимается).
   PlayerController? _controller;
 
-  /// Ссылка на клип во встроенном браузере. `rel=0` убирает чужие видео
-  /// в конце, `autoplay=1` запускает клип сразу.
-  String get _embedUrl =>
-      'https://www.youtube.com/embed/${widget.track.id}?autoplay=1&rel=0';
+  /// Ссылка на клип во встроенном браузере. Заголовки запроса — см.
+  /// `clip_embed.dart`: без `Referer` YouTube отвечает «Ошибка 153».
+  URLRequest _embedRequest() => URLRequest(
+        url: WebUri(clipEmbedUrl(widget.track.id, _host)),
+        headers: clipEmbedHeaders(),
+      );
 
   /// Ссылка для внешнего браузера — обычная страница просмотра, а не embed:
   /// только она обходит запрет на встраивание.
@@ -128,6 +158,7 @@ class _ClipScreenState extends ConsumerState<ClipScreen> {
 
   @override
   void dispose() {
+    _probeTimer?.cancel();
     // Возвращаем звук как было: играло — продолжаем, стояло — не трогаем.
     // `play()` возвращает Future, но здесь ждать нечего: маршрут уже снят.
     // Трек сверяем: если за время клипа очередь ушла вперёд, его звук не наш.
@@ -197,6 +228,14 @@ class _ClipScreenState extends ConsumerState<ClipScreen> {
         onOpenExternal: _openExternal,
       );
     }
+    if (_embedRefused) {
+      return _ClipFallback(
+        message: 'YouTube не отдал этот клип встроенному плееру — обычно это '
+            'значит, что владелец запретил встраивание. Его можно посмотреть '
+            'в браузере.',
+        onOpenExternal: _openExternal,
+      );
+    }
     return Stack(
       fit: StackFit.expand,
       children: <Widget>[
@@ -204,14 +243,21 @@ class _ClipScreenState extends ConsumerState<ClipScreen> {
           // Окружение WebView2 из каталога приложения: рядом с exe писать
           // нельзя, если приложение установлено в `Program Files`.
           webViewEnvironment: mopsWebViewEnvironment,
-          initialUrlRequest: URLRequest(url: WebUri(_embedUrl)),
+          initialUrlRequest: _embedRequest(),
+          onWebViewCreated: (InAppWebViewController controller) {
+            _webController = controller;
+          },
           onLoadStart: (InAppWebViewController controller, WebUri? url) {
+            // Старая проверка относится к прошлой странице: её отменяем,
+            // иначе она сработала бы уже на новом адресе.
+            _probeTimer?.cancel();
             if (!mounted) return;
             setState(() => _loading = true);
           },
           onLoadStop: (InAppWebViewController controller, WebUri? url) {
             if (!mounted) return;
             setState(() => _loading = false);
+            _scheduleProbe();
           },
           onReceivedError: (
             InAppWebViewController controller,
@@ -230,6 +276,75 @@ class _ClipScreenState extends ConsumerState<ClipScreen> {
         if (_loading) const Center(child: CircularProgressIndicator()),
       ],
     );
+  }
+
+  /// Ставит проверку страницы: сразу и ещё раз с задержкой.
+  ///
+  /// Второй раз нужен потому, что страницу-отказ собирает скрипт плеера уже
+  /// после `onLoadStop` — по одному лишь первому замеру отказ можно пропустить.
+  void _scheduleProbe() {
+    unawaited(_probePage());
+    _probeTimer?.cancel();
+    _probeTimer = Timer(const Duration(seconds: 2), () {
+      unawaited(_probePage());
+    });
+  }
+
+  /// Спрашивает страницу, отказался ли плеер играть клип.
+  ///
+  /// Проверку не выдумываем нативными вызовами: читаем заголовок и текст
+  /// страницы через `evaluateJavascript` и сверяем с известными текстами
+  /// отказа (см. `clip_embed.dart`).
+  Future<void> _probePage() async {
+    if (!mounted || _embedRefused || _failed || _probeInFlight) return;
+    final InAppWebViewController? controller = _webController;
+    if (controller == null) return;
+    _probeInFlight = true;
+    try {
+      final Object? result;
+      try {
+        result = await controller.evaluateJavascript(source: clipProbeScript);
+      } on Object {
+        // Прочитать страницу не вышло — не объявляем отказ наугад: пусть
+        // страница останется как есть, кнопка внешнего браузера доступна.
+        return;
+      }
+      if (!mounted) return;
+      final ClipPageProbe probe = clipParseProbe(result);
+      if (!clipLooksRefused(probe.title, probe.text)) return;
+      await _onEmbedRefused();
+    } finally {
+      _probeInFlight = false;
+    }
+  }
+
+  /// Плеер отказал: сначала пробуем запасной адрес, потом показываем сообщение.
+  Future<void> _onEmbedRefused() async {
+    if (!mounted || _embedRefused) return;
+    if (!_retriedNoCookie) {
+      // Причина отказа — в заголовке запроса, и он уже отправлен. Второй
+      // адрес пробуем потому, что общий профиль WebView хранит вход в
+      // аккаунт: nocookie не отправляет его cookie до начала
+      // воспроизведения, а с ним YouTube может отказывать иначе.
+      _retriedNoCookie = true;
+      _host = ClipEmbedHost.youTubeNoCookie;
+      _probeTimer?.cancel();
+      final InAppWebViewController? controller = _webController;
+      if (controller != null) {
+        setState(() => _loading = true);
+        try {
+          await controller.loadUrl(urlRequest: _embedRequest());
+          return;
+        } on Object {
+          // Адрес не сменился — дальше остаётся только внешний браузер.
+        }
+        if (!mounted) return;
+      }
+    }
+    setState(() {
+      _loading = false;
+      _embedRefused = true;
+    });
   }
 
   /// Включает/выключает полноэкранный режим.
