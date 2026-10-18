@@ -18,6 +18,8 @@ import 'sidebar.dart';
 ///
 ///  * **широкая раскладка** — слева постоянная панель библиотеки, справа
 ///    содержимое отдельной скруглённой панелью, внизу док из двух островков;
+///  * **средняя** — панель библиотеки остаётся, но свёрнутой в полосу значков
+///    (её можно развернуть кнопкой); док тот же;
 ///  * **узкая** — боковой панели нет, но док тот же: навигация остаётся
 ///    плавающим островком, а не превращается в стандартную нижнюю панель.
 ///
@@ -42,6 +44,7 @@ class AppShell extends ConsumerWidget {
       playerControllerProvider.select((PlayerUiState s) => s.current?.id),
     );
 
+    final bool compact = context.isCompactLayout;
     final bool wide = context.isExpandedLayout;
 
     // Правая панель плеера — только в широкой раскладке, только при треке и
@@ -75,12 +78,17 @@ class AppShell extends ConsumerWidget {
       ],
     );
 
-    if (wide) {
+    if (!compact) {
       final ColorScheme scheme = Theme.of(context).colorScheme;
       // Фон всего каркаса — цвет боковой панели. Основная область лежит на
       // нём отдельной панелью со скруглением со стороны панели, поэтому в
       // «вырезах» скругления виден именно фон панели: содержимое читается
       // как самостоятельная панель поверх библиотеки (как в Spotify Desktop).
+      //
+      // Средняя раскладка идёт по тому же пути: панель библиотеки есть, лишь
+      // показывается свёрнутой (сворачиванием управляет сама панель по ширине
+      // окна). Панель плеера остаётся принадлежностью широкой раскладки — на
+      // среднем окне её размещать негде.
       return Scaffold(
         backgroundColor: scheme.surfaceContainer,
         body: Row(
@@ -94,7 +102,7 @@ class AppShell extends ConsumerWidget {
                 borderRadius: BorderRadius.horizontal(
                   left: const Radius.circular(AppLayout.contentPanelRadius),
                   right: Radius.circular(
-                    panelOpen ? AppLayout.contentPanelRadius : 0,
+                    wide && panelOpen ? AppLayout.contentPanelRadius : 0,
                   ),
                 ),
                 child: ColoredBox(
@@ -105,13 +113,13 @@ class AppShell extends ConsumerWidget {
             ),
             // Панель плеера отнимает ширину у содержимого (оно сужается
             // плавно), а док остаётся видимым — он лежит внутри содержимого.
-            if (rightPanel) PlayerRightPanelSlot(open: panelOpen),
+            if (wide && rightPanel) PlayerRightPanelSlot(open: panelOpen),
           ],
         ),
       );
     }
 
-    // Узкая раскладка: навигация живёт в том же плавающем островке
+    // Компактная раскладка: навигация живёт в том же плавающем островке
     // (см. [FloatingDock]), поэтому отдельная нижняя панель не нужна.
     return Scaffold(body: content);
   }

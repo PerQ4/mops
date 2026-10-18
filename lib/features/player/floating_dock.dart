@@ -586,13 +586,12 @@ class _ArtworkWithProgress extends StatelessWidget {
 
   final Track track;
 
-  /// Толщина кольца в островке — тоньше, чем у дорожки панели: обложка мелкая.
-  static const double _ringStroke = 3.5;
-
   @override
   Widget build(BuildContext context) {
     const double side = 44;
-    final double extent = ArtworkProgressRing.extent(side, _ringStroke);
+    // Толщину и волну кольцо берёт из стороны обложки само: островок задаёт
+    // пропорции, а панель с крупной обложкой масштабирует их.
+    final double extent = ArtworkProgressRing.extent(side);
     final List<String> variants = track.artworkFallbacks(
       (side * MediaQuery.devicePixelRatioOf(context)).round(),
     );
@@ -608,7 +607,6 @@ class _ArtworkWithProgress extends StatelessWidget {
           ArtworkProgressRing(
             side: side,
             shape: BorderRadius.circular(side / 2),
-            strokeWidth: _ringStroke,
           ),
           SizedBox(
             width: side,

@@ -29,7 +29,6 @@ class ArtworkProgressRing extends ConsumerWidget {
     super.key,
     required this.side,
     required this.shape,
-    this.strokeWidth = 3.5,
   });
 
   /// Сторона обложки, вокруг которой идёт кольцо.
@@ -38,27 +37,48 @@ class ArtworkProgressRing extends ConsumerWidget {
   /// Скругление обложки. Полностью круглое — кольцо выйдет кругом.
   final BorderRadius shape;
 
-  /// Толщина кольца — как у дорожки полосы перемотки.
-  final double strokeWidth;
-
-  /// Амплитуда волны, логические пиксели.
+  /// Сторона обложки, на которой закреплены пропорции кольца, — островок.
   ///
-  /// Не 1.6 как в пакете: к кольцу добавляется ещё и толщина штриха, и вдвоём
-  /// они давали вокруг небольшой обложки островка слишком толстую «колбасу».
-  static const double waveAmplitude = 1.0;
+  /// Эталон (`M3ECircularProgressTheme.defaults`) рассчитан на индикатор
+  /// 48 dp: штрих 4, амплитуда 1.6, длина волны 15, — и в мини-плеере
+  /// ArchiveTune (`MiniPlayerComponents.kt`) обложка 42 обёрнута индикатором
+  /// 52 dp. На нашей стороне 44 те же пропорции дали бы штрих 3.67, амплитуду
+  /// 1.47 и волну 13.75, но владелец просил гребни ближе и волну ниже
+  /// («не колбаса») — отсюда 3.5 / 1.0 / 10. Числа ниже — эти значения,
+  /// делённые на сторону, поэтому дальше они масштабируются от обложки: на
+  /// крупной обложке панели кольцо остаётся тем же по пропорциям, а не
+  /// превращается в тонкую нитку с частой рябью, как при абсолютных пикселях.
+  static const double _refSide = 44;
 
-  /// Толщина кольца в правой панели: обложка крупная, тонкая линия на ней
-  /// потерялась бы.
-  static const double panelStroke = 5;
+  /// Толщина штриха на стороне [_refSide].
+  static const double _refStroke = 3.5;
+
+  /// Амплитуда волны на стороне [_refSide].
+  static const double _refAmplitude = 1.0;
+
+  /// Длина волны на стороне [_refSide] — гребни чаще эталонных 15 на 48.
+  static const double _refWavelength = 10;
+
+  /// Толщина кольца для обложки [side].
+  static double strokeFor(double side) => side * (_refStroke / _refSide);
+
+  /// Амплитуда волны для обложки [side].
+  static double amplitudeFor(double side) => side * (_refAmplitude / _refSide);
+
+  /// Длина волны для обложки [side].
+  static double wavelengthFor(double side) =>
+      side * (_refWavelength / _refSide);
+
+  /// Во сколько раз габарит кольца больше стороны обложки: штрих и амплитуда
+  /// выступают за кромку с каждой стороны.
+  static const double outerRatio =
+      1 + 2 * ((_refStroke + _refAmplitude) / _refSide);
 
   /// Габарит кольца вокруг обложки со стороной [side].
   ///
-  /// Кольцо центрируется на кромке обложки, а волна выходит за неё на
-  /// [waveAmplitude] — поэтому места нужно на толщину и амплитуду с каждой
-  /// стороны. Компоновка (островок, панель) считает по этому значению, чтобы
-  /// кольцо не обрезалось.
-  static double extent(double side, double strokeWidth) =>
-      side + 2 * (strokeWidth + waveAmplitude);
+  /// Компоновка (островок, панель) считает по этому значению, чтобы кольцо не
+  /// обрезалось.
+  static double extent(double side) => side * outerRatio;
 
   @override
   Widget build(BuildContext context, WidgetRef ref) {
@@ -71,7 +91,8 @@ class ArtworkProgressRing extends ConsumerWidget {
         (PlayerUiState s) => (_progressOf(s), s.isLoading),
       ),
     );
-    final double box = extent(side, strokeWidth);
+    final double stroke = strokeFor(side);
+    final double box = extent(side);
 
     // Осевая линия кольца: контур обложки, раздутый на полтолщины, — тогда
     // внутренний край штриха ложится ровно на кромку обложки. Круг — частный
@@ -79,10 +100,10 @@ class ArtworkProgressRing extends ConsumerWidget {
     final RRect axis = RRect.fromRectAndRadius(
       Rect.fromCenter(
         center: Offset(box / 2, box / 2),
-        width: side + strokeWidth,
-        height: side + strokeWidth,
+        width: side + stroke,
+        height: side + stroke,
       ),
-      Radius.circular(shape.topLeft.x + strokeWidth / 2),
+      Radius.circular(shape.topLeft.x + stroke / 2),
     );
 
     // Кольцо только показывает прогресс: нажатия по обложке (и по всему
@@ -96,9 +117,14 @@ class ArtworkProgressRing extends ConsumerWidget {
           progress: loading ? null : progress,
           size: box,
           axis: axis,
-          strokeWidth: strokeWidth,
+          strokeWidth: stroke,
+          amplitude: amplitudeFor(side),
+          wavelength: wavelengthFor(side),
           activeColor: scheme.primary,
-          trackColor: scheme.onSurface.withValues(alpha: 0.16),
+          // Дорожка из эталона (`MiniPlayer.kt`, стиль без фона обложки):
+          // `colorScheme.outline` с альфой 0.18 — заметно, но не спорит с
+          // заливкой `primary`.
+          trackColor: scheme.outline.withValues(alpha: 0.18),
         ),
       ),
     );
@@ -124,6 +150,8 @@ class _WavyRing extends StatefulWidget {
     required this.size,
     required this.axis,
     required this.strokeWidth,
+    required this.amplitude,
+    required this.wavelength,
     required this.activeColor,
     required this.trackColor,
   });
@@ -135,6 +163,8 @@ class _WavyRing extends StatefulWidget {
   /// Осевая линия кольца.
   final RRect axis;
   final double strokeWidth;
+  final double amplitude;
+  final double wavelength;
   final Color activeColor;
   final Color trackColor;
 
@@ -189,7 +219,8 @@ class _WavyRingState extends State<_WavyRing>
               strokeWidth: widget.strokeWidth,
               activeColor: widget.activeColor,
               trackColor: widget.trackColor,
-              amplitude: ArtworkProgressRing.waveAmplitude,
+              amplitude: widget.amplitude,
+              wavelength: widget.wavelength,
               rotation: widget.progress == null
                   ? _controller.value * 2 * math.pi
                   : 0,
@@ -209,6 +240,7 @@ class _WavyRingPainter extends CustomPainter {
     required this.activeColor,
     required this.trackColor,
     required this.amplitude,
+    required this.wavelength,
     required this.rotation,
   });
 
@@ -220,15 +252,11 @@ class _WavyRingPainter extends CustomPainter {
   final Color trackColor;
   final double amplitude;
 
+  /// Длина волны, логические пиксели. Приходит от размера обложки.
+  final double wavelength;
+
   /// Поворот всего кольца — для неопределённого состояния.
   final double rotation;
-
-  /// Длина волны, логические пиксели.
-  ///
-  /// 10, а не 15 как у пакета: так гребни идут заметно чаще. Значение
-  /// фиксированное (как и в эталонном индикаторе), поэтому на крупной обложке
-  /// панели волн просто больше.
-  static const double wavelength = 10;
 
   @override
   void paint(Canvas canvas, Size size) {
@@ -243,8 +271,14 @@ class _WavyRingPainter extends CustomPainter {
     final Paint activePaint = _strokePaint(activeColor);
     final Paint trackPaint = _strokePaint(trackColor);
 
-    // Старт — сверху по центру, как у кругового индикатора (там −90°).
-    final double start = axis.width / 2 - axis.tlRadiusX;
+    // Старт — сверху по центру, как у эталонного кругового индикатора (там
+    // дуга начинается с −90° и идёт по часовой стрелке). Путь `RRect` в Skia
+    // начинается не сверху: он идёт по часовой от низа левой кромки, поэтому
+    // смещение считаем оттуда — левая сторона, четверть скругления, половина
+    // верхней стороны. Прежняя формула `width/2 - radius` давала для круга
+    // 9 часов, а для квадрата — середину левой стороны, и заливка начиналась
+    // не сверху.
+    final double start = _topCenterOffset(axis);
     final Offset center = axis.center;
 
     canvas.save();
@@ -276,16 +310,21 @@ class _WavyRingPainter extends CustomPainter {
           activePaint,
         );
       } else {
-        // Разрыв между заливкой и дорожкой — как `gapSize` у пакета.
-        final double gap = strokeWidth;
-        final double trackLength = total - active - gap * 2;
+        // Зазор между заливкой и дорожкой — из эталона: `gapAngle * radius`,
+        // то есть `gapSize + (штрих + дорожка) / 2`. У M3 `gapSize` равен
+        // толщине кольца, поэтому зазор = два штриха. Как и в эталоне, на
+        // самом старте зазор ужимается до длины заливки, иначе он «съел» бы
+        // дорожку целиком.
+        final double gap = 2 * strokeWidth;
+        final double applied = math.min(active, gap);
+        final double trackLength = total - active - applied * 2;
         if (trackLength > 0) {
           canvas.drawPath(
             _segment(
               metric,
               center,
               total,
-              start + active + gap,
+              start + active + applied,
               trackLength,
               0,
               waveK,
@@ -302,6 +341,18 @@ class _WavyRingPainter extends CustomPainter {
       }
     }
     canvas.restore();
+  }
+
+  /// Смещение начала кольца до верхней точки осевой линии.
+  ///
+  /// Путь `RRect` в Skia начинается внизу левой кромки и идёт по часовой
+  /// стрелке; до верхней точки по центру — левая сторона, четверть
+  /// скругления и половина верхней стороны.
+  static double _topCenterOffset(RRect axis) {
+    final double radius = axis.tlRadiusX;
+    return (axis.height - 2 * radius) +
+        math.pi * radius / 2 +
+        (axis.width / 2 - radius);
   }
 
   Paint _strokePaint(Color color) => Paint()
@@ -361,5 +412,6 @@ class _WavyRingPainter extends CustomPainter {
       old.activeColor != activeColor ||
       old.trackColor != trackColor ||
       old.amplitude != amplitude ||
+      old.wavelength != wavelength ||
       old.rotation != rotation;
 }

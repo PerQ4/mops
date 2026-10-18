@@ -75,6 +75,25 @@ abstract final class AppLayout {
   /// доступ к своим плейлистам, а так остаётся быстрый доступ по обложкам.
   static const double sidebarCollapsedWidth = 72;
 
+  /// Пределы ширины развёрнутой панели библиотеки.
+  ///
+  /// Минимум — чтобы помещались обложка, название и подпись, максимум —
+  /// чтобы на большом мониторе панель не растягивалась в пустую полосу.
+  static const double sidebarMinWidth = 220;
+  static const double sidebarMaxWidth = 480;
+
+  /// Доля окна, которую развёрнутая панель не должна превышать.
+  ///
+  /// Одних констант не хватало: на окне 1100 панель в 480 пикселей съедала
+  /// почти половину. На узком окне доля важнее абсолютного максимума.
+  static const double sidebarMaxWidthFraction = 0.4;
+
+  /// Ширина зоны захвата у правой кромки панели.
+  ///
+  /// Раньше кромка была 8 пикселей — по ней приходилось попадать точно; 14
+  /// заметно снисходительнее к промаху и не мешает содержимому.
+  static const double sidebarResizeHandleWidth = 14;
+
   /// Высота шапки экрана.
   static const double appBarHeight = 64;
 
@@ -143,6 +162,27 @@ abstract final class AppLayout {
   /// Ширина содержимого с учётом максимальной ширины страницы.
   static double contentWidth(double available) =>
       available > contentMaxWidth ? contentMaxWidth : available;
+
+  /// Максимальная ширина развёрнутой панели библиотеки для окна [windowWidth].
+  ///
+  /// Не больше [sidebarMaxWidth] и не больше доли окна, но не меньше
+  /// [sidebarMinWidth]: на узком окне панель обязана оставаться читаемой.
+  static double sidebarWidthLimit(double windowWidth) {
+    final double byWindow = windowWidth * sidebarMaxWidthFraction;
+    final double limit =
+        byWindow < sidebarMaxWidth ? byWindow : sidebarMaxWidth;
+    return limit < sidebarMinWidth ? sidebarMinWidth : limit;
+  }
+
+  /// Свёрнута ли панель библиотеки по умолчанию при этой ширине окна.
+  ///
+  /// На среднем окне — да: развёрнутая панель съедала бы половину ширины, а
+  /// полоса значков помещается. На широком — как выбрал пользователь
+  /// ([saved]). Средняя раскладка не должна навязывать сворачивание тому,
+  /// кто сам развернул панель, — за это отвечает отдельный выбор в сеансе,
+  /// а здесь только умолчание.
+  static bool sidebarCollapsedByDefault(double width, {required bool saved}) =>
+      isMedium(width) || saved;
 }
 
 /// Удобный доступ к текущей ширине из виджетов.

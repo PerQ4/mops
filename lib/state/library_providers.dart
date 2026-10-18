@@ -558,3 +558,23 @@ final NotifierProvider<LibrarySidebarController, LibrarySidebarState>
     NotifierProvider<LibrarySidebarController, LibrarySidebarState>(
   LibrarySidebarController.new,
 );
+
+/// Свёрнута ли панель библиотеки — выбор пользователя в текущем сеансе.
+///
+/// Отдельно от настройки `sidebarCollapsed`: на среднем окне панель по
+/// умолчанию свёрнута, и если бы свёрнутость выводилась только из ширины окна,
+/// клик по кнопке тут же сворачивал бы панель обратно — раскрыть её стало бы
+/// невозможно. `null` означает «пользователь ещё не трогал кнопку», и панель
+/// берёт умолчание раскладки (см. `AppLayout.sidebarCollapsedByDefault`).
+class SidebarCollapseController extends Notifier<bool?> {
+  @override
+  bool? build() => null;
+
+  void set(bool collapsed) => state = collapsed;
+}
+
+final NotifierProvider<SidebarCollapseController, bool?>
+    sidebarCollapseOverrideProvider =
+    NotifierProvider<SidebarCollapseController, bool?>(
+  SidebarCollapseController.new,
+);

@@ -45,28 +45,48 @@ class _LibrarySidebarState extends ConsumerState<LibrarySidebar> {
   /// не теряется — строка поиска переживает сворачивание.
   final TextEditingController _search = TextEditingController();
 
-  /// Пределы, чтобы панель не превращалась ни в щель, ни в пол-экрана.
-  static const double _minWidth = 220;
-  static const double _maxWidth = 480;
-
   @override
   void dispose() {
     _search.dispose();
     super.dispose();
   }
 
+  /// Переключает свёрнутость панели и запоминает выбор.
+  ///
+  /// Сама свёрнутость на среднем окне не хранится в настройках: там она —
+  /// умолчание раскладки. В настройки пишем только выбор, сделанный в широкой
+  /// раскладке, чтобы он пережил перезапуск и не был затёрт шириной окна.
+  void _toggleCollapsed(bool collapsed) {
+    final bool next = !collapsed;
+    ref.read(sidebarCollapseOverrideProvider.notifier).set(next);
+    if (AppLayout.isExpanded(context.layoutWidth)) {
+      ref
+          .read(settingsControllerProvider.notifier)
+          .update((AppSettings s) => s.copyWith(sidebarCollapsed: next));
+    }
+  }
+
   @override
   Widget build(BuildContext context) {
     final ColorScheme scheme = Theme.of(context).colorScheme;
-    final bool collapsed = ref.watch(
+    final double window = context.layoutWidth;
+    final bool savedCollapsed = ref.watch(
       settingsControllerProvider.select(
         (AppSettings s) => s.sidebarCollapsed,
       ),
     );
+    // Выбор в сеансе важнее умолчания: иначе на среднем окне панель после
+    // клика по кнопке тут же сворачивалась бы обратно.
+    final bool collapsed = ref.watch(sidebarCollapseOverrideProvider) ??
+        AppLayout.sidebarCollapsedByDefault(window, saved: savedCollapsed);
     final double saved = ref.watch(
       settingsControllerProvider.select((AppSettings s) => s.sidebarWidth),
     );
-    final double expanded = (_dragging ?? saved).clamp(_minWidth, _maxWidth);
+    // Предел зависит от окна: на 1100 панель в 480 пикселей съедала бы
+    // половину. Ту же границу соблюдаем и при перетаскивании за кромку.
+    final double limit = AppLayout.sidebarWidthLimit(window);
+    final double expanded =
+        (_dragging ?? saved).clamp(AppLayout.sidebarMinWidth, limit);
 
     // Ширину анимируем: содержимое справа подстраивается плавно, без рывка.
     // Во время перетаскивания анимация выключена — панель идёт за курсором.
@@ -87,7 +107,10 @@ class _LibrarySidebarState extends ConsumerState<LibrarySidebar> {
                 crossAxisAlignment: CrossAxisAlignment.stretch,
                 children: <Widget>[
                   const SizedBox(height: 8),
-                  _SidebarHeader(collapsed: collapsed),
+                  _SidebarHeader(
+                    collapsed: collapsed,
+                    onToggle: () => _toggleCollapsed(collapsed),
+                  ),
                   Expanded(
                     child: collapsed
                         ? _CollapsedLibrary()
@@ -110,8 +133,9 @@ class _LibrarySidebarState extends ConsumerState<LibrarySidebar> {
                     behavior: HitTestBehavior.translucent,
                     onHorizontalDragUpdate: (DragUpdateDetails details) {
                       setState(() {
-                        _dragging = ((_dragging ?? saved) + details.delta.dx)
-                            .clamp(_minWidth, _maxWidth);
+                        _dragging =
+                            ((_dragging ?? saved) + details.delta.dx)
+                                .clamp(AppLayout.sidebarMinWidth, limit);
                       });
                     },
                     onHorizontalDragEnd: (DragEndDetails _) {
@@ -123,7 +147,9 @@ class _LibrarySidebarState extends ConsumerState<LibrarySidebar> {
                       }
                       setState(() => _dragging = null);
                     },
-                    child: const SizedBox(width: 8),
+                    child: const SizedBox(
+                      width: AppLayout.sidebarResizeHandleWidth,
+                    ),
                   ),
                 ),
               ),
@@ -140,14 +166,16 @@ class _LibrarySidebarState extends ConsumerState<LibrarySidebar> {
 /// Прятать заголовок, но оставлять кнопку важно: иначе развернуть панель
 /// было бы нечем.
 class _SidebarHeader extends ConsumerWidget {
-  const _SidebarHeader({required this.collapsed});
+  const _SidebarHeader({required this.collapsed, required this.onToggle});
 
   final bool collapsed;
 
+  /// Переключает свёрнутость. Логика выбора живёт в родителе: там известны
+  /// ширина окна и сохранённая настройка.
+  final VoidCallback onToggle;
+
   @override
   Widget build(BuildContext context, WidgetRef ref) {
-    final SettingsController settings =
-        ref.read(settingsControllerProvider.notifier);
     final bool signedIn = ref.watch(
       authControllerProvider.select((AuthState s) => s.isSignedIn),
     );
@@ -155,9 +183,7 @@ class _SidebarHeader extends ConsumerWidget {
       tooltip: collapsed ? 'Развернуть библиотеку' : 'Свернуть библиотеку',
       iconSize: 20,
       icon: Icon(collapsed ? Icons.chevron_right : Icons.chevron_left),
-      onPressed: () => settings.update(
-        (AppSettings s) => s.copyWith(sidebarCollapsed: !collapsed),
-      ),
+      onPressed: onToggle,
     );
 
     if (collapsed) {
@@ -467,6 +493,9 @@ class _LibraryList extends ConsumerWidget {
         );
       }
       return ListView.builder(
+        // Прокрутка у каждого раздела своя: ключ хранит смещение в
+        // PageStorage, поэтому возврат в раздел восстанавливает позицию.
+        key: PageStorageKey<String>('library-rail-${state.section.name}'),
         padding: const EdgeInsets.only(bottom: 12),
         itemCount: visible.length,
         itemBuilder: (BuildContext context, int index) =>
@@ -493,6 +522,10 @@ class _LibraryList extends ConsumerWidget {
           child: visible.isEmpty
               ? _Hint(icon: Icons.search_off, text: 'Ничего не найдено')
               : ListView.builder(
+                  // Прокрутка хранится отдельно для каждого раздела: ключ
+                  // записывает смещение в PageStorage, и при возврате в раздел
+                  // список открывается там же, где его оставили.
+                  key: PageStorageKey<String>('library-${state.section.name}'),
                   padding: const EdgeInsets.only(bottom: 12),
                   itemCount: visible.length,
                   itemBuilder: (BuildContext context, int index) =>
@@ -684,10 +717,10 @@ class _LibraryRowState extends State<_LibraryRow> {
                             if (widget.onPlay != null)
                               _busy
                                   ? const SizedBox(
-                                      width: 36,
-                                      height: 36,
+                                      width: 32,
+                                      height: 32,
                                       child: Padding(
-                                        padding: EdgeInsets.all(8),
+                                        padding: EdgeInsets.all(6),
                                         child: CircularProgressIndicator(
                                           strokeWidth: 2,
                                         ),
@@ -696,12 +729,30 @@ class _LibraryRowState extends State<_LibraryRow> {
                                   : IconButton(
                                       tooltip: 'Играть',
                                       iconSize: 20,
+                                      padding: EdgeInsets.zero,
+                                      // Кнопки действий компактны: на узкой
+                                      // панели (220) стандартные 48 пикселей
+                                      // оставляли названию считаные пиксели.
+                                      constraints: const BoxConstraints.tightFor(
+                                        width: 32,
+                                        height: 32,
+                                      ),
+                                      style: IconButton.styleFrom(
+                                        tapTargetSize:
+                                            MaterialTapTargetSize.shrinkWrap,
+                                      ),
                                       icon: const Icon(Icons.play_arrow_rounded),
                                       onPressed: _play,
                                     ),
                             PopupMenuButton<_EntryAction>(
                               tooltip: 'Действия',
                               iconSize: 20,
+                              padding: EdgeInsets.zero,
+                              style: IconButton.styleFrom(
+                                minimumSize: const Size(32, 32),
+                                maximumSize: const Size(32, 32),
+                                tapTargetSize: MaterialTapTargetSize.shrinkWrap,
+                              ),
                               icon: const Icon(Icons.more_vert),
                               onSelected: widget.onMenu,
                               itemBuilder: (BuildContext context) =>

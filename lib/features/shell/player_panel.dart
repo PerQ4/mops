@@ -181,15 +181,14 @@ class _PlayerRightPanelState extends ConsumerState<PlayerRightPanel> {
           // Обложка — от доступной высоты, а не фиксированная: на низком окне
           // фиксированные 260 не влезали и панель переполнялась снизу. Ширину
           // тоже учитываем: кольцу нужно место снаружи обложки, и на узкой
-          // панели обложка с кольцом иначе вылезала бы за край.
-          final double ringSpace = 2 *
-              (ArtworkProgressRing.panelStroke +
-                  ArtworkProgressRing.waveAmplitude);
+          // панели обложка с кольцом иначе вылезала бы за край. Габарит кольца
+          // растёт вместе с обложкой (`ArtworkProgressRing.outerRatio`),
+          // поэтому ширину делим на этот множитель, а не вычитаем константу.
+          final double availableWidth =
+              constraints.maxWidth - _PanelArtwork.horizontalPadding * 2;
           final double artSide = math.min(
             (constraints.maxHeight * 0.30).clamp(96.0, 260.0),
-            (constraints.maxWidth -
-                    _PanelArtwork.horizontalPadding * 2 -
-                    ringSpace)
+            (availableWidth / ArtworkProgressRing.outerRatio)
                 .clamp(72.0, 260.0),
           );
           return Column(
@@ -279,10 +278,7 @@ class _PanelArtwork extends StatelessWidget {
   Widget build(BuildContext context) {
     final List<String> variants = track.artworkFallbacks(kArtworkLarge);
     final BorderRadius shape = BorderRadius.circular(AppLayout.radiusL);
-    final double extent = ArtworkProgressRing.extent(
-      side,
-      ArtworkProgressRing.panelStroke,
-    );
+    final double extent = ArtworkProgressRing.extent(side);
 
     return Padding(
       padding: const EdgeInsets.symmetric(
@@ -300,7 +296,6 @@ class _PanelArtwork extends StatelessWidget {
               ArtworkProgressRing(
                 side: side,
                 shape: shape,
-                strokeWidth: ArtworkProgressRing.panelStroke,
               ),
               SizedBox(
                 width: side,
