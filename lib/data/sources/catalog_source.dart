@@ -391,7 +391,14 @@ class CatalogSource {
   /// Используется, когда очередь закончилась: включаем «радио по треку»,
   /// как это делает YouTube Music.
   Future<List<Track>> autoplayQueue(String videoId) async {
-    final Map<String, dynamic> res = await _client.next(videoId);
+    // Радио запрашиваем явно. Без `playlistId` YouTube отдаёт «дальше» для
+    // одиночного видео — то есть сам же трек, и после фильтра ниже список
+    // оставался пустым: ни ручной запуск радио, ни автопродление не работали.
+    // `RDAMVM<videoId>` — идентификатор радио в YouTube Music.
+    final Map<String, dynamic> res = await _client.next(
+      videoId,
+      playlistId: 'RDAMVM$videoId',
+    );
 
     final List<Track> tracks = <Track>[];
     for (final dynamic renderer in traverseList(
