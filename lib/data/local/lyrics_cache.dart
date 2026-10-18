@@ -81,6 +81,18 @@ class LyricsCache {
     await _persist(entries);
   }
 
+  /// Убирает тексты одного трека — и в памяти, и на диске.
+  ///
+  /// Нужно для «Обновить» в меню текста: без этого поиск перечитал бы те же
+  /// записи из кэша и в сеть не пошёл бы вовсе (кэш читается до запросов).
+  Future<void> remove(String videoId) async {
+    if (videoId.isEmpty) return;
+    final Map<String, Map<LyricsSource, _CachedLyrics>> entries =
+        await _entries();
+    if (entries.remove(videoId) == null) return;
+    await _persist(entries);
+  }
+
   /// Полная очистка — и в памяти, и на диске.
   Future<void> clear() async {
     _memory = <String, Map<LyricsSource, _CachedLyrics>>{};

@@ -13,7 +13,6 @@ import 'package:mops/core/innertube/renderer.dart';
 import 'package:mops/core/net/anti_dpi.dart';
 import 'package:mops/core/net/bypass.dart';
 import 'package:mops/data/models/models.dart';
-import 'package:mops/data/sources/browse_parser.dart';
 import 'package:mops/data/sources/catalog_source.dart';
 
 /// Собирает все идентификаторы альбомов (`MPRE…`) из ответа вместе с путём,
@@ -90,9 +89,10 @@ Future<void> main() async {
     }
 
     // 2. Для нескольких треков смотрим ответ `next` и ищем альбом.
-    final List<String> videoIds = <String>[
-      ...trackCards.map((TrackItem t) => t.track.id),
-    ].toSet().toList();
+    final List<String> videoIds = trackCards
+        .map((TrackItem t) => t.track.id)
+        .toSet()
+        .toList();
 
     if (videoIds.isEmpty) {
       // Фолбэк: главная не дала карточек треков — берём треки альбома.

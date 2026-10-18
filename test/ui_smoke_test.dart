@@ -19,6 +19,7 @@ import 'package:mops/core/theme/ui_scaler.dart';
 import 'package:mops/data/local/app_settings.dart';
 import 'package:mops/data/models/models.dart';
 import 'package:mops/features/player/floating_dock.dart';
+import 'package:mops/features/player/lyrics_actions.dart';
 import 'package:mops/features/player/now_playing_screen.dart';
 import 'package:mops/features/settings/settings_screen.dart';
 import 'package:mops/features/shell/app_shell.dart';
@@ -60,6 +61,19 @@ class _FakeAudioEngine implements AudioEngine {
   Future<void> setVolume(double volume) async {}
   @override
   Future<void> setSpeed(double speed) async {}
+
+  // Устройств вывода в тестовой среде нет — поток пустой, выбор ни на что
+  // не влияет.
+  @override
+  List<AudioOutputDevice> get audioDevices => const <AudioOutputDevice>[];
+
+  @override
+  Stream<List<AudioOutputDevice>> get audioDevicesStream =>
+      const Stream<List<AudioOutputDevice>>.empty();
+
+  @override
+  Future<void> setAudioDevice(String name) async {}
+
   @override
   Future<void> dispose() async {
     await _controller.close();
@@ -211,12 +225,109 @@ Future<void> _loadFamily(String family, List<String> paths) async {
   if (any) await loader.load();
 }
 
+/// ------------------------------------------------------------------ тексты
+
+/// Строки для эталона экрана поиска — обычная песня, строка на строку.
+const List<String> _lyricsLines = <String>[
+  'Город тонет в синем свете фонарей',
+  'Я иду по краю, не считая дней',
+  'Ты сказала: «стой», и я остановился',
+  'Ветер в проводах, как будто бы напился',
+  'Мы молчим о том, о чём нельзя молчать',
+  'И не можем просто взять и перестать',
+  'Полночь на часах, и радио молчит',
+  'Только этот город всё ещё не спит',
+  'Я запомню всё: и холод, и огни',
+  'И как мы потерялись в эти дни',
+  'Утро придёт, и всё пойдёт не так',
+  'Но пока играет этот медленный закат',
+];
+
+Lyrics _plainLyrics() => Lyrics(plain: _lyricsLines.join('\n'));
+
+Lyrics _lineSyncedLyrics() => Lyrics(
+      timed: <TimedLyric>[
+        for (int i = 0; i < _lyricsLines.length; i++)
+          TimedLyric(
+            time: Duration(seconds: 14 + i * 5),
+            text: _lyricsLines[i],
+          ),
+      ],
+    );
+
+Lyrics _wordSyncedLyrics() => Lyrics(
+      timed: <TimedLyric>[
+        for (int i = 0; i < _lyricsLines.length; i++)
+          TimedLyric(
+            time: Duration(seconds: 14 + i * 5),
+            text: _lyricsLines[i],
+            words: <TimedWord>[
+              for (final String word in _lyricsLines[i].split(' '))
+                TimedWord(
+                  time: Duration(seconds: 14 + i * 5),
+                  text: word,
+                ),
+            ],
+          ),
+      ],
+    );
+
+/// Три варианта с разными типами синхронизации — по одному на иконку.
+LyricsSearchState _fakeLyricsSearch() => LyricsSearchState(
+      loading: false,
+      candidates: <LyricsCandidate>[
+        LyricsCandidate.from(
+          source: LyricsSource.youlyPlus,
+          lyrics: _wordSyncedLyrics(),
+          score: 40,
+        ),
+        LyricsCandidate.from(
+          source: LyricsSource.betterLyrics,
+          lyrics: _lineSyncedLyrics(),
+          score: 30,
+        ),
+        LyricsCandidate.from(
+          source: LyricsSource.lrclib,
+          lyrics: _plainLyrics(),
+          score: 20,
+        ),
+      ],
+    );
+
+/// Открывает экран поиска текста — для эталона.
+class _SearchLauncher extends StatelessWidget {
+  const _SearchLauncher();
+
+  static const LyricsRequest request = LyricsRequest(
+    videoId: 'vid00000000001',
+    title: 'Ночной город',
+    artist: 'Пример',
+    album: 'Первый',
+    duration: Duration(minutes: 3, seconds: 42),
+  );
+
+  @override
+  Widget build(BuildContext context) {
+    return Scaffold(
+      body: Center(
+        child: FilledButton(
+          onPressed: () => showLyricsSearchDialog(
+            context,
+            request,
+            startInInput: false,
+          ),
+          child: const Text('Поиск текста'),
+        ),
+      ),
+    );
+  }
+}
+
 void main() {
   setUpAll(() async {
     envReaderOverride = (String name) => null;
     await _loadFonts();
   });
-
   late SharedPreferences prefs;
 
   setUp(() async {
@@ -232,11 +343,16 @@ void main() {
   );
 
   /// Собирает приложение с подставными данными и указанным размером окна.
+  ///
+  /// `extra` — дополнительные подмены провайдеров для отдельного теста. Тип
+  /// элемента не называем: `Override` из riverpod 3 не экспортируется
+  /// `flutter_riverpod`, а список подмен собирается и так.
   Future<void> pump(
     WidgetTester tester,
     Widget child, {
     required Size size,
     PlayerUiState? player,
+    List<dynamic> extra = const <dynamic>[],
   }) async {
     tester.view.physicalSize = size;
     tester.view.devicePixelRatio = 1.0;
@@ -255,6 +371,7 @@ void main() {
           exploreSectionsProvider.overrideWith((ref) => _fakeHome()),
           if (player != null)
             playerControllerProvider.overrideWith(() => _StubPlayer(player)),
+          ...extra,
         ],
         child: child,
       ),
@@ -392,6 +509,80 @@ void main() {
     await expectLater(
       find.byType(MaterialApp),
       matchesGoldenFile('goldens/07_settings_wide.png'),
+    );
+  });
+
+  testWidgets('Поиск текста: список найденных вариантов и раскрытие',
+      (WidgetTester tester) async {
+    await pump(
+      tester,
+      const _Harness(child: _SearchLauncher()),
+      size: const Size(900, 900),
+      extra: <dynamic>[
+        // Источники в тесте не спрашиваем: варианты заданы заранее — эталон
+        // должен быть одинаковым при любом состоянии сети.
+        lyricsProvider.overrideWith(
+          (ref, LyricsRequest request) =>
+              Stream<LyricsSearchState>.value(_fakeLyricsSearch()),
+        ),
+      ],
+    );
+
+    await tester.tap(find.text('Поиск текста'));
+    await tester.pumpAndSettle();
+
+    expect(tester.takeException(), isNull);
+    // Счётчик в шапке — как «3 results» в ArchiveTune.
+    expect(find.text('Найдено: 3 варианта'), findsOneWidget);
+    // Типы синхронизации подписаны, а не показаны одной иконкой.
+    expect(find.text('Пословная синхронизация'), findsWidgets);
+    expect(find.text('Построчная синхронизация'), findsWidgets);
+    expect(find.text('Без синхронизации'), findsWidgets);
+
+    await expectLater(
+      find.byType(MaterialApp),
+      matchesGoldenFile('goldens/08_lyrics_search.png'),
+    );
+
+    // Раскрытие карточки: у свёрнутых превью две строки, у раскрытой — восемь.
+    await tester.tap(find.byIcon(Icons.expand_more).first);
+    await tester.pumpAndSettle();
+
+    expect(tester.takeException(), isNull);
+    expect(find.byIcon(Icons.expand_less), findsOneWidget);
+
+    await expectLater(
+      find.byType(MaterialApp),
+      matchesGoldenFile('goldens/09_lyrics_search_expanded.png'),
+    );
+  });
+
+  testWidgets('Поиск текста: форма ручного ввода', (WidgetTester tester) async {
+    await pump(
+      tester,
+      const _Harness(child: _SearchLauncher()),
+      size: const Size(900, 900),
+      extra: <dynamic>[
+        lyricsProvider.overrideWith(
+          (ref, LyricsRequest request) =>
+              Stream<LyricsSearchState>.value(_fakeLyricsSearch()),
+        ),
+      ],
+    );
+
+    await tester.tap(find.text('Поиск текста'));
+    await tester.pumpAndSettle();
+    // Стрелка «назад» в шапке возвращает к правке метаданных.
+    await tester.tap(find.byIcon(Icons.arrow_back));
+    await tester.pumpAndSettle();
+
+    expect(tester.takeException(), isNull);
+    expect(find.text('Искать в интернете'), findsOneWidget);
+    expect(find.text('Искать'), findsOneWidget);
+
+    await expectLater(
+      find.byType(MaterialApp),
+      matchesGoldenFile('goldens/10_lyrics_search_input.png'),
     );
   });
 

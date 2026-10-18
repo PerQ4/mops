@@ -503,7 +503,10 @@ class LyricsCandidate {
       lineCount: nonEmpty.length,
       characterCount: lyrics.plain?.length ??
           lines.fold<int>(0, (int sum, String l) => sum + l.length),
-      preview: nonEmpty.take(2).join('\n'),
+      // Восемь строк — потому что карточка результата раскрывается: в свёрнутом
+      // виде показываются первые две, в раскрытом — все восемь (как
+      // `LyricsSearchResultSupportingContent` в ArchiveTune).
+      preview: nonEmpty.take(8).join('\n'),
     );
   }
 

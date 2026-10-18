@@ -1,5 +1,8 @@
+import 'dart:async';
+
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
+import 'package:url_launcher/url_launcher.dart';
 
 import '../../core/utils/format.dart';
 import '../../data/local/app_settings.dart';
@@ -43,7 +46,10 @@ class LyricsMenuButton extends ConsumerWidget {
   }
 }
 
-/// Открывает меню поиска и выбора текста.
+/// Открывает меню действий с текстом — как `LyricsMenu` в ArchiveTune:
+/// сетка действий (изменить, обновить, поиск, сброс) и переключатель показа
+/// текста в плеере. Список найденных вариантов живёт не здесь, а в отдельном
+/// экране поиска ([showLyricsSearchDialog]) — так же, как в оригинале.
 Future<void> showLyricsMenu(
   BuildContext context,
   LyricsRequest request, {
@@ -62,12 +68,26 @@ Future<void> showLyricsMenu(
   );
 }
 
-/// Меню поиска текста — как `LyricsMenu` в ArchiveTune: ряд действий сверху
-/// (обновить, ручной поиск, сбросить) и список найденных вариантов карточками.
+/// Экран поиска текста.
 ///
-/// Шторка одна на два режима — список вариантов и форма ручного поиска. Почему
-/// так, а не диалог поверх шторки: две наложенные поверхности просвечивали друг
-/// сквозь друга и делили высоту экрана пополам, а нужен один экран.
+/// Один диалог на два режима — форму ввода метаданных и список найденного:
+/// вторая поверхность поверх первой делила бы высоту экрана пополам, а нужен
+/// один экран. По умолчанию открывается форма (как `SearchLyricsInputDialog`
+/// в ArchiveTune), после «Искать» та же поверхность показывает результаты.
+Future<void> showLyricsSearchDialog(
+  BuildContext context,
+  LyricsRequest request, {
+  bool startInInput = true,
+}) {
+  return showDialog<void>(
+    context: context,
+    builder: (BuildContext _) => _LyricsSearchDialog(
+      request: request,
+      startInInput: startInInput,
+    ),
+  );
+}
+
 class _LyricsMenuSheet extends ConsumerStatefulWidget {
   const _LyricsMenuSheet({
     required this.request,
@@ -84,14 +104,6 @@ class _LyricsMenuSheet extends ConsumerStatefulWidget {
 }
 
 class _LyricsMenuSheetState extends ConsumerState<_LyricsMenuSheet> {
-  /// Показываем форму ручного поиска вместо списка вариантов.
-  bool _manualMode = false;
-
-  void _openManual() => setState(() => _manualMode = true);
-
-  /// Возврат к списку вариантов — по иконке «назад» в шапке шторки.
-  void _backToList() => setState(() => _manualMode = false);
-
   @override
   Widget build(BuildContext context) {
     final LyricsRequest request = widget.request;
@@ -112,7 +124,6 @@ class _LyricsMenuSheetState extends ConsumerState<_LyricsMenuSheet> {
       manualLyricsRequestsProvider
           .select((Map<String, LyricsRequest> m) => m[request.videoId]),
     );
-    final LyricsRequest effective = manual ?? request;
 
     // Выбранная вручную запись (ручной поиск). Пока она есть, показываем
     // именно её текст и отмечаем её в шапке.
@@ -130,168 +141,104 @@ class _LyricsMenuSheetState extends ConsumerState<_LyricsMenuSheet> {
                 '${<String>[manual.title ?? '', manual.artist ?? ''].where((String s) => s.trim().isNotEmpty).join(' ')}'
             : 'Источник: ${current.label}';
 
-    final LyricsSearchState search =
-        ref.watch(lyricsProvider(effective)).value ??
-            const LyricsSearchState();
-
-    // Порядок источников из настроек — участвует в выборе лучшего варианта.
-    final List<LyricsSource> order = ref.watch(
-      settingsControllerProvider.select(
-        (AppSettings s) => s.lyricsProviderOrder,
-      ),
-    );
-
-    // Какой вариант показывается сейчас: в «Авто» — лучший по приоритету,
-    // иначе выбранный вручную.
-    final LyricsSource? shownSource = current == LyricsSource.auto
-        ? search.bestByOrder(order)?.source
-        : current;
-
     return SafeArea(
       child: Column(
         mainAxisSize: MainAxisSize.min,
         children: <Widget>[
           Padding(
-            padding: EdgeInsets.fromLTRB(_manualMode ? 8 : 20, 0, 20, 10),
-            child: Row(
+            padding: const EdgeInsets.fromLTRB(20, 0, 20, 10),
+            child: Column(
+              crossAxisAlignment: CrossAxisAlignment.start,
               children: <Widget>[
-                // Возврат к вариантам: без него из формы ручного поиска было бы
-                // не выйти, не закрыв всю шторку.
-                if (_manualMode)
-                  IconButton(
-                    tooltip: 'Назад к вариантам',
-                    iconSize: 20,
-                    icon: const Icon(Icons.arrow_back),
-                    onPressed: _backToList,
+                Text(
+                  'Текст песни',
+                  style: text.titleLarge?.copyWith(fontWeight: FontWeight.w700),
+                ),
+                const SizedBox(height: 2),
+                Text(
+                  subtitle,
+                  style: text.bodySmall?.copyWith(
+                    color: scheme.onSurfaceVariant,
                   ),
-                Expanded(
-                  child: Column(
-                    crossAxisAlignment: CrossAxisAlignment.start,
-                    children: <Widget>[
-                      Text(
-                        _manualMode ? 'Ручной поиск текста' : 'Поиск текста',
-                        style: text.titleLarge?.copyWith(
-                          fontWeight: FontWeight.w700,
-                        ),
-                      ),
-                      const SizedBox(height: 2),
-                      Text(
-                        // В форме подсказываем, чего от неё ждать: подпись о
-                        // выбранном источнике здесь только мешала бы.
-                        _manualMode
-                            ? 'Ищем по вашим метаданным: названию и исполнителю.'
-                            : subtitle,
-                        style: text.bodySmall?.copyWith(
-                          color: scheme.onSurfaceVariant,
-                        ),
-                        maxLines: 2,
-                        overflow: TextOverflow.ellipsis,
-                      ),
-                    ],
-                  ),
+                  maxLines: 2,
+                  overflow: TextOverflow.ellipsis,
                 ),
               ],
             ),
           ),
-          // Ряд действий — только для списка: у формы свои кнопки.
-          if (!_manualMode)
-            Padding(
-              padding: const EdgeInsets.symmetric(horizontal: 8),
-              child: Row(
-                children: <Widget>[
-                  _MenuAction(
-                    icon: Icons.refresh,
-                    label: 'Обновить',
-                    onTap: () => ref.invalidate(lyricsProvider(effective)),
-                  ),
-                  _MenuAction(
-                    icon: Icons.manage_search,
-                    label: 'Ручной поиск',
-                    onTap: _openManual,
-                  ),
-                  _MenuAction(
-                    icon: Icons.edit_outlined,
-                    label: 'Изменить текст',
-                    onTap: () => _editLyrics(context, ref),
-                  ),
-                  _MenuAction(
-                    icon: Icons.restart_alt,
-                    label: 'Сбросить',
-                    onTap: () {
-                      ref
-                          .read(lyricsSourceOverrideProvider.notifier)
-                          .setSource(request.videoId, LyricsSource.auto);
-                      ref
-                          .read(manualLyricsRequestsProvider.notifier)
-                          .set(request.videoId, null);
-                      // Снимаем и выбранную запись: иначе поиск остался бы
-                      // привязан к ней и «Сбросить» был бы неполным.
-                      ref
-                          .read(manualLyricsSelectionProvider.notifier)
-                          .set(request.videoId, null);
-                      ref.invalidate(lyricsProvider(request));
-                    },
-                  ),
-                ],
-              ),
-            ),
-          const Divider(height: 20),
-          if (_manualMode)
-            // Форма живёт в той же шторке, что и список, поэтому прокручиваем
-            // её: на низком окне с открытой клавиатурой поля не обрежутся.
-            Flexible(
-              child: SingleChildScrollView(
-                padding: const EdgeInsets.only(bottom: 8),
-                child: _ManualSearchPane(
-                  // Основу берём из ручного запроса трека: пользователь правит
-                  // именно его, а не исходные данные YouTube.
-                  base: manual ?? request,
-                  videoId: request.videoId,
-                  onApplied: _backToList,
-                  onReset: _backToList,
+          Padding(
+            padding: const EdgeInsets.symmetric(horizontal: 8),
+            child: Row(
+              children: <Widget>[
+                _MenuAction(
+                  icon: Icons.edit_outlined,
+                  label: 'Изменить',
+                  onTap: () => _editLyrics(context, ref),
                 ),
-              ),
-            )
-          else if (search.candidates.isEmpty && search.loading)
-            const Padding(
-              padding: EdgeInsets.all(24),
-              child: Row(
-                mainAxisAlignment: MainAxisAlignment.center,
-                children: <Widget>[
-                  SizedBox(
-                    width: 16,
-                    height: 16,
-                    child: CircularProgressIndicator(strokeWidth: 2),
-                  ),
-                  SizedBox(width: 12),
-                  Text('Ищем текст во всех источниках…'),
-                ],
-              ),
-            )
-          else if (search.candidates.isEmpty)
-            const Padding(
-              padding: EdgeInsets.all(24),
-              child: Text('Ничего не нашлось. Попробуйте ручной поиск.'),
-            )
-          else
-            Flexible(
-              child: ListView.builder(
-                shrinkWrap: true,
-                padding: const EdgeInsets.fromLTRB(12, 0, 12, 8),
-                itemCount: search.candidates.length,
-                itemBuilder: (BuildContext context, int index) {
-                  final LyricsCandidate candidate = search.candidates[index];
-                  return _ResultCard(
-                    candidate: candidate,
-                    selected: candidate.source == shownSource,
-                    onTap: () => _select(context, ref, candidate.source),
-                  );
-                },
-              ),
+                _MenuAction(
+                  icon: Icons.refresh,
+                  label: 'Обновить',
+                  onTap: () => unawaited(_refresh(ref)),
+                ),
+                _MenuAction(
+                  icon: Icons.search,
+                  label: 'Поиск',
+                  onTap: _openSearch,
+                ),
+                _MenuAction(
+                  icon: Icons.restart_alt,
+                  label: 'Сбросить',
+                  onTap: () {
+                    ref
+                        .read(lyricsSourceOverrideProvider.notifier)
+                        .setSource(request.videoId, LyricsSource.auto);
+                    ref
+                        .read(manualLyricsRequestsProvider.notifier)
+                        .set(request.videoId, null);
+                    // Снимаем и выбранную запись: иначе поиск остался бы
+                    // привязан к ней и «Сбросить» был бы неполным.
+                    ref
+                        .read(manualLyricsSelectionProvider.notifier)
+                        .set(request.videoId, null);
+                    ref.invalidate(lyricsProvider(request));
+                  },
+                ),
+              ],
             ),
+          ),
+          if (widget.onToggleVisibility != null)
+            SwitchListTile(
+              value: widget.lyricsVisible,
+              onChanged: (bool _) => widget.onToggleVisibility!(),
+              title: const Text('Показывать текст в плеере'),
+              contentPadding: const EdgeInsets.symmetric(horizontal: 20),
+            ),
+          const SizedBox(height: 8),
         ],
       ),
     );
+  }
+
+  /// «Обновить»: снимаем кэш трека и перезапрашиваем источники.
+  ///
+  /// Без снятия кэша обновление было бы фиктивным: поиск читает кэш до сетевых
+  /// запросов и вернул бы те же записи, не сходив в сеть (в оригинале это
+  /// `forceRefresh`).
+  Future<void> _refresh(WidgetRef ref) async {
+    final LyricsRequest request = widget.request;
+    final LyricsRequest? manual =
+        ref.read(manualLyricsRequestsProvider)[request.videoId];
+    await ref.read(lyricsCacheProvider).remove(request.videoId);
+    ref.invalidate(lyricsProvider(manual ?? request));
+  }
+
+  /// «Поиск»: меню закрываем, экран поиска — отдельная поверхность.
+  void _openSearch() {
+    // Контекст навигатора берём до закрытия шторки: после `pop` контекст
+    // шторки уже не годится для показа нового маршрута.
+    final BuildContext navigatorContext = Navigator.of(context).context;
+    Navigator.of(context).pop();
+    unawaited(showLyricsSearchDialog(navigatorContext, widget.request));
   }
 
   /// Ручная правка текста: показываем найденный текст, даём поправить строки и
@@ -380,21 +327,9 @@ class _LyricsMenuSheetState extends ConsumerState<_LyricsMenuSheet> {
     }
     return lyrics.plain ?? '';
   }
-
-  void _select(BuildContext context, WidgetRef ref, LyricsSource source) {
-    final LyricsRequest request = widget.request;
-    // Источник запоминаем для этого трека: смена настройки затронула бы все
-    // треки, а пользователь просил другой текст именно здесь.
-    ref
-        .read(lyricsSourceOverrideProvider.notifier)
-        .setSource(request.videoId, source);
-    // Перезапрашивать не нужно: все варианты уже получены параллельным
-    // поиском и лежат в состоянии — переключение мгновенное.
-    Navigator.pop(context);
-  }
 }
 
-/// Действие в шапке меню: иконка + подпись (как `NewAction` в ArchiveTune).
+/// Действие в меню: иконка + подпись (как `NewAction` в ArchiveTune).
 class _MenuAction extends StatelessWidget {
   const _MenuAction({
     required this.icon,
@@ -432,106 +367,551 @@ class _MenuAction extends StatelessWidget {
   }
 }
 
-/// Карточка найденного варианта — как `LyricsSearchResultItem` в ArchiveTune:
-/// источник, тип синхронизации, объём и превью. Тап — выбрать этот вариант.
-class _ResultCard extends StatelessWidget {
-  const _ResultCard({
-    required this.candidate,
-    required this.selected,
-    required this.onTap,
+/// Экран поиска текста: форма ввода и список найденного в одной поверхности.
+class _LyricsSearchDialog extends ConsumerStatefulWidget {
+  const _LyricsSearchDialog({
+    required this.request,
+    required this.startInInput,
   });
 
-  final LyricsCandidate candidate;
-  final bool selected;
-  final VoidCallback onTap;
+  final LyricsRequest request;
+  final bool startInInput;
+
+  @override
+  ConsumerState<_LyricsSearchDialog> createState() =>
+      _LyricsSearchDialogState();
+}
+
+class _LyricsSearchDialogState extends ConsumerState<_LyricsSearchDialog> {
+  /// Показываем форму ввода метаданных, а не список найденного.
+  late bool _inputMode = widget.startInInput;
+
+  /// Какая карточка раскрыта (ключ — источник). Раскрывается одна за раз,
+  /// как `expandedSearchResultId` в ArchiveTune.
+  String? _expandedId;
+
+  @override
+  Widget build(BuildContext context) {
+    final LyricsRequest request = widget.request;
+    // Ручной запрос для трека важнее данных из YouTube — по нему и ищем.
+    final LyricsRequest? manual = ref.watch(
+      manualLyricsRequestsProvider
+          .select((Map<String, LyricsRequest> m) => m[request.videoId]),
+    );
+    final LyricsRequest effective = manual ?? request;
+    final LyricsSearchState search =
+        ref.watch(lyricsProvider(effective)).value ??
+            const LyricsSearchState();
+
+    // Какой вариант показывается в плеере сейчас: в «Авто» — лучший по
+    // приоритету, иначе выбранный вручную.
+    final LyricsSource current =
+        ref.watch(lyricsSourceOverrideProvider)[request.videoId] ??
+            ref.watch(
+              settingsControllerProvider.select(
+                (AppSettings s) => s.lyricsSource,
+              ),
+            );
+    final List<LyricsSource> order = ref.watch(
+      settingsControllerProvider.select(
+        (AppSettings s) => s.lyricsProviderOrder,
+      ),
+    );
+    final LyricsSource? shownSource = current == LyricsSource.auto
+        ? search.bestByOrder(order)?.source
+        : current;
+
+    return Dialog(
+      insetPadding: const EdgeInsets.all(24),
+      child: ConstrainedBox(
+        constraints: const BoxConstraints(maxWidth: 640),
+        child: Column(
+          mainAxisSize: MainAxisSize.min,
+          children: <Widget>[
+            _SearchHeader(
+              subtitle: _inputMode
+                  ? 'Ищем по названию и исполнителю — их можно поправить.'
+                  : _statusText(search),
+              searching: !_inputMode && search.loading,
+              onBack: _inputMode ? null : () => setState(() => _inputMode = true),
+              onRefetch: _inputMode || search.loading
+                  ? null
+                  : () => _refetch(effective),
+              onClose: () => Navigator.pop(context),
+            ),
+            Flexible(
+              child: _inputMode
+                  ? _SearchInputPane(
+                      base: manual ?? request,
+                      videoId: request.videoId,
+                      onSearch: () => setState(() => _inputMode = false),
+                      onReset: () => setState(() => _inputMode = false),
+                    )
+                  : _resultsPane(search, shownSource),
+            ),
+          ],
+        ),
+      ),
+    );
+  }
+
+  /// Подпись под заголовком: счётчик найденного, ожидание или пустота.
+  String _statusText(LyricsSearchState search) {
+    if (search.candidates.isEmpty) {
+      return search.loading
+          ? 'Ищем текст во всех источниках…'
+          : 'Текст не найден';
+    }
+    return 'Найдено: ${search.candidates.length} '
+        '${_plural(search.candidates.length, 'вариант', 'варианта', 'вариантов')}';
+  }
+
+  /// Повторный поиск: кэш трека снимаем, иначе ответы придут с диска.
+  Future<void> _refetch(LyricsRequest effective) async {
+    setState(() => _expandedId = null);
+    await ref.read(lyricsCacheProvider).remove(widget.request.videoId);
+    ref.invalidate(lyricsProvider(effective));
+  }
+
+  Widget _resultsPane(LyricsSearchState search, LyricsSource? shownSource) {
+    if (search.candidates.isEmpty) {
+      return search.loading
+          ? const _SearchMessage(
+              icon: Icons.manage_search,
+              text: 'Ищем текст во всех источниках…',
+              spinner: true,
+            )
+          : const _SearchMessage(
+              icon: Icons.search_off,
+              text: 'Текст не найден. Попробуйте ручной поиск.',
+              error: true,
+            );
+    }
+
+    final List<LyricsCandidate> candidates = search.candidates;
+    return ListView.builder(
+      shrinkWrap: true,
+      padding: const EdgeInsets.fromLTRB(16, 14, 16, 20),
+      itemCount: candidates.length + (search.loading ? 1 : 0),
+      itemBuilder: (BuildContext context, int index) {
+        // Пока хоть один источник молчит — внизу списка видно, что поиск идёт
+        // (как `LyricsSearchFooterLoading` в ArchiveTune).
+        if (index == candidates.length) return const _SearchFooterLoading();
+
+        final LyricsCandidate candidate = candidates[index];
+        final String id = candidate.source.name;
+        return Padding(
+          padding: const EdgeInsets.only(bottom: 10),
+          child: _ResultCard(
+            providerLabel: candidate.source.label,
+            // Объём и превью уже посчитаны при сборке варианта — берём их,
+            // а не считаем заново по тексту.
+            info: _ResultInfo(
+              syncLabel: _syncLabel(
+                wordSynced: candidate.isWordSynced,
+                lineSynced: candidate.isLineSynced,
+              ),
+              icon: _syncIcon(
+                wordSynced: candidate.isWordSynced,
+                lineSynced: candidate.isLineSynced,
+              ),
+              preview: candidate.preview,
+              stats: _statsText(
+                candidate.lineCount,
+                candidate.characterCount,
+              ),
+            ),
+            selected: candidate.source == shownSource,
+            expanded: _expandedId == id,
+            onExpand: () => setState(
+              () => _expandedId = _expandedId == id ? null : id,
+            ),
+            onTap: () => _select(candidate.source),
+          ),
+        );
+      },
+    );
+  }
+
+  void _select(LyricsSource source) {
+    // Источник запоминаем для этого трека: смена настройки затронула бы все
+    // треки, а пользователь просил другой текст именно здесь.
+    ref
+        .read(lyricsSourceOverrideProvider.notifier)
+        .setSource(widget.request.videoId, source);
+    // Перезапрашивать не нужно: все варианты уже получены параллельным
+    // поиском и лежат в состоянии — переключение мгновенное.
+    Navigator.pop(context);
+  }
+}
+
+/// Шапка экрана поиска — как `LyricsSearchResultHeader` в ArchiveTune:
+/// плитка с иконкой, заголовок, состояние поиска и кнопки.
+class _SearchHeader extends StatelessWidget {
+  const _SearchHeader({
+    required this.subtitle,
+    required this.searching,
+    required this.onBack,
+    required this.onRefetch,
+    required this.onClose,
+  });
+
+  final String subtitle;
+  final bool searching;
+  final VoidCallback? onBack;
+  final VoidCallback? onRefetch;
+  final VoidCallback onClose;
 
   @override
   Widget build(BuildContext context) {
     final ColorScheme scheme = Theme.of(context).colorScheme;
     final TextTheme text = Theme.of(context).textTheme;
 
-    final String syncLabel = candidate.isWordSynced
-        ? 'Пословная синхронизация'
-        : candidate.isLineSynced
-            ? 'Построчная синхронизация'
-            : 'Без синхронизации';
-    final IconData icon = candidate.isWordSynced
-        ? Icons.graphic_eq
-        : candidate.isLineSynced
-            ? Icons.sync
-            : Icons.format_align_left;
+    return Material(
+      color: scheme.primaryContainer,
+      child: Padding(
+        padding: const EdgeInsets.fromLTRB(20, 18, 10, 18),
+        child: Row(
+          children: <Widget>[
+            if (onBack != null)
+              IconButton(
+                tooltip: 'Назад',
+                iconSize: 20,
+                icon: const Icon(Icons.arrow_back),
+                color: scheme.onPrimaryContainer,
+                onPressed: onBack,
+              ),
+            Material(
+              color: scheme.secondaryContainer,
+              borderRadius: BorderRadius.circular(28),
+              child: SizedBox(
+                width: 56,
+                height: 56,
+                child: Icon(
+                  Icons.manage_search,
+                  size: 30,
+                  color: scheme.onSecondaryContainer,
+                ),
+              ),
+            ),
+            const SizedBox(width: 16),
+            Expanded(
+              child: Column(
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: <Widget>[
+                  Text(
+                    'Поиск текста',
+                    style: text.titleLarge,
+                    maxLines: 1,
+                    overflow: TextOverflow.ellipsis,
+                  ),
+                  const SizedBox(height: 2),
+                  Text(
+                    subtitle,
+                    style: text.bodyMedium,
+                    maxLines: 2,
+                    overflow: TextOverflow.ellipsis,
+                  ),
+                ],
+              ),
+            ),
+            if (searching)
+              Padding(
+                padding: const EdgeInsets.symmetric(horizontal: 8),
+                child: SizedBox(
+                  width: 28,
+                  height: 28,
+                  child: CircularProgressIndicator(
+                    strokeWidth: 3,
+                    color: scheme.onPrimaryContainer,
+                  ),
+                ),
+              ),
+            if (onRefetch != null)
+              IconButton(
+                tooltip: 'Искать заново',
+                iconSize: 22,
+                icon: const Icon(Icons.refresh),
+                color: scheme.onPrimaryContainer,
+                onPressed: onRefetch,
+              ),
+            IconButton(
+              tooltip: 'Закрыть',
+              iconSize: 22,
+              icon: const Icon(Icons.close),
+              color: scheme.onPrimaryContainer,
+              onPressed: onClose,
+            ),
+          ],
+        ),
+      ),
+    );
+  }
+}
 
+/// Ожидание внизу списка, пока отвечают не все источники.
+class _SearchFooterLoading extends StatelessWidget {
+  const _SearchFooterLoading();
+
+  @override
+  Widget build(BuildContext context) {
+    final ColorScheme scheme = Theme.of(context).colorScheme;
+    return Padding(
+      padding: const EdgeInsets.symmetric(vertical: 12),
+      child: Row(
+        mainAxisAlignment: MainAxisAlignment.center,
+        children: <Widget>[
+          SizedBox(
+            width: 20,
+            height: 20,
+            child: CircularProgressIndicator(
+              strokeWidth: 2,
+              color: scheme.onSurfaceVariant,
+            ),
+          ),
+          const SizedBox(width: 12),
+          Text(
+            'Всё ещё ищем…',
+            style: Theme.of(context).textTheme.bodySmall?.copyWith(
+                  color: scheme.onSurfaceVariant,
+                ),
+          ),
+        ],
+      ),
+    );
+  }
+}
+
+/// Сообщение вместо списка: пусто или ошибка (как `LyricsSearchMessageContent`).
+class _SearchMessage extends StatelessWidget {
+  const _SearchMessage({
+    required this.icon,
+    required this.text,
+    this.spinner = false,
+    this.error = false,
+  });
+
+  final IconData icon;
+  final String text;
+  final bool spinner;
+  final bool error;
+
+  @override
+  Widget build(BuildContext context) {
+    final ColorScheme scheme = Theme.of(context).colorScheme;
+    return Padding(
+      padding: const EdgeInsets.symmetric(vertical: 40, horizontal: 24),
+      child: Column(
+        mainAxisSize: MainAxisSize.min,
+        children: <Widget>[
+          Material(
+            color: error ? scheme.errorContainer : scheme.surfaceContainerHighest,
+            borderRadius: BorderRadius.circular(28),
+            child: SizedBox(
+              width: 56,
+              height: 56,
+              child: spinner
+                  ? const Padding(
+                      padding: EdgeInsets.all(16),
+                      child: CircularProgressIndicator(strokeWidth: 3),
+                    )
+                  : Icon(
+                      icon,
+                      size: 28,
+                      color: error
+                          ? scheme.onErrorContainer
+                          : scheme.onSurfaceVariant,
+                    ),
+            ),
+          ),
+          const SizedBox(height: 16),
+          Text(
+            text,
+            textAlign: TextAlign.center,
+            style: Theme.of(context).textTheme.titleMedium,
+          ),
+        ],
+      ),
+    );
+  }
+}
+
+/// Что показывать в карточке: тип синхронизации, объём и превью.
+///
+/// Одно представление и для найденных текстов, и для найденных записей —
+/// карточка результата в ArchiveTune одна на оба случая.
+@immutable
+class _ResultInfo {
+  const _ResultInfo({
+    required this.syncLabel,
+    required this.icon,
+    required this.preview,
+    required this.stats,
+  });
+
+  factory _ResultInfo.fromLyrics(Lyrics lyrics) {
+    final List<TimedLyric> timed = lyrics.timed ?? const <TimedLyric>[];
+    final bool wordSynced = timed.any((TimedLyric l) => l.hasWords);
+    final bool lineSynced = timed.isNotEmpty && !wordSynced;
+    final List<String> lines = timed.isNotEmpty
+        ? timed.map((TimedLyric l) => l.text).toList()
+        : (lyrics.plain ?? '').split('\n');
+    final List<String> nonEmpty =
+        lines.where((String l) => l.trim().isNotEmpty).toList();
+    return _ResultInfo(
+      syncLabel: _syncLabel(wordSynced: wordSynced, lineSynced: lineSynced),
+      icon: _syncIcon(wordSynced: wordSynced, lineSynced: lineSynced),
+      preview: nonEmpty.take(8).join('\n'),
+      stats: _statsText(
+        nonEmpty.length,
+        lyrics.plain?.length ??
+            lines.fold<int>(0, (int sum, String l) => sum + l.length),
+      ),
+    );
+  }
+
+  final String syncLabel;
+  final IconData icon;
+  final String preview;
+  final String stats;
+}
+
+/// Карточка найденного варианта — как `LyricsSearchResultItem` в ArchiveTune:
+/// плитка типа синхронизации, источник, раскрытие превью и две пилюли с
+/// подробностями. Тап по карточке — выбрать этот вариант.
+class _ResultCard extends StatelessWidget {
+  const _ResultCard({
+    required this.providerLabel,
+    required this.info,
+    required this.selected,
+    required this.expanded,
+    required this.onExpand,
+    required this.onTap,
+  });
+
+  final String providerLabel;
+
+  /// `null` — текст ещё грузится: показываем заглушки вместо строк.
+  final _ResultInfo? info;
+
+  final bool selected;
+  final bool expanded;
+  final VoidCallback onExpand;
+  final VoidCallback onTap;
+
+  @override
+  Widget build(BuildContext context) {
+    final ColorScheme scheme = Theme.of(context).colorScheme;
+    final TextTheme text = Theme.of(context).textTheme;
+    final _ResultInfo? info = this.info;
+
+    // Раскрытая карточка перекрашивается — как в оригинале: её видно издалека.
     final Color container =
-        selected ? scheme.secondaryContainer : scheme.surfaceContainerHighest;
+        expanded ? scheme.secondaryContainer : scheme.surfaceContainerHighest;
     final Color content =
-        selected ? scheme.onSecondaryContainer : scheme.onSurface;
+        expanded ? scheme.onSecondaryContainer : scheme.onSurface;
+    final Color outline = expanded ? scheme.primary : scheme.outlineVariant;
 
-    return Card(
-      margin: const EdgeInsets.only(bottom: 10),
+    return Material(
       color: container,
+      shape: RoundedRectangleBorder(
+        borderRadius: BorderRadius.circular(28),
+        side: BorderSide(color: outline),
+      ),
+      clipBehavior: Clip.antiAlias,
       child: InkWell(
         onTap: onTap,
-        borderRadius: BorderRadius.circular(12),
         child: Padding(
-          padding: const EdgeInsets.all(14),
+          padding: const EdgeInsets.all(16),
           child: Column(
             crossAxisAlignment: CrossAxisAlignment.start,
             children: <Widget>[
               Row(
                 children: <Widget>[
-                  Icon(icon, color: content),
-                  const SizedBox(width: 10),
+                  _TypeTile(icon: info?.icon, expanded: expanded),
+                  const SizedBox(width: 8),
                   Expanded(
                     child: Column(
                       crossAxisAlignment: CrossAxisAlignment.start,
                       children: <Widget>[
-                        Text(
-                          candidate.source.label,
-                          style: text.labelLarge?.copyWith(color: content),
-                          maxLines: 1,
-                          overflow: TextOverflow.ellipsis,
+                        Row(
+                          children: <Widget>[
+                            Flexible(
+                              child: Text(
+                                providerLabel,
+                                style: text.labelLarge?.copyWith(
+                                  color: content,
+                                ),
+                                maxLines: 1,
+                                overflow: TextOverflow.ellipsis,
+                              ),
+                            ),
+                            if (selected) ...<Widget>[
+                              const SizedBox(width: 6),
+                              Icon(
+                                Icons.check_circle,
+                                size: 16,
+                                color: expanded
+                                    ? scheme.onSecondaryContainer
+                                    : scheme.primary,
+                              ),
+                            ],
+                          ],
                         ),
                         Text(
-                          syncLabel,
-                          style: text.titleSmall?.copyWith(
-                            color: content,
-                            fontWeight: FontWeight.w600,
-                          ),
+                          info?.syncLabel ?? 'Проверяем текст…',
+                          style: text.titleMedium?.copyWith(color: content),
                           maxLines: 1,
                           overflow: TextOverflow.ellipsis,
                         ),
                       ],
                     ),
                   ),
-                  if (selected)
-                    Icon(Icons.check, color: scheme.primary)
-                  else
-                    Text(
-                      '${candidate.score}',
-                      style: text.labelMedium?.copyWith(
-                        color: scheme.onSurfaceVariant,
-                      ),
+                  IconButton(
+                    tooltip: expanded ? 'Свернуть' : 'Подробнее',
+                    iconSize: 24,
+                    color: content,
+                    icon: Icon(
+                      expanded ? Icons.expand_less : Icons.expand_more,
                     ),
+                    onPressed: onExpand,
+                  ),
                 ],
               ),
-              if (candidate.preview.isNotEmpty) ...<Widget>[
-                const SizedBox(height: 8),
-                Text(
-                  candidate.preview,
-                  maxLines: 2,
-                  overflow: TextOverflow.ellipsis,
-                  style: text.bodySmall?.copyWith(
-                    color: scheme.onSurfaceVariant,
+              const SizedBox(height: 14),
+              if (info == null)
+                const _PreviewPlaceholder()
+              else
+                AnimatedSize(
+                  duration: const Duration(milliseconds: 160),
+                  curve: Curves.easeOut,
+                  alignment: Alignment.topCenter,
+                  child: Text(
+                    info.preview,
+                    maxLines: expanded ? 8 : 2,
+                    overflow: TextOverflow.ellipsis,
+                    style: text.bodyMedium?.copyWith(color: content),
                   ),
                 ),
-              ],
-              const SizedBox(height: 8),
-              Text(
-                '${candidate.lineCount} строк · '
-                '${candidate.characterCount} символов',
-                style: text.labelSmall?.copyWith(
-                  color: scheme.onSurfaceVariant,
-                ),
+              const SizedBox(height: 14),
+              Row(
+                children: <Widget>[
+                  Expanded(
+                    child: _MetadataPill(
+                      icon: Icons.info_outline,
+                      text: info?.syncLabel ?? '—',
+                      expanded: expanded,
+                    ),
+                  ),
+                  const SizedBox(width: 8),
+                  Expanded(
+                    child: _MetadataPill(
+                      icon: Icons.text_fields,
+                      text: info?.stats ?? '—',
+                      expanded: expanded,
+                    ),
+                  ),
+                ],
               ),
             ],
           ),
@@ -541,49 +921,115 @@ class _ResultCard extends StatelessWidget {
   }
 }
 
-/// «Название — Исполнитель» для подписи найденной записи.
-String _hitTitle(LyricsTrackHit hit) {
-  final List<String> parts = <String>[
-    if ((hit.title ?? '').trim().isNotEmpty) hit.title!.trim(),
-    if ((hit.artist ?? '').trim().isNotEmpty) hit.artist!.trim(),
-  ];
-  return parts.isEmpty ? 'без названия' : parts.join(' — ');
+/// Плитка типа синхронизации в карточке (`LyricsSearchTypeIcon`).
+class _TypeTile extends StatelessWidget {
+  const _TypeTile({required this.icon, required this.expanded});
+
+  final IconData? icon;
+  final bool expanded;
+
+  @override
+  Widget build(BuildContext context) {
+    final ColorScheme scheme = Theme.of(context).colorScheme;
+    return Material(
+      color: expanded ? scheme.primary : scheme.tertiaryContainer,
+      borderRadius: BorderRadius.circular(28),
+      child: SizedBox(
+        width: 48,
+        height: 48,
+        child: icon == null
+            ? const Padding(
+                padding: EdgeInsets.all(14),
+                child: CircularProgressIndicator(strokeWidth: 2),
+              )
+            : Icon(
+                icon,
+                size: 24,
+                color: expanded
+                    ? scheme.onPrimary
+                    : scheme.onTertiaryContainer,
+              ),
+      ),
+    );
+  }
 }
 
-/// Форма ручного поиска: метаданные сверху, найденные треки снизу.
+/// Пилюля с подробностью (`LyricsSearchMetadataPill`).
+class _MetadataPill extends StatelessWidget {
+  const _MetadataPill({
+    required this.icon,
+    required this.text,
+    required this.expanded,
+  });
+
+  final IconData icon;
+  final String text;
+  final bool expanded;
+
+  @override
+  Widget build(BuildContext context) {
+    final ColorScheme scheme = Theme.of(context).colorScheme;
+    final Color content =
+        expanded ? scheme.onSecondaryContainer : scheme.onSurfaceVariant;
+
+    return Material(
+      color: expanded
+          ? scheme.surface.withValues(alpha: 0.52)
+          : scheme.surfaceContainerHigh,
+      borderRadius: BorderRadius.circular(16),
+      child: Padding(
+        padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 6),
+        child: Row(
+          children: <Widget>[
+            Icon(icon, size: 16, color: content),
+            const SizedBox(width: 6),
+            Flexible(
+              child: Text(
+                text,
+                style: Theme.of(context).textTheme.labelMedium?.copyWith(
+                      color: content,
+                    ),
+                maxLines: 1,
+                overflow: TextOverflow.ellipsis,
+              ),
+            ),
+          ],
+        ),
+      ),
+    );
+  }
+}
+
+/// Форма ручного поиска: метаданные и кнопки, как `SearchLyricsInputDialog`.
 ///
-/// Живёт внутри шторки, а не в отдельном диалоге: поиск асинхронный, и после
-/// «Искать» список показывается в том же окне, а не во втором поверх первого.
-/// Почему не диалог «одно действие»: результат пользователь выбирает здесь же.
-class _ManualSearchPane extends ConsumerStatefulWidget {
-  const _ManualSearchPane({
+/// Живёт внутри того же экрана, что и список: после «Искать» показывается
+/// список, а не вторая поверхность поверх первой.
+class _SearchInputPane extends ConsumerStatefulWidget {
+  const _SearchInputPane({
     required this.base,
     required this.videoId,
-    required this.onApplied,
+    required this.onSearch,
     required this.onReset,
   });
 
   final LyricsRequest base;
   final String videoId;
 
-  /// Возврат к списку вариантов после применения найденной записи.
-  final VoidCallback onApplied;
+  /// Переход к списку найденного после «Искать».
+  final VoidCallback onSearch;
 
-  /// Возврат к списку вариантов после сброса.
+  /// Переход к списку после сброса.
   final VoidCallback onReset;
 
   @override
-  ConsumerState<_ManualSearchPane> createState() => _ManualSearchPaneState();
+  ConsumerState<_SearchInputPane> createState() => _SearchInputPaneState();
 }
 
-class _ManualSearchPaneState extends ConsumerState<_ManualSearchPane> {
+class _SearchInputPaneState extends ConsumerState<_SearchInputPane> {
   late final TextEditingController _title;
   late final TextEditingController _artist;
   late final TextEditingController _album;
   late final TextEditingController _duration;
-
-  /// Запрос, по которому показан список. `null` — ещё не искали.
-  LyricsRequest? _query;
 
   @override
   void initState() {
@@ -622,26 +1068,28 @@ class _ManualSearchPaneState extends ConsumerState<_ManualSearchPane> {
     );
   }
 
-  /// «Искать»: запоминаем ручной запрос и запускаем список.
+  /// «Искать»: запоминаем ручной запрос и показываем список найденного.
   void _search() {
-    final LyricsRequest query = _buildRequest();
-    // Ручной запрос запоминаем: шторка показывает его в шапке, а обычный
-    // параллельный поиск (если запись не выбрана) идёт по этим метаданным.
-    ref.read(manualLyricsRequestsProvider.notifier).set(widget.videoId, query);
-    setState(() => _query = query);
+    // Ручной запрос запоминаем: по этим метаданным идёт и обычный параллельный
+    // поиск, и поиск записей для выбора.
+    ref.read(manualLyricsRequestsProvider.notifier).set(
+          widget.videoId,
+          _buildRequest(),
+        );
+    widget.onSearch();
   }
 
-  /// Тап по записи: применяем её для этого трека и возвращаемся к списку
-  /// вариантов — шторка остаётся открытой, как было с диалогом поверх неё.
-  void _apply(LyricsTrackHit hit) {
-    ref
-        .read(manualLyricsSelectionProvider.notifier)
-        .set(widget.videoId, hit);
-    // Источник тоже фиксируем, иначе плеер не знал бы, какой вариант показать.
-    ref
-        .read(lyricsSourceOverrideProvider.notifier)
-        .setSource(widget.videoId, hit.source);
-    widget.onApplied();
+  /// «Искать в интернете»: открываем браузер с запросом по тем же словам.
+  Future<void> _searchOnline() async {
+    final String query = <String>[
+      _artist.text.trim(),
+      _title.text.trim(),
+      'lyrics',
+    ].where((String s) => s.isNotEmpty).join(' ');
+    final Uri uri = Uri.parse(
+      'https://www.google.com/search?q=${Uri.encodeQueryComponent(query)}',
+    );
+    await launchUrl(uri, mode: LaunchMode.externalApplication);
   }
 
   /// «Сбросить»: снимаем и ручной запрос, и выбранную запись.
@@ -649,9 +1097,7 @@ class _ManualSearchPaneState extends ConsumerState<_ManualSearchPane> {
     ref
         .read(manualLyricsSelectionProvider.notifier)
         .set(widget.videoId, null);
-    ref
-        .read(manualLyricsRequestsProvider.notifier)
-        .set(widget.videoId, null);
+    ref.read(manualLyricsRequestsProvider.notifier).set(widget.videoId, null);
     ref
         .read(lyricsSourceOverrideProvider.notifier)
         .setSource(widget.videoId, LyricsSource.auto);
@@ -666,70 +1112,127 @@ class _ManualSearchPaneState extends ConsumerState<_ManualSearchPane> {
       manualLyricsSelectionProvider
           .select((Map<String, LyricsTrackHit> m) => m[widget.videoId]),
     );
-    final LyricsRequest? query = _query;
+    // Список записей показываем только после поиска: до него это была бы
+    // пустая форма без ответа.
+    final LyricsRequest? query = ref.watch(
+      manualLyricsRequestsProvider
+          .select((Map<String, LyricsRequest> m) => m[widget.videoId]),
+    );
 
-    // Отступы как у списка вариантов: форма и список — одна поверхность.
-    return Padding(
-      padding: const EdgeInsets.fromLTRB(20, 0, 20, 4),
+    return SingleChildScrollView(
+      padding: const EdgeInsets.fromLTRB(24, 20, 24, 20),
       child: Column(
-        mainAxisSize: MainAxisSize.min,
         crossAxisAlignment: CrossAxisAlignment.stretch,
         children: <Widget>[
           TextField(
             controller: _title,
-            decoration: const InputDecoration(labelText: 'Название'),
+            textInputAction: TextInputAction.next,
+            decoration: const InputDecoration(
+              labelText: 'Название',
+              border: OutlineInputBorder(),
+              prefixIcon: Icon(Icons.music_note),
+            ),
           ),
+          const SizedBox(height: 16),
           TextField(
             controller: _artist,
-            decoration: const InputDecoration(labelText: 'Исполнитель'),
+            textInputAction: TextInputAction.search,
+            onSubmitted: (String _) => _search(),
+            decoration: const InputDecoration(
+              labelText: 'Исполнитель',
+              border: OutlineInputBorder(),
+              prefixIcon: Icon(Icons.person_outline),
+            ),
           ),
-          TextField(
-            controller: _album,
-            decoration: const InputDecoration(labelText: 'Альбом'),
+          const SizedBox(height: 16),
+          // Альбом и длительность оставляем редактируемыми: по ним источники
+          // отсеивают чужие записи, и без них поиск по другим метаданным
+          // находил бы не то.
+          Row(
+            children: <Widget>[
+              Expanded(
+                flex: 3,
+                child: TextField(
+                  controller: _album,
+                  decoration: const InputDecoration(
+                    labelText: 'Альбом',
+                    border: OutlineInputBorder(),
+                  ),
+                ),
+              ),
+              const SizedBox(width: 12),
+              Expanded(
+                flex: 2,
+                child: TextField(
+                  controller: _duration,
+                  keyboardType: TextInputType.number,
+                  decoration: const InputDecoration(
+                    labelText: 'Секунд',
+                    border: OutlineInputBorder(),
+                  ),
+                ),
+              ),
+            ],
           ),
-          TextField(
-            controller: _duration,
-            decoration: const InputDecoration(labelText: 'Длительность, сек'),
+          const SizedBox(height: 20),
+          Wrap(
+            alignment: WrapAlignment.end,
+            spacing: 8,
+            runSpacing: 8,
+            children: <Widget>[
+              OutlinedButton.icon(
+                onPressed: () => unawaited(_searchOnline()),
+                icon: const Icon(Icons.language),
+                label: const Text('Искать в интернете'),
+              ),
+              FilledButton.icon(
+                onPressed: _search,
+                icon: const Icon(Icons.search),
+                label: const Text('Искать'),
+              ),
+            ],
           ),
-          const SizedBox(height: 14),
-          if (query == null)
-            Text(
-              'Заполните метаданные и нажмите «Искать» — покажем список '
-              'найденных треков, из него выберете нужный.',
-              style: text.bodySmall?.copyWith(color: scheme.onSurfaceVariant),
-            )
-          else ...<Widget>[
-            Text('Найденные треки', style: text.titleSmall),
+          if (query != null) ...<Widget>[
+            const SizedBox(height: 24),
+            Text('Найденные записи', style: text.titleSmall),
             const SizedBox(height: 2),
             Text(
-              'YouLy+ и BetterLyrics ищут только по метаданным — в списке '
-              'их нет.',
+              'YouLy+ и BetterLyrics ищут только по метаданным — их записей '
+              'здесь нет.',
               style: text.bodySmall?.copyWith(color: scheme.onSurfaceVariant),
             ),
-            const SizedBox(height: 8),
+            const SizedBox(height: 10),
             _HitResults(
               request: query,
               selected: selected,
-              onSelect: _apply,
+              onSelect: _selectHit,
             ),
           ],
-          const SizedBox(height: 14),
+          const SizedBox(height: 8),
           Row(
             children: <Widget>[
               TextButton(onPressed: _reset, child: const Text('Сбросить')),
-              const Spacer(),
-              // Отдельной «Отмены» нет: возврат к списку — стрелкой в шапке
-              // шторки, дублировать то же действие кнопкой незачем.
-              FilledButton(onPressed: _search, child: const Text('Искать')),
             ],
           ),
         ],
       ),
     );
   }
+
+  /// Тап по записи: применяем её для этого трека и закрываем экран поиска.
+  void _selectHit(LyricsTrackHit hit) {
+    ref
+        .read(manualLyricsSelectionProvider.notifier)
+        .set(widget.videoId, hit);
+    // Источник тоже фиксируем, иначе плеер не знал бы, какой вариант показать.
+    ref
+        .read(lyricsSourceOverrideProvider.notifier)
+        .setSource(widget.videoId, hit.source);
+    Navigator.pop(context);
+  }
 }
 
-/// Список найденных треков под формой ручного поиска.
+/// Список найденных записей под формой ручного поиска.
 class _HitResults extends ConsumerWidget {
   const _HitResults({
     required this.request,
@@ -747,21 +1250,7 @@ class _HitResults extends ConsumerWidget {
         ref.watch(manualLyricsHitsProvider(request));
 
     return hits.when(
-      loading: () => const Padding(
-        padding: EdgeInsets.all(20),
-        child: Row(
-          mainAxisAlignment: MainAxisAlignment.center,
-          children: <Widget>[
-            SizedBox(
-              width: 16,
-              height: 16,
-              child: CircularProgressIndicator(strokeWidth: 2),
-            ),
-            SizedBox(width: 12),
-            Text('Ищем треки…'),
-          ],
-        ),
-      ),
+      loading: () => const _SearchFooterLoading(),
       error: (Object error, StackTrace stack) => const Padding(
         padding: EdgeInsets.all(20),
         child: Text('Не удалось выполнить поиск. Попробуйте ещё раз.'),
@@ -770,25 +1259,26 @@ class _HitResults extends ConsumerWidget {
         if (list.isEmpty) {
           return const Padding(
             padding: EdgeInsets.all(20),
-            child: Text(
-              'Ничего не нашлось. Проверьте название и исполнителя.',
-            ),
+            child: Text('Ничего не нашлось. Проверьте название и исполнителя.'),
           );
         }
-        // Высоту ограничиваем, чтобы форма в шторке не разрасталась: список
+        // Высоту ограничиваем, чтобы форма не разрасталась: список
         // прокручивается внутри своей рамки.
         return ConstrainedBox(
-          constraints: const BoxConstraints(maxHeight: 300),
+          constraints: const BoxConstraints(maxHeight: 320),
           child: ListView.builder(
             shrinkWrap: true,
             padding: EdgeInsets.zero,
             itemCount: list.length,
             itemBuilder: (BuildContext context, int index) {
               final LyricsTrackHit hit = list[index];
-              return _HitCard(
-                hit: hit,
-                selected: selected == hit,
-                onTap: () => onSelect(hit),
+              return Padding(
+                padding: const EdgeInsets.only(bottom: 10),
+                child: _HitCard(
+                  hit: hit,
+                  selected: selected == hit,
+                  onTap: () => onSelect(hit),
+                ),
               );
             },
           ),
@@ -798,34 +1288,71 @@ class _HitResults extends ConsumerWidget {
   }
 }
 
-/// Первые непустые строки текста — предпросмотр в карточке.
-///
-/// Берём до трёх строк, а показываем две: этого хватает, чтобы отличить
-/// нужную запись по содержимому, а не только по названию.
-String _lyricsPreview(Lyrics lyrics) {
-  final List<String> lines;
-  final List<TimedLyric>? timed = lyrics.timed;
-  if (timed != null && timed.isNotEmpty) {
-    lines = timed.map((TimedLyric line) => line.text).toList();
-  } else {
-    lines = (lyrics.plain ?? '').split('\n');
-  }
-  return lines
-      .map((String line) => line.trim())
-      .where((String line) => line.isNotEmpty)
-      .take(3)
-      .join('\n');
+/// Карточка найденной записи: та же карточка результата, но текст подгружается
+/// лениво — запрос уходит только за видимыми строками списка.
+class _HitCard extends ConsumerStatefulWidget {
+  const _HitCard({
+    required this.hit,
+    required this.selected,
+    required this.onTap,
+  });
+
+  final LyricsTrackHit hit;
+  final bool selected;
+  final VoidCallback onTap;
+
+  @override
+  ConsumerState<_HitCard> createState() => _HitCardState();
 }
 
-/// Честная подпись вместо пустого места, когда текста у записи нет.
-Widget _previewMissing(TextTheme text, ColorScheme scheme) => Text(
-      'Текста нет',
-      style: text.bodySmall?.copyWith(color: scheme.onSurfaceVariant),
-      maxLines: 1,
-      overflow: TextOverflow.ellipsis,
-    );
+class _HitCardState extends ConsumerState<_HitCard> {
+  bool _expanded = false;
 
-/// Заглушка предпросмотра: серые полоски на время загрузки текста.
+  @override
+  Widget build(BuildContext context) {
+    final LyricsTrackHit hit = widget.hit;
+    final AsyncValue<Lyrics> preview = ref.watch(lyricsHitPreviewProvider(hit));
+    final Lyrics? lyrics = preview.value;
+    final _ResultInfo? info =
+        (lyrics == null || lyrics.isEmpty) ? null : _ResultInfo.fromLyrics(lyrics);
+
+    // Название записи — как в списке: «Название — Исполнитель».
+    final String meta = <String>[
+      if ((hit.artist ?? '').trim().isNotEmpty) hit.artist!.trim(),
+      if ((hit.album ?? '').trim().isNotEmpty) hit.album!.trim(),
+      if (hit.duration != null && hit.duration! > Duration.zero)
+        formatDuration(hit.duration),
+    ].join(' · ');
+
+    return Column(
+      crossAxisAlignment: CrossAxisAlignment.start,
+      children: <Widget>[
+        _ResultCard(
+          providerLabel: hit.source.label,
+          info: info,
+          selected: widget.selected,
+          expanded: _expanded,
+          onExpand: () => setState(() => _expanded = !_expanded),
+          onTap: widget.onTap,
+        ),
+        if (meta.isNotEmpty)
+          Padding(
+            padding: const EdgeInsets.only(left: 16, top: 6),
+            child: Text(
+              _hitTitle(hit),
+              style: Theme.of(context).textTheme.bodySmall?.copyWith(
+                    color: Theme.of(context).colorScheme.onSurfaceVariant,
+                  ),
+              maxLines: 1,
+              overflow: TextOverflow.ellipsis,
+            ),
+          ),
+      ],
+    );
+  }
+}
+
+/// Заглушка превью: серые полоски на время загрузки текста.
 class _PreviewPlaceholder extends StatelessWidget {
   const _PreviewPlaceholder();
 
@@ -859,141 +1386,46 @@ class _PreviewPlaceholder extends StatelessWidget {
       );
 }
 
-/// Карточка найденного трека: метаданные, предпросмотр текста и источник.
-class _HitCard extends ConsumerWidget {
-  const _HitCard({
-    required this.hit,
-    required this.selected,
-    required this.onTap,
-  });
+/// «Название — Исполнитель» для подписи найденной записи.
+String _hitTitle(LyricsTrackHit hit) {
+  final List<String> parts = <String>[
+    if ((hit.title ?? '').trim().isNotEmpty) hit.title!.trim(),
+    if ((hit.artist ?? '').trim().isNotEmpty) hit.artist!.trim(),
+  ];
+  return parts.isEmpty ? 'без названия' : parts.join(' — ');
+}
 
-  final LyricsTrackHit hit;
-  final bool selected;
-  final VoidCallback onTap;
+String _syncLabel({required bool wordSynced, required bool lineSynced}) =>
+    wordSynced
+        ? 'Пословная синхронизация'
+        : lineSynced
+            ? 'Построчная синхронизация'
+            : 'Без синхронизации';
 
-  @override
-  Widget build(BuildContext context, WidgetRef ref) {
-    final ColorScheme scheme = Theme.of(context).colorScheme;
-    final TextTheme text = Theme.of(context).textTheme;
+IconData _syncIcon({required bool wordSynced, required bool lineSynced}) =>
+    wordSynced
+        ? Icons.graphic_eq
+        : lineSynced
+            ? Icons.sync
+            : Icons.format_align_left;
 
-    final String syncLabel = hit.hasSync == true
-        ? 'Есть синхронизация'
-        : hit.hasSync == false
-            ? 'Без синхронизации'
-            : 'Синхронизация неизвестна';
-    final IconData syncIcon =
-        hit.hasSync == true ? Icons.sync : Icons.help_outline;
+/// «37 строк · 1587 символов» — как `lyrics_search_result_stats`.
+String _statsText(int lines, int characters) =>
+    '$lines ${_plural(lines, 'строка', 'строки', 'строк')} · '
+    '$characters ${_plural(characters, 'символ', 'символа', 'символов')}';
 
-    final String meta = <String>[
-      if ((hit.artist ?? '').trim().isNotEmpty) hit.artist!.trim(),
-      if ((hit.album ?? '').trim().isNotEmpty) hit.album!.trim(),
-      if (hit.duration != null && hit.duration! > Duration.zero)
-        formatDuration(hit.duration),
-    ].join(' · ');
-
-    // Текст тянем отдельным autoDispose-провайдером: он срабатывает только
-    // для построенных карточек, то есть запросы уходят лишь за видимыми
-    // строками списка, а не за всеми найденными записями.
-    final AsyncValue<Lyrics> preview = ref.watch(lyricsHitPreviewProvider(hit));
-
-    return Card(
-      margin: const EdgeInsets.only(bottom: 8),
-      color:
-          selected ? scheme.secondaryContainer : scheme.surfaceContainerHighest,
-      child: InkWell(
-        onTap: onTap,
-        borderRadius: BorderRadius.circular(12),
-        child: Padding(
-          padding: const EdgeInsets.all(12),
-          child: Row(
-            children: <Widget>[
-              Expanded(
-                child: Column(
-                  crossAxisAlignment: CrossAxisAlignment.start,
-                  children: <Widget>[
-                    Text(
-                      _hitTitle(hit),
-                      style: text.titleSmall?.copyWith(
-                        fontWeight: FontWeight.w600,
-                      ),
-                      maxLines: 1,
-                      overflow: TextOverflow.ellipsis,
-                    ),
-                    if (meta.isNotEmpty)
-                      Text(
-                        meta,
-                        style: text.bodySmall?.copyWith(
-                          color: scheme.onSurfaceVariant,
-                        ),
-                        maxLines: 2,
-                        overflow: TextOverflow.ellipsis,
-                      ),
-                    const SizedBox(height: 6),
-                    // Место под превью резервируем заранее: иначе карточка
-                    // прыгала бы по высоте, когда текст догрузится.
-                    ConstrainedBox(
-                      constraints: const BoxConstraints(minHeight: 34),
-                      child: preview.when(
-                        loading: () => const _PreviewPlaceholder(),
-                        // Ошибка — это просто «нет текста», не пустое место.
-                        error: (Object error, StackTrace stack) =>
-                            _previewMissing(text, scheme),
-                        data: (Lyrics lyrics) {
-                          final String sample = _lyricsPreview(lyrics);
-                          if (sample.isEmpty) {
-                            return _previewMissing(text, scheme);
-                          }
-                          return Text(
-                            sample,
-                            style: text.bodySmall?.copyWith(
-                              color: scheme.onSurfaceVariant,
-                            ),
-                            maxLines: 2,
-                            overflow: TextOverflow.ellipsis,
-                          );
-                        },
-                      ),
-                    ),
-                    const SizedBox(height: 6),
-                    Row(
-                      children: <Widget>[
-                        Flexible(
-                          child: Text(
-                            hit.source.label,
-                            style: text.labelSmall?.copyWith(
-                              color: scheme.onSurfaceVariant,
-                            ),
-                            maxLines: 1,
-                            overflow: TextOverflow.ellipsis,
-                          ),
-                        ),
-                        const SizedBox(width: 8),
-                        Icon(
-                          syncIcon,
-                          size: 14,
-                          color: scheme.onSurfaceVariant,
-                        ),
-                        const SizedBox(width: 4),
-                        Flexible(
-                          child: Text(
-                            syncLabel,
-                            style: text.labelSmall?.copyWith(
-                              color: scheme.onSurfaceVariant,
-                            ),
-                            maxLines: 1,
-                            overflow: TextOverflow.ellipsis,
-                          ),
-                        ),
-                      ],
-                    ),
-                  ],
-                ),
-              ),
-              if (selected) Icon(Icons.check, color: scheme.primary),
-            ],
-          ),
-        ),
-      ),
-    );
+/// Русское склонение: 1 строка, 2 строки, 5 строк.
+String _plural(int count, String one, String few, String many) {
+  final int mod100 = count % 100;
+  if (mod100 >= 11 && mod100 <= 14) return many;
+  switch (count % 10) {
+    case 1:
+      return one;
+    case 2:
+    case 3:
+    case 4:
+      return few;
+    default:
+      return many;
   }
 }

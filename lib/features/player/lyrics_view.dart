@@ -366,7 +366,14 @@ class _LyricsViewState extends ConsumerState<LyricsView> {
                       : TextButton.icon(
                           icon: const Icon(Icons.travel_explore, size: 18),
                           label: const Text('Найти в другом источнике'),
-                          onPressed: () => showLyricsMenu(context, request),
+                          // Сразу открываем поиск, а не меню: у найденного
+                          // текста уже есть список источников, лишний шаг ни к
+                          // чему.
+                          onPressed: () => showLyricsSearchDialog(
+                            context,
+                            request,
+                            startInInput: false,
+                          ),
                         ),
                 );
               }
@@ -385,7 +392,11 @@ class _LyricsViewState extends ConsumerState<LyricsView> {
                 source: lyricsValue.source,
                 search: search,
                 romanized: romanized,
-                onFindSource: () => showLyricsMenu(context, request),
+                onFindSource: () => showLyricsSearchDialog(
+                  context,
+                  request,
+                  startInInput: false,
+                ),
               );
             },
             loading: () => const Center(child: CircularProgressIndicator()),
