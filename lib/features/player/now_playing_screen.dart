@@ -597,14 +597,19 @@ class _InfoRow extends ConsumerWidget {
                   children: <Widget>[
                     Flexible(
                       // Исполнитель — ссылка на его страницу. Ошибку плеера
-                      // показываем текстом: она не ссылка.
+                      // показываем текстом: она не ссылка. Две строки и
+                      // подсказка при наведении — причина отказа бывает
+                      // длинной, в одну строку её не прочитать.
                       child: player.error != null
-                          ? Text(
-                              player.error!,
-                              maxLines: 1,
-                              overflow: TextOverflow.ellipsis,
-                              style: text.titleMedium
-                                  ?.copyWith(color: scheme.error),
+                          ? Tooltip(
+                              message: player.error!,
+                              child: Text(
+                                player.error!,
+                                maxLines: 2,
+                                overflow: TextOverflow.ellipsis,
+                                style: text.titleMedium
+                                    ?.copyWith(color: scheme.error),
+                              ),
                             )
                           : ArtistLine(
                               artists: track.artists,

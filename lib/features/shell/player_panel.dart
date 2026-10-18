@@ -435,13 +435,18 @@ class _PanelTrackRow extends ConsumerWidget {
                   const SizedBox(height: 2),
                   // Исполнитель — ссылка на его страницу, как и везде, где
                   // он написан. Ошибку плеера показываем текстом: она не
-                  // ссылка.
+                  // ссылка. Две строки и подсказка при наведении: причина
+                  // отказа бывает длинной («YouTube требует вход в аккаунт…»),
+                  // и в одну строку её не прочитать.
                   if (player.error != null)
-                    Text(
-                      player.error!,
-                      maxLines: 1,
-                      overflow: TextOverflow.ellipsis,
-                      style: text.bodySmall?.copyWith(color: scheme.error),
+                    Tooltip(
+                      message: player.error!,
+                      child: Text(
+                        player.error!,
+                        maxLines: 2,
+                        overflow: TextOverflow.ellipsis,
+                        style: text.bodySmall?.copyWith(color: scheme.error),
+                      ),
                     )
                   else
                     ArtistLine(
