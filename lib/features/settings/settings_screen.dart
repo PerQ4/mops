@@ -11,9 +11,11 @@ import '../../state/auth_controller.dart';
 import '../../core/theme/layout.dart';
 import '../../state/player_controller.dart';
 import '../../state/providers.dart';
+import '../../state/theme_providers.dart';
 import '../player/player_controls.dart';
 import '../player/sleep_timer.dart';
 import '../../state/ui_scale.dart';
+import '../../widgets/liquid_backdrop.dart';
 import '../common/navigation.dart';
 import 'settings_components.dart';
 
@@ -288,63 +290,17 @@ class SettingsScreen extends ConsumerWidget {
                     settings,
                   ),
                 ),
-                // Настройки «Жидкости» показываются, только когда выбран этот
-                // стиль: у градиента и «размытой обложки» их смысла нет.
+                // Стиль «Жидкость» настраивается в отдельном диалоге: четыре
+                // параметра в строках растягивали «Воспроизведение», а места
+                // им нужно мало. Строка — точка входа, как у прочих настроек.
                 if (settings.playerBackgroundStyle ==
-                    PlayerBackgroundStyle.liquid) ...<Widget>[
+                    PlayerBackgroundStyle.liquid)
                   SettingsRow(
-                    icon: Icons.speed,
-                    title: 'Скорость течения',
-                    subtitle: '${settings.liquidSpeed.toStringAsFixed(1)}×',
-                    onTap: () => _pickLiquidSlider(
-                      context,
-                      title: 'Скорость течения',
-                      value: settings.liquidSpeed,
-                      min: 0.2,
-                      max: 3,
-                      divisions: 28,
-                      label: (double v) => '${v.toStringAsFixed(1)}×',
-                      onSaved: controller.setLiquidSpeed,
-                    ),
+                    icon: Icons.water,
+                    title: 'Настройки жидкости',
+                    subtitle: _liquidSummary(settings),
+                    onTap: () => _editLiquidSettings(context, settings),
                   ),
-                  SettingsRow(
-                    icon: Icons.zoom_out_map,
-                    title: 'Масштаб пятен',
-                    subtitle: '${settings.liquidScale.toStringAsFixed(1)}×',
-                    onTap: () => _pickLiquidSlider(
-                      context,
-                      title: 'Масштаб пятен',
-                      value: settings.liquidScale,
-                      min: 0.5,
-                      max: 2.5,
-                      divisions: 20,
-                      label: (double v) => '${v.toStringAsFixed(1)}×',
-                      onSaved: controller.setLiquidScale,
-                    ),
-                  ),
-                  SettingsRow(
-                    icon: Icons.opacity,
-                    title: 'Насыщенность цвета',
-                    subtitle: '${(settings.liquidSaturation * 100).round()}%',
-                    onTap: () => _pickLiquidSlider(
-                      context,
-                      title: 'Насыщенность цвета',
-                      value: settings.liquidSaturation,
-                      min: 0,
-                      max: 1.5,
-                      divisions: 30,
-                      label: (double v) => '${(v * 100).round()}%',
-                      onSaved: controller.setLiquidSaturation,
-                    ),
-                  ),
-                  SettingsRow(
-                    icon: Icons.palette_outlined,
-                    title: 'Источник цвета',
-                    subtitle: settings.liquidColorSource.label,
-                    onTap: () =>
-                        _pickLiquidColorSource(context, controller, settings),
-                  ),
-                ],
                 // Визуализатор — отдельная настройка, а не часть стиля фона: гало
                 // живёт поверх любой подложки. Уровень берётся у libmpv, поэтому
                 // там, где такого фильтра нет, гало честно скажет, что данных нет.
@@ -618,61 +574,24 @@ class SettingsScreen extends ConsumerWidget {
     if (result != null) await controller.setPlayerBackgroundStyle(result);
   }
 
-  /// Числовая настройка «Жидкости» — слайдер в диалоге, как у размытия.
-  Future<void> _pickLiquidSlider(
-    BuildContext context, {
-    required String title,
-    required double value,
-    required double min,
-    required double max,
-    required int divisions,
-    required String Function(double value) label,
-    required Future<void> Function(double value) onSaved,
-  }) async {
-    double current = value;
-    final double? result = await showDialog<double>(
-      context: context,
-      builder: (BuildContext dialogContext) => StatefulBuilder(
-        builder: (BuildContext context, StateSetter setState) => AlertDialog(
-          title: Text(title),
-          content: Slider(
-            value: current,
-            min: min,
-            max: max,
-            divisions: divisions,
-            label: label(current),
-            onChanged: (double v) => setState(() => current = v),
-          ),
-          actions: <Widget>[
-            TextButton(
-              onPressed: () => Navigator.of(dialogContext).pop(),
-              child: const Text('Отмена'),
-            ),
-            FilledButton(
-              onPressed: () => Navigator.of(dialogContext).pop(current),
-              child: const Text('Сохранить'),
-            ),
-          ],
-        ),
-      ),
-    );
-    if (result != null) await onSaved(result);
-  }
+  /// Подпись строки «Настройки жидкости»: текущие значения всех четырёх
+  /// параметров, чтобы их было видно, не открывая диалог.
+  String _liquidSummary(AppSettings settings) =>
+      'Скорость ${settings.liquidSpeed.toStringAsFixed(1)}× · '
+      'масштаб ${settings.liquidScale.toStringAsFixed(1)}× · '
+      'насыщенность ${(settings.liquidSaturation * 100).round()}% · '
+      '${settings.liquidColorSource.label.toLowerCase()}';
 
-  /// «Жидкость»: цвета из обложки текущего трека или из палитры приложения.
-  Future<void> _pickLiquidColorSource(
+  /// Диалог настроек «Жидкости»: все параметры сразу и живой предпросмотр.
+  Future<void> _editLiquidSettings(
     BuildContext context,
-    SettingsController controller,
     AppSettings settings,
-  ) async {
-    final LiquidColorSource? result = await _showChoice<LiquidColorSource>(
-      context,
-      title: 'Источник цвета «Жидкости»',
-      current: settings.liquidColorSource,
-      values: LiquidColorSource.values,
-      label: (LiquidColorSource v) => v.label,
+  ) {
+    return showDialog<void>(
+      context: context,
+      builder: (BuildContext dialogContext) =>
+          _LiquidSettingsDialog(initial: settings),
     );
-    if (result != null) await controller.setLiquidColorSource(result);
   }
 
   /// Интенсивность размытия фона (0–64) — слайдер в диалоге.
@@ -1419,6 +1338,211 @@ class SettingsScreen extends ConsumerWidget {
           ],
         );
       },
+    );
+  }
+}
+
+/// Диалог настроек «Жидкости»: все четыре параметра и живой предпросмотр.
+///
+/// Правки копятся здесь и уходят в настройки одной записью по «Сохранить»:
+/// так «Отмена» ничего не меняет, а фон плеера не перерисовывается и не
+/// сохраняется на диск на каждое движение ползунка. Предпросмотр при этом
+/// реагирует сразу — он собран из тех же значений, что и настройки.
+class _LiquidSettingsDialog extends ConsumerStatefulWidget {
+  const _LiquidSettingsDialog({required this.initial});
+
+  /// Настройки на момент открытия — из них берутся начальные значения.
+  final AppSettings initial;
+
+  @override
+  ConsumerState<_LiquidSettingsDialog> createState() =>
+      _LiquidSettingsDialogState();
+}
+
+class _LiquidSettingsDialogState extends ConsumerState<_LiquidSettingsDialog> {
+  late double _speed = widget.initial.liquidSpeed;
+  late double _scale = widget.initial.liquidScale;
+  late double _saturation = widget.initial.liquidSaturation;
+  late LiquidColorSource _source = widget.initial.liquidColorSource;
+
+  /// Три цвета предпросмотра для выбранного источника.
+  ///
+  /// «Из темы» — роли палитры приложения, ровно как у самого фона. «Из
+  /// обложки» — контейнеры текущего трека, если тема уже собрана из его
+  /// обложки (`artworkSchemesProvider`); иначе берём те же цвета палитры: фон
+  /// плеера до разбора обложки тоже рисуется ими, так что предпросмотр честно
+  /// показывает запасной вариант, а не выдуманный.
+  List<Color> _previewColors(ColorScheme scheme) {
+    if (_source == LiquidColorSource.theme) return liquidThemeColors(scheme);
+    final AppSchemes? artwork = ref.watch(artworkSchemesProvider).value;
+    if (artwork == null) return liquidThemeColors(scheme);
+    final ColorScheme palette = scheme.brightness == Brightness.dark
+        ? artwork.dark
+        : artwork.light;
+    return <Color>[
+      palette.primaryContainer,
+      palette.secondaryContainer,
+      palette.tertiaryContainer,
+    ];
+  }
+
+  Future<void> _save() async {
+    final SettingsController controller =
+        ref.read(settingsControllerProvider.notifier);
+    // Закрываем сразу: запись на диск — дело контроллера, ждать её в диалоге
+    // незачем.
+    Navigator.of(context).pop();
+    await controller.update(
+      (AppSettings s) => s.copyWith(
+        liquidSpeed: _speed,
+        liquidScale: _scale,
+        liquidSaturation: _saturation,
+        liquidColorSource: _source,
+      ),
+    );
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    final ThemeData theme = Theme.of(context);
+    final ColorScheme scheme = theme.colorScheme;
+
+    return AlertDialog(
+      title: const Text('Настройки жидкости'),
+      content: SizedBox(
+        width: 360,
+        child: SingleChildScrollView(
+          child: Column(
+            mainAxisSize: MainAxisSize.min,
+            crossAxisAlignment: CrossAxisAlignment.stretch,
+            children: <Widget>[
+              ClipRRect(
+                borderRadius: BorderRadius.circular(16),
+                child: SizedBox(
+                  height: 140,
+                  child: LiquidPreview(
+                    colors: _previewColors(scheme),
+                    speed: _speed,
+                    scale: _scale,
+                    saturation: _saturation,
+                  ),
+                ),
+              ),
+              const SizedBox(height: 20),
+              Text('Источник цвета', style: theme.textTheme.bodyLarge),
+              const SizedBox(height: 8),
+              SegmentedButton<LiquidColorSource>(
+                showSelectedIcon: false,
+                // Кнопки делят ширину диалога поровну: подписи не распирают
+                // его на узком окне.
+                expandedInsets: EdgeInsets.zero,
+                segments: <ButtonSegment<LiquidColorSource>>[
+                  for (final LiquidColorSource source
+                      in LiquidColorSource.values)
+                    ButtonSegment<LiquidColorSource>(
+                      value: source,
+                      label: Text(
+                        source == LiquidColorSource.theme ? 'Тема' : 'Обложка',
+                      ),
+                    ),
+                ],
+                selected: <LiquidColorSource>{_source},
+                onSelectionChanged: (Set<LiquidColorSource> selection) =>
+                    setState(() => _source = selection.first),
+              ),
+              const SizedBox(height: 12),
+              _LiquidSliderField(
+                label: 'Скорость течения',
+                valueText: '${_speed.toStringAsFixed(1)}×',
+                value: _speed,
+                min: 0.2,
+                max: 3,
+                divisions: 28,
+                onChanged: (double v) => setState(() => _speed = v),
+              ),
+              _LiquidSliderField(
+                label: 'Масштаб пятен',
+                valueText: '${_scale.toStringAsFixed(1)}×',
+                value: _scale,
+                min: 0.5,
+                max: 2.5,
+                divisions: 20,
+                onChanged: (double v) => setState(() => _scale = v),
+              ),
+              _LiquidSliderField(
+                label: 'Насыщенность цвета',
+                valueText: '${(_saturation * 100).round()}%',
+                value: _saturation,
+                min: 0,
+                max: 1.5,
+                divisions: 30,
+                onChanged: (double v) => setState(() => _saturation = v),
+              ),
+            ],
+          ),
+        ),
+      ),
+      actions: <Widget>[
+        TextButton(
+          onPressed: () => Navigator.of(context).pop(),
+          child: const Text('Отмена'),
+        ),
+        FilledButton(
+          onPressed: _save,
+          child: const Text('Сохранить'),
+        ),
+      ],
+    );
+  }
+}
+
+/// Строка диалога «Жидкости»: подпись с текущим значением и сам ползунок.
+class _LiquidSliderField extends StatelessWidget {
+  const _LiquidSliderField({
+    required this.label,
+    required this.valueText,
+    required this.value,
+    required this.min,
+    required this.max,
+    required this.divisions,
+    required this.onChanged,
+  });
+
+  final String label;
+  final String valueText;
+  final double value;
+  final double min;
+  final double max;
+  final int divisions;
+  final ValueChanged<double> onChanged;
+
+  @override
+  Widget build(BuildContext context) {
+    final ThemeData theme = Theme.of(context);
+    return Column(
+      crossAxisAlignment: CrossAxisAlignment.stretch,
+      children: <Widget>[
+        Row(
+          children: <Widget>[
+            Expanded(
+              child: Text(label, style: theme.textTheme.bodyLarge),
+            ),
+            Text(
+              valueText,
+              style: theme.textTheme.bodyMedium
+                  ?.copyWith(color: theme.colorScheme.onSurfaceVariant),
+            ),
+          ],
+        ),
+        Slider(
+          value: value,
+          min: min,
+          max: max,
+          divisions: divisions,
+          label: valueText,
+          onChanged: onChanged,
+        ),
+      ],
     );
   }
 }

@@ -481,7 +481,12 @@ final Provider<List<String>> playlistTagsListProvider =
 
 // ------------------------------------------------------------ боковая колонка
 
-/// Разделы боковой библиотеки: что показывает её список.
+/// Категории списка боковой библиотеки.
+///
+/// Порядок объявления — порядок заголовков в панели сверху вниз: плейлисты,
+/// альбомы, исполнители. Раньше эти же значения переключали «вкладку» списка;
+/// теперь панель показывает все категории одним прокручиваемым списком, и
+/// перечисление задаёт только состав и порядок заголовков.
 ///
 /// Значки намеренно не здесь: это слой состояния, а не интерфейс, — иконки
 /// подбирает панель. Так файл остаётся без зависимости от `material`.
@@ -511,41 +516,34 @@ enum LibrarySort {
   final String label;
 }
 
-/// Состояние боковой библиотеки: выбранный раздел, порядок и строка поиска.
+/// Состояние боковой библиотеки: порядок сортировки и строка поиска.
 ///
 /// Сессионное, между запусками не сохраняется: держать его в настройках
 /// значило бы писать на диск на каждую букву в строке поиска.
 @immutable
 class LibrarySidebarState {
   const LibrarySidebarState({
-    this.section = LibrarySection.playlists,
     this.sort = LibrarySort.recent,
     this.query = '',
   });
 
-  final LibrarySection section;
   final LibrarySort sort;
   final String query;
 
   LibrarySidebarState copyWith({
-    LibrarySection? section,
     LibrarySort? sort,
     String? query,
   }) =>
       LibrarySidebarState(
-        section: section ?? this.section,
         sort: sort ?? this.sort,
         query: query ?? this.query,
       );
 }
 
-/// Управляет состоянием боковой библиотеки: раздел, порядок, поиск.
+/// Управляет состоянием боковой библиотеки: порядок и поиск.
 class LibrarySidebarController extends Notifier<LibrarySidebarState> {
   @override
   LibrarySidebarState build() => const LibrarySidebarState();
-
-  void selectSection(LibrarySection section) =>
-      state = state.copyWith(section: section);
 
   void setSort(LibrarySort sort) => state = state.copyWith(sort: sort);
 

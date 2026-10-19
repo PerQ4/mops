@@ -207,8 +207,9 @@ class _NavIsland extends ConsumerWidget {
   /// Стоит ли справа островок плеера — тогда правые углы почти прямые.
   final bool joinedOnRight;
 
-  /// Видна ли боковая панель библиотеки. Тогда вкладку «Библиотека» прячем:
-  /// её заменяет сама панель, и в островке она была бы дублем.
+  /// Видна ли боковая панель библиотеки. Тогда из островка прячем «Библиотеку»
+  /// и «Настройки»: и то и другое несёт сама панель, а в островке они были бы
+  /// дублем.
   final bool sidebarVisible;
 
   @override
@@ -251,18 +252,23 @@ class _NavIsland extends ConsumerWidget {
                 ),
               ),
             const SizedBox(width: 6),
-            Container(
-              width: 1,
-              height: 24,
-              color: scheme.outlineVariant,
-            ),
-            IconButton(
-              tooltip: 'Настройки',
-              iconSize: 22,
-              color: scheme.onSurfaceVariant,
-              icon: const Icon(Icons.settings_outlined),
-              onPressed: () => AppRoutes.settings(context),
-            ),
+            // «Настройки» есть и в самом низу панели библиотеки, поэтому при
+            // видимой панели не дублируем её в островке — там остаются только
+            // разделы. На узком окне панели нет, и кнопка нужна.
+            if (!sidebarVisible) ...<Widget>[
+              Container(
+                width: 1,
+                height: 24,
+                color: scheme.outlineVariant,
+              ),
+              IconButton(
+                tooltip: 'Настройки',
+                iconSize: 22,
+                color: scheme.onSurfaceVariant,
+                icon: const Icon(Icons.settings_outlined),
+                onPressed: () => AppRoutes.settings(context),
+              ),
+            ],
             const SizedBox(width: 10),
           ],
         ),
