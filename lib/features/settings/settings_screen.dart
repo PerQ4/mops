@@ -3,6 +3,7 @@ import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:url_launcher/url_launcher.dart';
 
 import '../../core/net/anti_dpi.dart';
+import '../../core/theme/app_theme.dart';
 import '../../core/theme/seed_colors.dart';
 import '../../core/theme/ui_scaler.dart';
 import '../../data/local/app_settings.dart';
@@ -45,7 +46,7 @@ class SettingsScreen extends ConsumerWidget {
       // На широком экране список растягивался бы на всю ширину — ограничиваем
       // его, как и остальные экраны приложения.
       body: ContentWidth(
-        child: ListView(
+        child: _SettingsList(
           // Отступ снизу — не только «воздух» экрана: под списком плавает
           // островок плеера, и без его запаса последняя строка оказывалась под
           // ним. Так же сделано на остальных экранах (`AppLayout`).
@@ -119,6 +120,97 @@ class SettingsScreen extends ConsumerWidget {
                   value: settings.sidebarNavigation,
                   onChanged: controller.setSidebarNavigation,
                 ),
+                // Вид плеера живёт здесь, а не в «Воспроизведении»: это
+                // оформление, а не поведение звука. Порядок — от раскладки
+                // плеера к его деталям: панель, полоса, фон, гало, размытие,
+                // громкость, затем оформление окна.
+                // Плеер стоит справа от навигации, поэтому и разворачивается в
+                // правую панель — зеркально библиотеке слева. На телефоне
+                // панели нет: там по нажатию открывается полный экран.
+                SettingsSwitchRow(
+                  icon: Icons.vertical_split,
+                  title: 'Плеер справа',
+                  subtitle: 'Разворачивать плеер в отдельную панель справа '
+                      '(на широком экране)',
+                  value: settings.playerPanelEnabled,
+                  onChanged: controller.setPlayerPanelEnabled,
+                ),
+                SettingsRow(
+                  icon: Icons.linear_scale,
+                  title: 'Полоса перемотки',
+                  subtitle: settings.progressBarStyle.label,
+                  onTap: () =>
+                      _pickProgressBarStyle(context, controller, settings),
+                ),
+                SettingsRow(
+                  icon: Icons.blur_on,
+                  title: 'Фон плеера',
+                  subtitle: settings.playerBackgroundStyle.label,
+                  onTap: () => _pickPlayerBackgroundStyle(
+                    context,
+                    controller,
+                    settings,
+                  ),
+                ),
+                // Стиль «Жидкость» настраивается в отдельном диалоге: четыре
+                // параметра в строках растягивали группу, а места им нужно
+                // мало. Строка — точка входа, как у прочих настроек.
+                if (settings.playerBackgroundStyle ==
+                    PlayerBackgroundStyle.liquid)
+                  SettingsRow(
+                    icon: Icons.water,
+                    title: 'Настройки жидкости',
+                    subtitle: _liquidSummary(settings),
+                    onTap: () => _editLiquidSettings(context, settings),
+                  ),
+                // Визуализатор — отдельная настройка, а не часть стиля фона:
+                // гало живёт поверх любой подложки. Уровень берётся у libmpv,
+                // поэтому там, где такого фильтра нет, гало честно скажет,
+                // что данных нет.
+                SettingsSwitchRow(
+                  icon: Icons.equalizer,
+                  title: 'Визуализатор',
+                  subtitle: 'Гало вокруг обложки дышит по уровню звука',
+                  value: settings.visualizerEnabled,
+                  onChanged: controller.setVisualizerEnabled,
+                ),
+                SettingsSwitchRow(
+                  icon: Icons.blur_off,
+                  title: 'Отключить размытие',
+                  subtitle: 'Фон плеера рисуется без размытия',
+                  value: settings.disableBlur,
+                  onChanged: controller.setDisableBlur,
+                ),
+                SettingsRow(
+                  icon: Icons.blur_circular,
+                  title: 'Интенсивность размытия',
+                  subtitle: '${settings.blurRadius.round()}',
+                  onTap: () => _pickBlurRadius(context, controller, settings),
+                ),
+                SettingsRow(
+                  icon: Icons.volume_up,
+                  title: 'Ползунок громкости',
+                  subtitle: settings.volumeSliderStyle.label,
+                  onTap: () => _pickVolumeSliderStyle(
+                    context,
+                    controller,
+                    settings,
+                  ),
+                ),
+                SettingsSwitchRow(
+                  icon: Icons.web_asset,
+                  title: 'Заголовок окна по центру',
+                  subtitle: 'Иначе заголовок слева, у логотипа (Windows)',
+                  value: settings.titleBarCentered,
+                  onChanged: controller.setTitleBarCentered,
+                ),
+                SettingsSwitchRow(
+                  icon: Icons.format_color_fill,
+                  title: 'Шапка в цвет фона',
+                  subtitle: 'Иначе шапка темнее фона — как рамка окна (Windows)',
+                  value: settings.titleBarMatchesBackground,
+                  onChanged: controller.setTitleBarMatchesBackground,
+                ),
               ],
             ),
             const SizedBox(height: SettingsDims.sectionSpacing),
@@ -171,41 +263,12 @@ class SettingsScreen extends ConsumerWidget {
                 ),
                 // Пять отдельных переключателей как группа `romanization`
                 // в ArchiveTune: язык определяется по тексту сам, поэтому
-                // ручного выбора языка больше нет.
-                SettingsSwitchRow(
-                  icon: Icons.translate,
-                  title: 'Романизация: японский',
-                  subtitle: 'Латиница под японским текстом',
-                  value: settings.romanizeJapanese,
-                  onChanged: controller.setRomanizeJapanese,
-                ),
-                SettingsSwitchRow(
-                  icon: Icons.translate,
-                  title: 'Романизация: корейский',
-                  subtitle: 'Латиница под корейским текстом',
-                  value: settings.romanizeKorean,
-                  onChanged: controller.setRomanizeKorean,
-                ),
-                SettingsSwitchRow(
-                  icon: Icons.translate,
-                  title: 'Романизация: китайский',
-                  subtitle: 'Латиница под китайским текстом',
-                  value: settings.romanizeChinese,
-                  onChanged: controller.setRomanizeChinese,
-                ),
-                SettingsSwitchRow(
-                  icon: Icons.translate,
-                  title: 'Романизация: хинди',
-                  subtitle: 'Латиница под текстом на хинди',
-                  value: settings.romanizeHindi,
-                  onChanged: controller.setRomanizeHindi,
-                ),
-                SettingsSwitchRow(
-                  icon: Icons.translate,
-                  title: 'Романизация: прочие языки',
-                  subtitle: 'Латиница для остальных нелатинских языков',
-                  value: settings.romanizeOther,
-                  onChanged: controller.setRomanizeOther,
+                // ручного выбора языка больше нет. Подряд они занимали почти
+                // весь экран, поэтому свёрнуты в одну строку со счётчиком.
+                _RomanizationBlock(
+                  settings: settings,
+                  controller: controller,
+                  accent: scheme.secondary,
                 ),
               ],
             ),
@@ -261,92 +324,6 @@ class SettingsScreen extends ConsumerWidget {
                       '${settings.miniSwipeSensitivity.label.toLowerCase()}',
                   onTap: () =>
                       _pickSwipeSensitivity(context, controller, settings),
-                ),
-                // Плеер стоит справа от навигации, поэтому и разворачивается в
-                // правую панель — зеркально библиотеке слева. На телефоне
-                // панели нет: там по нажатию открывается полный экран.
-                SettingsSwitchRow(
-                  icon: Icons.vertical_split,
-                  title: 'Плеер справа',
-                  subtitle: 'Разворачивать плеер в отдельную панель справа '
-                      '(на широком экране)',
-                  value: settings.playerPanelEnabled,
-                  onChanged: controller.setPlayerPanelEnabled,
-                ),
-                SettingsRow(
-                  icon: Icons.linear_scale,
-                  title: 'Полоса перемотки',
-                  subtitle: settings.progressBarStyle.label,
-                  onTap: () =>
-                      _pickProgressBarStyle(context, controller, settings),
-                ),
-                SettingsRow(
-                  icon: Icons.blur_on,
-                  title: 'Фон плеера',
-                  subtitle: settings.playerBackgroundStyle.label,
-                  onTap: () => _pickPlayerBackgroundStyle(
-                    context,
-                    controller,
-                    settings,
-                  ),
-                ),
-                // Стиль «Жидкость» настраивается в отдельном диалоге: четыре
-                // параметра в строках растягивали «Воспроизведение», а места
-                // им нужно мало. Строка — точка входа, как у прочих настроек.
-                if (settings.playerBackgroundStyle ==
-                    PlayerBackgroundStyle.liquid)
-                  SettingsRow(
-                    icon: Icons.water,
-                    title: 'Настройки жидкости',
-                    subtitle: _liquidSummary(settings),
-                    onTap: () => _editLiquidSettings(context, settings),
-                  ),
-                // Визуализатор — отдельная настройка, а не часть стиля фона: гало
-                // живёт поверх любой подложки. Уровень берётся у libmpv, поэтому
-                // там, где такого фильтра нет, гало честно скажет, что данных нет.
-                SettingsSwitchRow(
-                  icon: Icons.equalizer,
-                  title: 'Визуализатор',
-                  subtitle: 'Гало вокруг обложки дышит по уровню звука',
-                  value: settings.visualizerEnabled,
-                  onChanged: controller.setVisualizerEnabled,
-                ),
-                SettingsSwitchRow(
-                  icon: Icons.blur_off,
-                  title: 'Отключить размытие',
-                  subtitle: 'Фон плеера рисуется без размытия',
-                  value: settings.disableBlur,
-                  onChanged: controller.setDisableBlur,
-                ),
-                SettingsRow(
-                  icon: Icons.blur_circular,
-                  title: 'Интенсивность размытия',
-                  subtitle: '${settings.blurRadius.round()}',
-                  onTap: () => _pickBlurRadius(context, controller, settings),
-                ),
-                SettingsRow(
-                  icon: Icons.volume_up,
-                  title: 'Ползунок громкости',
-                  subtitle: settings.volumeSliderStyle.label,
-                  onTap: () => _pickVolumeSliderStyle(
-                    context,
-                    controller,
-                    settings,
-                  ),
-                ),
-                SettingsSwitchRow(
-                  icon: Icons.web_asset,
-                  title: 'Заголовок окна по центру',
-                  subtitle: 'Иначе заголовок слева, у логотипа (Windows)',
-                  value: settings.titleBarCentered,
-                  onChanged: controller.setTitleBarCentered,
-                ),
-                SettingsSwitchRow(
-                  icon: Icons.format_color_fill,
-                  title: 'Шапка в цвет фона',
-                  subtitle: 'Иначе шапка темнее фона — как рамка окна (Windows)',
-                  value: settings.titleBarMatchesBackground,
-                  onChanged: controller.setTitleBarMatchesBackground,
                 ),
               ],
             ),
@@ -471,8 +448,8 @@ class SettingsScreen extends ConsumerWidget {
             const SizedBox(height: SettingsDims.sectionSpacing),
 
             SettingsGroup(
-              title: 'О приложении',
-              accent: scheme.secondary,
+              title: 'Данные',
+              accent: scheme.primary,
               children: <Widget>[
                 // Резервная копия: перенос настроек на другой компьютер и
                 // откат после неудачного эксперимента.
@@ -490,6 +467,14 @@ class SettingsScreen extends ConsumerWidget {
                   subtitle: 'Занятое место и очистка кэша текстов',
                   onTap: () => AppRoutes.storage(context),
                 ),
+              ],
+            ),
+            const SizedBox(height: SettingsDims.sectionSpacing),
+
+            SettingsGroup(
+              title: 'О приложении',
+              accent: scheme.secondary,
+              children: <Widget>[
                 // Информационная строка: без действия и без шеврона, а подпись
                 // не обрезаем — текст лицензии должен читаться целиком.
                 SettingsRow(
@@ -1338,6 +1323,187 @@ class SettingsScreen extends ConsumerWidget {
           ],
         );
       },
+    );
+  }
+}
+
+/// Список настроек: строк фиксированный набор и немного, поэтому Column
+/// строит их все сразу — прокрутка не пересоздаёт карточки.
+class _SettingsList extends StatelessWidget {
+  const _SettingsList({
+    required this.padding,
+    required this.children,
+  });
+
+  final EdgeInsetsGeometry padding;
+  final List<Widget> children;
+
+  @override
+  Widget build(BuildContext context) {
+    return SingleChildScrollView(
+      padding: padding,
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.stretch,
+        children: children,
+      ),
+    );
+  }
+}
+
+/// Свёрнутая группа романизации: одна строка со счётчиком и пять
+/// переключателей под ней.
+///
+/// Заголовок повторяет геометрию `SettingsRow`, но с вращающимся шевроном:
+/// `SettingsRow` умеет только шеврон перехода, а здесь он означает раскрытие.
+class _RomanizationBlock extends StatefulWidget {
+  const _RomanizationBlock({
+    required this.settings,
+    required this.controller,
+    required this.accent,
+  });
+
+  final AppSettings settings;
+  final SettingsController controller;
+  final Color accent;
+
+  @override
+  State<_RomanizationBlock> createState() => _RomanizationBlockState();
+}
+
+class _RomanizationBlockState extends State<_RomanizationBlock> {
+  // Раскрытие — состояние экрана, а не настройка: запоминать его между
+  // запусками незачем.
+  bool _expanded = false;
+
+  String _summary(AppSettings settings) {
+    final List<bool> values = <bool>[
+      settings.romanizeJapanese,
+      settings.romanizeKorean,
+      settings.romanizeChinese,
+      settings.romanizeHindi,
+      settings.romanizeOther,
+    ];
+    final int enabled = values.where((bool value) => value).length;
+    if (enabled == 0) return 'Все выключены';
+    return 'Включено $enabled из ${values.length}';
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    final ThemeData theme = Theme.of(context);
+    final ColorScheme scheme = theme.colorScheme;
+    final AppSettings settings = widget.settings;
+    final SettingsController controller = widget.controller;
+
+    // Те же строки, что были в группе: подписи и порядок не менялись.
+    final List<Widget> switches = <Widget>[
+      SettingsSwitchRow(
+        icon: Icons.translate,
+        title: 'Романизация: японский',
+        subtitle: 'Латиница под японским текстом',
+        value: settings.romanizeJapanese,
+        onChanged: controller.setRomanizeJapanese,
+      ),
+      SettingsSwitchRow(
+        icon: Icons.translate,
+        title: 'Романизация: корейский',
+        subtitle: 'Латиница под корейским текстом',
+        value: settings.romanizeKorean,
+        onChanged: controller.setRomanizeKorean,
+      ),
+      SettingsSwitchRow(
+        icon: Icons.translate,
+        title: 'Романизация: китайский',
+        subtitle: 'Латиница под китайским текстом',
+        value: settings.romanizeChinese,
+        onChanged: controller.setRomanizeChinese,
+      ),
+      SettingsSwitchRow(
+        icon: Icons.translate,
+        title: 'Романизация: хинди',
+        subtitle: 'Латиница под текстом на хинди',
+        value: settings.romanizeHindi,
+        onChanged: controller.setRomanizeHindi,
+      ),
+      SettingsSwitchRow(
+        icon: Icons.translate,
+        title: 'Романизация: прочие языки',
+        subtitle: 'Латиница для остальных нелатинских языков',
+        value: settings.romanizeOther,
+        onChanged: controller.setRomanizeOther,
+      ),
+    ];
+
+    return Column(
+      crossAxisAlignment: CrossAxisAlignment.stretch,
+      children: <Widget>[
+        Semantics(
+          button: true,
+          expanded: _expanded,
+          child: InkWell(
+            onTap: () => setState(() => _expanded = !_expanded),
+            child: Padding(
+              padding: const EdgeInsets.symmetric(
+                horizontal: SettingsDims.rowHorizontalPadding,
+                vertical: SettingsDims.rowVerticalPadding,
+              ),
+              child: Row(
+                children: <Widget>[
+                  Container(
+                    width: SettingsDims.rowIconSize,
+                    height: SettingsDims.rowIconSize,
+                    decoration: BoxDecoration(
+                      color: widget.accent.withValues(alpha: 0.12),
+                      shape: BoxShape.circle,
+                    ),
+                    child: Icon(
+                      Icons.translate,
+                      size: SettingsDims.rowIconInnerSize,
+                      color: widget.accent,
+                    ),
+                  ),
+                  const SizedBox(width: 14),
+                  Expanded(
+                    child: Column(
+                      crossAxisAlignment: CrossAxisAlignment.start,
+                      mainAxisSize: MainAxisSize.min,
+                      children: <Widget>[
+                        Text(
+                          'Романизация',
+                          style: theme.textTheme.bodyLarge
+                              ?.copyWith(fontWeight: FontWeight.w500),
+                        ),
+                        const SizedBox(height: 1),
+                        Text(
+                          _summary(settings),
+                          style: theme.textTheme.bodySmall
+                              ?.copyWith(color: scheme.onSurfaceVariant),
+                        ),
+                      ],
+                    ),
+                  ),
+                  const SizedBox(width: 4),
+                  AnimatedRotation(
+                    turns: _expanded ? 0.5 : 0,
+                    duration: AppMotion.fast,
+                    curve: AppMotion.snappy,
+                    child: Icon(
+                      Icons.expand_more,
+                      size: SettingsDims.chevronSize,
+                      color: scheme.onSurfaceVariant.withValues(alpha: 0.3),
+                    ),
+                  ),
+                ],
+              ),
+            ),
+          ),
+        ),
+        if (_expanded)
+          for (int i = 0; i < switches.length; i++) ...<Widget>[
+            switches[i],
+            if (i < switches.length - 1) const SettingsDivider(),
+          ],
+      ],
     );
   }
 }
