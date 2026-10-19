@@ -1104,8 +1104,19 @@ Stream<LyricsSearchState> _searchLyrics(
   final StreamController<LyricsSearchState> controller =
       StreamController<LyricsSearchState>();
   bool disposed = false;
+
+  // Дедлайн поиска держим на Completer с обычным Timer, а не на
+  // `Future.delayed`: таймер `Future.delayed` снять нельзя, и после закрытия
+  // экрана он жил бы до конца дедлайна, удерживая замыкание поиска.
+  final Completer<void> deadline = Completer<void>();
+  Timer? deadlineTimer;
+
   ref.onDispose(() {
     disposed = true;
+    deadlineTimer?.cancel();
+    // Снимаем ожидание, чтобы тело поиска завершилось, а не осталось висеть
+    // навсегда: терминальное состояние в этом случае уже не публикуется.
+    if (!deadline.isCompleted) deadline.complete();
     controller.close();
   });
 
@@ -1528,10 +1539,14 @@ Stream<LyricsSearchState> _searchLyrics(
       // Завершаемся по дедлайну, а не по самой медленной базе: иначе меню
       // крутилось бы, пока кто-то молчит. Уже полученные варианты остаются
       // в `found`, так что досрочное завершение их не теряет.
+      deadlineTimer = Timer(_lyricsSearchDeadline, () {
+        if (!deadline.isCompleted) deadline.complete();
+      });
       await Future.any<void>(<Future<void>>[
         Future.wait(tasks),
-        Future<void>.delayed(_lyricsSearchDeadline),
+        deadline.future,
       ]);
+      deadlineTimer?.cancel();
     } on Object catch (error) {
       debugPrint('[Lyrics] поиск прерван: $error');
     } finally {
