@@ -13,6 +13,7 @@ import '../../core/theme/layout.dart';
 import '../../state/player_controller.dart';
 import '../../state/providers.dart';
 import '../../state/theme_providers.dart';
+import '../player/equalizer.dart';
 import '../player/player_controls.dart';
 import '../player/sleep_timer.dart';
 import '../../state/ui_scale.dart';
@@ -274,58 +275,104 @@ class SettingsScreen extends ConsumerWidget {
             ),
             const SizedBox(height: SettingsDims.sectionSpacing),
 
-            SettingsGroup(
-              title: 'Воспроизведение',
-              accent: scheme.tertiary,
-              children: <Widget>[
-                SettingsRow(
-                  icon: Icons.graphic_eq,
-                  title: 'Качество звука',
-                  subtitle: settings.audioQuality.label,
-                  onTap: () =>
-                      _pickAudioQuality(context, controller, settings),
-                ),
-                SettingsRow(
-                  icon: Icons.cloud_download_outlined,
-                  title: 'Источник потока',
-                  subtitle: settings.streamClient.description,
-                  onTap: () =>
-                      _pickStreamClient(context, controller, settings),
-                ),
-                SettingsSwitchRow(
-                  icon: Icons.play_circle_outline,
-                  title: 'Автовоспроизведение',
-                  subtitle:
-                      'Продолжать похожими треками, когда очередь закончилась',
-                  value: settings.autoPlayNext,
-                  onChanged: controller.setAutoPlayNext,
-                ),
-                // Очередь прошлой сессии возвращается без автозапуска: звук
-                // пойдёт только после нажатия «играть».
-                SettingsSwitchRow(
-                  icon: Icons.restore,
-                  title: 'Восстанавливать очередь при запуске',
-                  subtitle: 'Возвращать очередь и позицию прошлой сессии',
-                  value: settings.restoreQueue,
-                  onChanged: controller.setRestoreQueue,
-                ),
-                // Таймер сна: та же точка входа, что и кнопка в плеере, —
-                // общий выбор вариантов (`showSleepTimerMenu`).
-                SettingsRow(
-                  icon: Icons.bedtime_outlined,
-                  title: 'Таймер сна',
-                  subtitle: sleepTimerLabel(sleepTimer),
-                  onTap: () => showSleepTimerMenu(context, ref),
-                ),
-                SettingsRow(
-                  icon: Icons.swipe,
-                  title: 'Чувствительность свайпа',
-                  subtitle: 'Свайп по мини-плееру: '
-                      '${settings.miniSwipeSensitivity.label.toLowerCase()}',
-                  onTap: () =>
-                      _pickSwipeSensitivity(context, controller, settings),
-                ),
-              ],
+            // Группу слушаем: движок сообщает об отказе фильтра асинхронно, и
+            // честная подпись должна появиться сама, без пересборки экрана.
+            ListenableBuilder(
+              listenable: ref.read(audioEngineProvider).audioEffectIssue,
+              builder: (BuildContext context, Widget? _) {
+                final String? effectIssue =
+                    ref.read(audioEngineProvider).audioEffectIssue.value;
+                return SettingsGroup(
+                  title: 'Воспроизведение',
+                  accent: scheme.tertiary,
+                  children: <Widget>[
+                    SettingsRow(
+                      icon: Icons.graphic_eq,
+                      title: 'Качество звука',
+                      subtitle: settings.audioQuality.label,
+                      onTap: () =>
+                          _pickAudioQuality(context, controller, settings),
+                    ),
+                    // Эквалайзер настраивается отдельным диалогом: десять полос
+                    // в строке не уместить, а строка — лишь точка входа.
+                    SettingsRow(
+                      icon: Icons.equalizer,
+                      title: 'Эквалайзер',
+                      subtitle: equalizerSummary(settings),
+                      onTap: () => showEqualizerDialog(context, ref),
+                    ),
+                    SettingsRow(
+                      icon: Icons.cloud_download_outlined,
+                      title: 'Источник потока',
+                      subtitle: settings.streamClient.description,
+                      onTap: () =>
+                          _pickStreamClient(context, controller, settings),
+                    ),
+                    // Честно про эффект: это не «улучшение», а вырезание пауз.
+                    SettingsSwitchRow(
+                      icon: Icons.fast_forward,
+                      title: 'Пропуск тишины',
+                      subtitle: 'Срезать паузы длиннее полусекунды — трек '
+                          'короче, но могут пропасть тихие места',
+                      subtitleMaxLines: 2,
+                      value: settings.skipSilence,
+                      onChanged: controller.setSkipSilence,
+                    ),
+                    // И это тоже вмешательство: ровная громкость ценой динамики.
+                    SettingsSwitchRow(
+                      icon: Icons.multitrack_audio,
+                      title: 'Нормализация громкости',
+                      subtitle: 'Подтягивать тихие места и придерживать громкие '
+                          '(dynaudnorm) — ровнее, но уже не так выразительно',
+                      subtitleMaxLines: 2,
+                      value: settings.audioNormalization,
+                      onChanged: controller.setAudioNormalization,
+                    ),
+                    SettingsSwitchRow(
+                      icon: Icons.play_circle_outline,
+                      title: 'Автовоспроизведение',
+                      subtitle:
+                          'Продолжать похожими треками, когда очередь закончилась',
+                      value: settings.autoPlayNext,
+                      onChanged: controller.setAutoPlayNext,
+                    ),
+                    // Очередь прошлой сессии возвращается без автозапуска: звук
+                    // пойдёт только после нажатия «играть».
+                    SettingsSwitchRow(
+                      icon: Icons.restore,
+                      title: 'Восстанавливать очередь при запуске',
+                      subtitle: 'Возвращать очередь и позицию прошлой сессии',
+                      value: settings.restoreQueue,
+                      onChanged: controller.setRestoreQueue,
+                    ),
+                    // Таймер сна: та же точка входа, что и кнопка в плеере, —
+                    // общий выбор вариантов (`showSleepTimerMenu`).
+                    SettingsRow(
+                      icon: Icons.bedtime_outlined,
+                      title: 'Таймер сна',
+                      subtitle: sleepTimerLabel(sleepTimer),
+                      onTap: () => showSleepTimerMenu(context, ref),
+                    ),
+                    SettingsRow(
+                      icon: Icons.swipe,
+                      title: 'Чувствительность свайпа',
+                      subtitle: 'Свайп по мини-плееру: '
+                          '${settings.miniSwipeSensitivity.label.toLowerCase()}',
+                      onTap: () =>
+                          _pickSwipeSensitivity(context, controller, settings),
+                    ),
+                    // Появляется только когда фильтр отвергнут — причина словами
+                    // mpv, а не молчание.
+                    if (effectIssue != null)
+                      SettingsRow(
+                        icon: Icons.error_outline,
+                        title: 'Аудиофильтры недоступны',
+                        subtitle: effectIssue,
+                        subtitleMaxLines: 3,
+                      ),
+                  ],
+                );
+              },
             ),
             const SizedBox(height: SettingsDims.sectionSpacing),
 

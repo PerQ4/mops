@@ -1,9 +1,12 @@
 import 'dart:async';
+import 'dart:math' as math;
 
 import 'package:flutter/foundation.dart';
 import 'package:media_kit/media_kit.dart';
 
 import 'audio_engine.dart';
+import 'audio_equalizer.dart';
+import 'mpv_filter_probe.dart';
 
 /// Реализация [AudioEngine] поверх `media_kit` (на Linux — libmpv).
 ///
@@ -73,11 +76,40 @@ class MediaKitEngine implements AudioEngine {
   /// же потока (`stop`, конец трека) питч сохраняет.
   double _pitch = 1.0;
 
+  /// Полосы эквалайзера (дБ). Пусто — эквалайзер выключен.
+  ///
+  /// Храним сами: `af` — глобальное свойство libmpv, и media_kit (темп и питч)
+  /// переписывает его целиком, поэтому цепочку приходится собирать заново после
+  /// каждого вмешательства, а не надеяться, что она уцелеет.
+  List<double> _equalizerBands = const <double>[];
+
+  /// Убирать паузы из потока.
+  bool _skipSilence = false;
+
+  /// Выравнивать громкость между тихими и громкими местами.
+  bool _normalization = false;
+
+  /// Отказы фильтров — словами mpv. `null` — все запрошенные эффекты приняты.
+  final ValueNotifier<String?> _effectIssue = ValueNotifier<String?>(null);
+
+  /// Пересборки `af` идут по очереди: параллельные чтение и запись одного
+  /// свойства дали бы гонку — цепочка собиралась бы из устаревшего состояния.
+  Future<void>? _chainQueue;
+
+  @override
+  ValueListenable<String?> get audioEffectIssue => _effectIssue;
+
   @override
   Stream<PlaybackState> get stateStream => _controller.stream;
 
   @override
   PlaybackState get state => _state;
+
+  /// Плеер libmpv; `null` — у платформы нет свойств mpv.
+  NativePlayer? get _native {
+    final PlatformPlayer? platform = _player.platform;
+    return platform is NativePlayer ? platform : null;
+  }
 
   void _attach() {
     // Уровень звука/спектр media_kit (libmpv) в Dart не отдаёт: `audio-params`
@@ -255,6 +287,14 @@ class MediaKitEngine implements AudioEngine {
     // Сбой перемотки — не сбой трека: звук продолжается, менять состояние
     // воспроизведения не нужно.
     if (_seeking) return;
+    // Отказ аудиофильтра (сборка без него или неверный параметр) — тоже не
+    // сбой трека: движок проверяет фильтры заранее, и обрывать звук из-за
+    // цепочки эффектов нельзя. Причина при этом не теряется — она попадает в
+    // [audioEffectIssue].
+    if (MpvFilterProbe.looksLikeFilterError(message)) {
+      debugPrint('[mpv/af] отказ фильтра: $message');
+      return;
+    }
     _opening = false;
     _sourceLoaded = false;
     _emit(_state.copyWith(
@@ -322,6 +362,10 @@ class MediaKitEngine implements AudioEngine {
       await _player.open(_mediaFor(source, isLocal), play: autoplay);
       _sourceLoaded = true;
       await _applyTempoPitch(resetPitch: pitchWasShifted);
+      // Эффекты ставим после темпа/питча: media_kit задаёт своё `af` целиком и
+      // затёр бы их. Не ждём: проверка фильтров на пробном плеере занимает
+      // мгновения, но задерживать старт звука ею незачем.
+      unawaited(_rebuildAudioChain());
       if (autoplay) {
         // Часть событий приходит с задержкой — показываем старт сразу,
         // `_opening` снимается настоящим `playing = true` или ошибкой.
@@ -427,6 +471,7 @@ class MediaKitEngine implements AudioEngine {
       );
       _sourceLoaded = true;
       await _applyTempoPitch();
+      unawaited(_rebuildAudioChain());
       if (_state.status == PlaybackStatus.loading) {
         _emit(_state.copyWith(
           status: PlaybackStatus.playing,
@@ -478,6 +523,8 @@ class MediaKitEngine implements AudioEngine {
     final double clamped = speed.clamp(0.5, 2.0);
     _speed = clamped;
     await _player.setRate(clamped);
+    // `setRate` переписывает `af` целиком (scaletempo) — возвращаем эффекты.
+    await _rebuildAudioChain();
     _emit(_state.copyWith(speed: clamped));
   }
 
@@ -489,6 +536,7 @@ class MediaKitEngine implements AudioEngine {
     final double clamped = pitch.clamp(0.5, 2.0);
     _pitch = clamped;
     await _player.setPitch(clamped);
+    await _rebuildAudioChain();
     _emit(_state.copyWith(pitch: clamped));
   }
 
@@ -513,6 +561,210 @@ class MediaKitEngine implements AudioEngine {
     }
   }
 
+  // ------------------------------------------------------------------ эффекты
+
+  /// Метка фильтров, которыми владеет движок.
+  ///
+  /// По ней свои фильтры отличаются от чужих (`scaletempo` от media_kit,
+  /// `astats` визуализатора с меткой `mopsvis`), чтобы пересборка не снесла
+  /// чужое.
+  static const String _eqLabel = 'mopseq';
+  static const String _skipLabel = 'mopsskip';
+  static const String _normLabel = 'mopsnorm';
+
+  /// Центры 18 фиксированных полос фильтра `superequalizer` (FFmpeg). Полоса
+  /// ниже 65 Гц у него отсутствует, поэтому 10 «стандартных» полос в точности
+  /// он не выражает — значения берём интерполяцией по его сетке.
+  static const List<double> _superEqualizerFrequencies = <double>[
+    65, 92, 131, 185, 262, 370, 523, 740, 1047, 1480, 2093, 2960,
+    4186, 5920, 8372, 11840, 16744, 20000,
+  ];
+
+  /// Параметры фильтра `silenceremove`: срезать тишину в начале и в середине.
+  ///
+  /// `stop_periods=-1` — не останавливаться на первой паузе, а чистить поток
+  /// дальше; порог −50 дБ и полусекундная тишина — чтобы не резать тихие, но
+  /// содержательные места.
+  static const String _skipSilenceParams =
+      'start_periods=1:start_duration=0.1:start_threshold=-50dB:'
+      'stop_periods=-1:stop_duration=0.5:stop_threshold=-50dB';
+
+  @override
+  Future<void> setEqualizer(List<double> bands) async {
+    if (listEquals(_equalizerBands, bands)) return;
+    _equalizerBands = List<double>.of(bands);
+    await _rebuildAudioChain();
+  }
+
+  @override
+  Future<void> setSkipSilence(bool enabled) async {
+    if (_skipSilence == enabled) return;
+    _skipSilence = enabled;
+    await _rebuildAudioChain();
+  }
+
+  @override
+  Future<void> setAudioNormalization(bool enabled) async {
+    if (_normalization == enabled) return;
+    _normalization = enabled;
+    await _rebuildAudioChain();
+  }
+
+  /// Пересобирает цепочку `af` целиком и ставит её одним значением.
+  ///
+  /// Ставить фильтры по частям нельзя: при отказе mpv оставляет всю прежнюю
+  /// цепочку, и тогда непонятно, что применилось. Чужое (scaletempo, astats)
+  /// сохраняется, свои прошлые фильтры снимаются по метке, затем дописываются
+  /// текущие. Пересборки сериализованы — см. [\_chainQueue].
+  Future<void> _rebuildAudioChain() {
+    final Future<void> run = (_chainQueue ?? Future<void>.value())
+        .then((_) => _applyAudioChain());
+    // Хвост очереди не должен «падать»: иначе следующая пересборка не пойдёт.
+    _chainQueue = run.then((_) {}, onError: (Object _) {});
+    return run;
+  }
+
+  Future<void> _applyAudioChain() async {
+    final NativePlayer? native = _native;
+    if (native == null) {
+      _setEffectIssue(null);
+      return;
+    }
+    // Пока поток не открыт, ставить цепочку некуда: её подхватит ближайший
+    // `open`/`_restart`, который сам вызовет пересборку.
+    if (!_sourceLoaded) return;
+
+    try {
+      final List<String> segments = _splitChain(await native.getProperty('af'))
+        ..removeWhere(_isOwnedFilter);
+
+      final List<String> own = <String>[];
+      final List<String> issues = <String>[];
+      await _appendEqualizer(own);
+      if (_skipSilence) {
+        if (await MpvFilterProbe.supports(
+          'silenceremove',
+          _skipSilenceParams,
+        )) {
+          own.add('@$_skipLabel:silenceremove=$_skipSilenceParams');
+        } else {
+          issues.add(_filterIssue('silenceremove'));
+        }
+      }
+      if (_normalization) {
+        if (await MpvFilterProbe.supports('dynaudnorm', '')) {
+          own.add('@$_normLabel:dynaudnorm');
+        } else {
+          issues.add(_filterIssue('dynaudnorm'));
+        }
+      }
+      segments.addAll(own);
+
+      await native.setProperty('af', segments.join(','));
+      // Проверяем приём: при отказе mpv оставляет прежнюю цепочку. Молчать об
+      // этом нельзя, но и рвать звук из-за фильтра — тоже.
+      final String applied = await native.getProperty('af');
+      final bool eqRequested =
+          _equalizerBands.length == kEqualizerBandCount &&
+              !equalizerIsFlat(_equalizerBands);
+      if (eqRequested && !applied.contains('@$_eqLabel')) {
+        issues.add(_filterIssue('superequalizer'));
+      }
+      if (_skipSilence && !applied.contains('@$_skipLabel')) {
+        issues.add(_filterIssue('silenceremove'));
+      }
+      if (_normalization && !applied.contains('@$_normLabel')) {
+        issues.add(_filterIssue('dynaudnorm'));
+      }
+      _setEffectIssue(issues.isEmpty ? null : issues.toSet().join('; '));
+    } on Object catch (error) {
+      _setEffectIssue('не удалось применить аудиофильтры: $error');
+    }
+  }
+
+  /// Дописывает в [own] фильтр эквалайзера, если он настроен и есть в сборке.
+  Future<void> _appendEqualizer(List<String> own) async {
+    final List<double> bands = _equalizerBands;
+    if (bands.length != kEqualizerBandCount || equalizerIsFlat(bands)) return;
+
+    // Основной вариант — `superequalizer` (18 полос, кадровая обработка).
+    if (await MpvFilterProbe.supports('superequalizer', '1b=0')) {
+      final List<double> gains = _sampleSuperEqualizer(bands);
+      final String params = <String>[
+        for (int i = 0; i < gains.length; i++)
+          '${i + 1}b=${gains[i].toStringAsFixed(2)}',
+      ].join(':');
+      own.add('@$_eqLabel:superequalizer=$params');
+      return;
+    }
+    // Запасной — `equalizer`: одна параметрическая полоса на фильтр. Полосы
+    // метим отдельными метками: одно имя на несколько фильтров mpv не даёт.
+    if (await MpvFilterProbe.supports('equalizer', 'f=1000:t=q:w=1:g=0')) {
+      for (int i = 0; i < kEqualizerBandCount; i++) {
+        own.add(
+          '@$_eqLabel${i + 1}:equalizer='
+          'f=${kEqualizerBandFrequencies[i].round()}:t=q:w=1:'
+          'g=${bands[i].toStringAsFixed(2)}',
+        );
+      }
+    }
+  }
+
+  /// Раскладывает 10-полосную кривую по 18 фиксированным полосам
+  /// `superequalizer`: значение в полосе фильтра — линейная интерполяция между
+  /// соседними полосами эквалайзера в логарифмической шкале частот.
+  static List<double> _sampleSuperEqualizer(List<double> bands) => <double>[
+        for (final double frequency in _superEqualizerFrequencies)
+          _gainAt(bands, frequency),
+      ];
+
+  static double _gainAt(List<double> bands, double frequency) {
+    const List<double> freqs = kEqualizerBandFrequencies;
+    if (frequency <= freqs.first) return bands.first;
+    if (frequency >= freqs.last) return bands.last;
+    final double logFrequency = math.log(frequency);
+    for (int i = 1; i < freqs.length; i++) {
+      if (frequency <= freqs[i]) {
+        final double low = math.log(freqs[i - 1]);
+        final double high = math.log(freqs[i]);
+        final double t = (logFrequency - low) / (high - low);
+        return bands[i - 1] + (bands[i] - bands[i - 1]) * t;
+      }
+    }
+    return bands.last;
+  }
+
+  /// Разбирает цепочку `af` на отдельные фильтры. Запятая внутри параметров не
+  /// встречается ни у наших фильтров, ни у `scaletempo` media_kit, поэтому
+  /// верхнеуровневое деление безопасно.
+  static List<String> _splitChain(String raw) => raw
+      .split(',')
+      .map((String segment) => segment.trim())
+      .where((String segment) => segment.isNotEmpty)
+      .toList();
+
+  /// Наш ли это фильтр (ставили его мы сами). Чужое — не трогаем.
+  static bool _isOwnedFilter(String segment) {
+    final String text = segment.trim();
+    return text.startsWith('@$_eqLabel') ||
+        text.startsWith('@$_skipLabel') ||
+        text.startsWith('@$_normLabel');
+  }
+
+  /// Причина отказа фильтра словами mpv — для честного сообщения в интерфейсе.
+  static String _filterIssue(String name) {
+    final String? reason = MpvFilterProbe.rejection(name);
+    return reason == null
+        ? 'в сборке libmpv нет фильтра $name'
+        : 'фильтр $name недоступен: $reason';
+  }
+
+  void _setEffectIssue(String? issue) {
+    if (_effectIssue.value == issue) return;
+    _effectIssue.value = issue;
+    if (issue != null) debugPrint('Аудиоэффекты: $issue');
+  }
+
   @override
   Future<void> dispose() async {
     if (_disposed) return;
@@ -525,6 +777,7 @@ class MediaKitEngine implements AudioEngine {
     _subs.clear();
     await _controller.close();
     await _devices.close();
+    _effectIssue.dispose();
     try {
       await _player.dispose();
     } on Object catch (error) {

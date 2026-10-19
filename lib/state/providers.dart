@@ -1,3 +1,5 @@
+import 'dart:async';
+
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:media_kit/media_kit.dart';
 import 'package:shared_preferences/shared_preferences.dart';
@@ -224,6 +226,31 @@ class SettingsController extends Notifier<AppSettings> {
   /// «Гало» вокруг обложки по уровню звука.
   Future<void> setVisualizerEnabled(bool value) =>
       update((AppSettings s) => s.copyWith(visualizerEnabled: value));
+
+  /// Эквалайзер одним изменением: включение, полосы и имя пресета.
+  ///
+  /// Полосы и пресет меняются вместе: пользователь либо выбирает готовый набор,
+  /// либо двигает полосы (тогда пресет становится «своим»).
+  Future<void> setEqualizer({
+    required bool enabled,
+    required List<double> bands,
+    required String presetId,
+  }) =>
+      update((AppSettings s) => s.copyWith(
+            equalizerEnabled: enabled,
+            // Копия, а не ссылка: диалог двигает свой список на месте, и без
+            // копии он менял бы состояние настроек в обход уведомления.
+            equalizerBands: List<double>.of(bands),
+            equalizerPresetId: presetId,
+          ));
+
+  /// Убирать паузы из потока.
+  Future<void> setSkipSilence(bool value) =>
+      update((AppSettings s) => s.copyWith(skipSilence: value));
+
+  /// Выравнивать громкость между тихими и громкими местами.
+  Future<void> setAudioNormalization(bool value) =>
+      update((AppSettings s) => s.copyWith(audioNormalization: value));
 
   /// Стиль ползунка громкости.
   Future<void> setVolumeSliderStyle(ProgressBarStyle style) =>
@@ -599,9 +626,30 @@ final Provider<Player> mediaKitPlayerProvider = Provider<Player>((ref) {
 /// Аудиодвижок. Один на всё приложение.
 final Provider<AudioEngine> audioEngineProvider = Provider<AudioEngine>(
   (ref) {
-    final AudioEngine engine =
+    final MediaKitEngine engine =
         AudioplayersEngine(player: ref.watch(mediaKitPlayerProvider));
     ref.onDispose(engine.dispose);
+
+    // Аудиоэффекты из настроек применяются к живому движку здесь: движок не
+    // должен знать про AppSettings, а эквалайзер, пропуск тишины и нормализация
+    // — свойства одной звуковой цепочки, поэтому тянуть их нужно из одного
+    // места, а не из экранов.
+    void applyEffects(AppSettings settings) {
+      unawaited(
+        engine.setEqualizer(
+          settings.equalizerEnabled ? settings.equalizerBands : const <double>[],
+        ),
+      );
+      unawaited(engine.setSkipSilence(settings.skipSilence));
+      unawaited(engine.setAudioNormalization(settings.audioNormalization));
+    }
+
+    // `fireImmediately` применяет сохранённые настройки при первом запуске.
+    ref.listen<AppSettings>(
+      settingsControllerProvider,
+      (AppSettings? _, AppSettings next) => applyEffects(next),
+      fireImmediately: true,
+    );
     return engine;
   },
 );

@@ -12,6 +12,7 @@ import '../../core/utils/format.dart';
 import '../../data/local/app_settings.dart';
 import '../../state/player_controller.dart';
 import '../../state/providers.dart';
+import 'equalizer.dart';
 
 /// Альфы дорожки слайдера — из ArchiveTune
 /// (`ui/theme/PlayerSliderColors.kt`, `object Config`).
@@ -726,6 +727,14 @@ class PlayerTransportBar extends ConsumerWidget {
                       iconSize: smallIcon,
                       onPressed: () => showTempoPitchDialog(context, ref),
                     ),
+                    // Эквалайзер — рядом с темпом: это тоже настройка
+                    // воспроизведения, а не конкретного трека.
+                    SizedBox(width: gap),
+                    _EqualizerButton(
+                      size: small,
+                      radius: smallRadius,
+                      iconSize: smallIcon,
+                    ),
                   ],
                 ),
               ),
@@ -825,6 +834,42 @@ class _TempoButton extends StatelessWidget {
       background: onBackground.withValues(alpha: active ? 0.2 : 0.08),
       foreground: onBackground.withValues(alpha: active ? 1 : 0.6),
       onPressed: onPressed,
+    );
+  }
+}
+
+/// Кнопка «Эквалайзер» в блоке управления.
+///
+/// Подсвечена, когда эквалайзер включён: сам он звук не подписывает, и без
+/// подсветки причину «почему звук не такой» пришлось бы искать в настройках.
+class _EqualizerButton extends ConsumerWidget {
+  const _EqualizerButton({
+    required this.size,
+    required this.radius,
+    required this.iconSize,
+  });
+
+  final double size;
+  final double radius;
+  final double iconSize;
+
+  @override
+  Widget build(BuildContext context, WidgetRef ref) {
+    final bool enabled = ref.watch(
+      settingsControllerProvider.select(
+        (AppSettings s) => s.equalizerEnabled,
+      ),
+    );
+    final Color onBackground = Theme.of(context).colorScheme.onSurface;
+    return _TransportButton(
+      tooltip: enabled ? 'Эквалайзер (включён)' : 'Эквалайзер',
+      icon: Icons.graphic_eq,
+      size: size,
+      radius: radius,
+      iconSize: iconSize,
+      background: onBackground.withValues(alpha: enabled ? 0.2 : 0.08),
+      foreground: onBackground.withValues(alpha: enabled ? 1 : 0.6),
+      onPressed: () => showEqualizerDialog(context, ref),
     );
   }
 }

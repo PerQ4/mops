@@ -6,6 +6,7 @@
 import 'dart:async';
 import 'dart:io';
 
+import 'package:flutter/foundation.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
@@ -83,8 +84,24 @@ class _FakeAudioEngine implements AudioEngine {
   @override
   Future<void> setAudioDevice(String name) async {}
 
+  // Аудиофильтры в заглушке ничего не делают: проверяем только интерфейс.
+  @override
+  Future<void> setEqualizer(List<double> bands) async {}
+
+  @override
+  Future<void> setSkipSilence(bool enabled) async {}
+
+  @override
+  Future<void> setAudioNormalization(bool enabled) async {}
+
+  @override
+  ValueListenable<String?> get audioEffectIssue => _effectIssue;
+
+  final ValueNotifier<String?> _effectIssue = ValueNotifier<String?>(null);
+
   @override
   Future<void> dispose() async {
+    _effectIssue.dispose();
     await _controller.close();
   }
 }

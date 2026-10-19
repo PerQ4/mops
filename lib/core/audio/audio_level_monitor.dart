@@ -3,6 +3,8 @@ import 'dart:async';
 import 'package:flutter/foundation.dart';
 import 'package:media_kit/media_kit.dart';
 
+import 'mpv_filter_probe.dart';
+
 /// Что известно об уровне звука.
 enum AudioLevelAvailability {
   /// Ещё не проверяли: трек ни разу не играл при включённом визуализаторе.
@@ -96,17 +98,6 @@ class AudioLevelMonitor extends ChangeNotifier {
   /// (темп и питч пишутся в то же свойство `af`).
   static const int _maxReattaches = 3;
 
-  /// Сколько ждём ответ mpv на пробном плеере. Цепочку `af` mpv разбирает в
-  /// момент установки, но отказ доходит до нас потоком событий — даём ему время.
-  static const Duration _probeWindow = Duration(milliseconds: 600);
-
-  /// Разовая проверка: знает ли эта сборка libmpv фильтр `astats`. `null` — ещё
-  /// не начинали. Ответ один на процесс: это свойство сборки, а не трека.
-  static Future<bool>? _astatsProbe;
-
-  /// Слова mpv, которыми он отказал в фильтре, — причина для пользователя.
-  static String? _probeRejection;
-
   final Player _player;
 
   /// Плеер libmpv; `null` — у платформы нет свойств mpv.
@@ -155,76 +146,20 @@ class AudioLevelMonitor extends ChangeNotifier {
     // `astats` установка цепочки пишет ошибку в `stream.error`, и движок принял
     // бы её за сбой воспроизведения.
     if (_availability == AudioLevelAvailability.unknown) {
-      final bool supported = await _probeFilterSupport();
+      final bool supported = await MpvFilterProbe.supports('astats', 'metadata=1');
       // За время проверки трек мог кончиться или его сняли с паузы.
       if (_disposed || !_player.state.playing) return;
       if (!supported) {
-        _markUnavailable(_probeRejection ?? 'в сборке libmpv нет фильтра astats');
+        _markUnavailable(
+          MpvFilterProbe.rejection('astats') ??
+              'в сборке libmpv нет фильтра astats',
+        );
         return;
       }
     }
     if (_availability == AudioLevelAvailability.unavailable) return;
     if (!_attached && !await _attach()) return;
     _timer ??= Timer.periodic(_pollInterval, (_) => unawaited(_poll()));
-  }
-
-  /// Разовая проверка: знает ли эта сборка libmpv фильтр `astats`.
-  ///
-  /// Спрашиваем на ОТДЕЛЬНОМ пустом плеере. mpv разбирает `af` в момент
-  /// установки и пишет отказ в свой поток ошибок; на живом плеере этот отказ
-  /// дошёл бы до движка и оборвал трек, а здесь внимать ему некому. Пробный
-  /// плеер после ответа освобождается: медиа в него не грузится, аудиовыход не
-  /// занимается.
-  static Future<bool> _probeFilterSupport() {
-    final Future<bool>? running = _astatsProbe;
-    if (running != null) return running;
-    final Future<bool> started = _runFilterProbe();
-    _astatsProbe = started;
-    return started;
-  }
-
-  static Future<bool> _runFilterProbe() async {
-    Player? probe;
-    StreamSubscription<String>? errors;
-    try {
-      probe = Player(configuration: const PlayerConfiguration(pitch: false));
-      final PlatformPlayer? platform = probe.platform;
-      if (platform is! NativePlayer) {
-        _probeRejection = 'у платформы нет свойств mpv';
-        return false;
-      }
-      final Completer<String> rejected = Completer<String>();
-      errors = probe.stream.error.listen((String message) {
-        if (!rejected.isCompleted && _isFilterRejection(message)) {
-          rejected.complete(message);
-        }
-      });
-      // Метку берём отдельную: ошибку живого плеера по ней не спутать с пробной.
-      await platform.setProperty('af', '@${_label}probe:astats=metadata=1');
-      final String? rejection = await Future.any<String?>(<Future<String?>>[
-        rejected.future,
-        Future<String?>.delayed(_probeWindow),
-      ]);
-      _probeRejection = rejection;
-      return rejection == null;
-    } on Object catch (error) {
-      _probeRejection = 'проверка фильтра уровня не удалась: $error';
-      return false;
-    } finally {
-      await errors?.cancel();
-      await probe?.dispose();
-    }
-  }
-
-  /// Ошибка, которой mpv сообщает, что фильтра в цепочке `af` нет.
-  ///
-  /// Ловим по словам, а не «любую ошибку»: на пустом плеере бывают и посторонние
-  /// сообщения (например, кэш файлов), и принять их за отсутствие фильтра нельзя.
-  static bool _isFilterRejection(String message) {
-    final String text = message.toLowerCase();
-    return text.contains('astats') ||
-        (text.contains('af:') && text.contains('exist')) ||
-        (text.contains('filter') && text.contains('exist'));
   }
 
   /// Дописывает свой фильтр в конец цепочки `af` и проверяет, что он принят.

@@ -1,5 +1,7 @@
 import 'dart:async';
 
+import 'package:flutter/foundation.dart';
+
 /// Состояние воспроизведения, не зависящее от конкретного бэкенда.
 enum PlaybackStatus {
   /// Ничего не загружено.
@@ -209,6 +211,27 @@ abstract class AudioEngine {
 
   /// Выбирает устройство вывода по имени (`auto` — системное).
   Future<void> setAudioDevice(String name);
+
+  /// Эквалайзер: усиления полос в дБ, ровно [kEqualizerBandCount] значений
+  /// (см. `audio_equalizer.dart`).
+  ///
+  /// Пустой список или все нули — эквалайзер выключен. Движок сам выбирает,
+  /// каким фильтром mpv это выразить (`superequalizer`, иначе `equalizer`);
+  /// неподдерживаемый фильтр звук не роняет, а попадает в [audioEffectIssue].
+  Future<void> setEqualizer(List<double> bands);
+
+  /// Убирать паузы в потоке (mpv `silenceremove`).
+  Future<void> setSkipSilence(bool enabled);
+
+  /// Выравнивать громкость между тихими и громкими местами (mpv `dynaudnorm`).
+  Future<void> setAudioNormalization(bool enabled);
+
+  /// Последняя беда с аудиофильтрами — словами mpv; `null` — всё принято.
+  ///
+  /// Отдельно от `PlaybackState.error` намеренно: отказ фильтра не должен
+  /// выглядеть как сбой трека, но и молчать о нём нельзя — интерфейс обязан
+  /// показать, что эффект не применился.
+  ValueListenable<String?> get audioEffectIssue;
 
   Future<void> dispose();
 }

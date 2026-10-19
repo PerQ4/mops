@@ -1,5 +1,6 @@
 import 'dart:convert';
 
+import '../../core/audio/audio_equalizer.dart';
 import '../../core/net/anti_dpi.dart';
 import '../../core/theme/seed_colors.dart';
 
@@ -167,6 +168,23 @@ List<LyricsSource> _parseSourceNames(String? raw) {
 List<LyricsSource> _parseLyricsOrder(String? raw) {
   final List<LyricsSource> parsed = _parseSourceNames(raw);
   return parsed.isEmpty ? kDefaultLyricsOrder : parsed;
+}
+
+/// Разбирает сохранённые полосы эквалайзера.
+///
+/// Набор неверной длины или с мусором откатывается к плоскому: применить
+/// «половину» настроек хуже, чем вернуть эквалайзер к нулю.
+List<double> _parseEqualizerBands(String? raw) {
+  if (raw == null || raw.trim().isEmpty) return kEqualizerFlatBands;
+  final List<String> parts = raw.split(',');
+  if (parts.length != kEqualizerBandCount) return kEqualizerFlatBands;
+  final List<double> bands = <double>[];
+  for (final String part in parts) {
+    final double? value = double.tryParse(part.trim());
+    if (value == null) return kEqualizerFlatBands;
+    bands.add(value.clamp(-kEqualizerMaxGainDb, kEqualizerMaxGainDb));
+  }
+  return bands;
 }
 
 /// Режим правой панели плеера.
@@ -442,6 +460,16 @@ class AppSettings {
     this.disableBlur = false,
     this.blurRadius = 48,
     this.visualizerEnabled = false,
+    // Эквалайзер выключен и «плоский»: частоты не тронуты, а цепочка фильтров
+    // не строится. Пресет хранится отдельно от полос, чтобы интерфейс мог
+    // показать, какой набор выбран, даже когда пользователь подправил полосы.
+    this.equalizerEnabled = false,
+    this.equalizerBands = kEqualizerFlatBands,
+    this.equalizerPresetId = 'flat',
+    // Оба «улучшателя» по умолчанию выключены: это вмешательство в звук, а не
+    // настройка по умолчанию.
+    this.skipSilence = false,
+    this.audioNormalization = false,
     this.volumeSliderStyle = ProgressBarStyle.standard,
     this.titleBarCentered = true,
     this.titleBarMatchesBackground = false,
@@ -642,6 +670,23 @@ class AppSettings {
   /// этом и не будет двигаться.
   final bool visualizerEnabled;
 
+  /// Включён ли эквалайзер. Отдельный флаг: «плоский, но включённый» — это
+  /// рабочее состояние (пользователь двигает полосы от нуля), и выключать
+  /// эквалайзер только потому, что все полосы пока в нуле, нельзя.
+  final bool equalizerEnabled;
+
+  /// Усиления полос эквалайзера в дБ (ровно [kEqualizerBandCount] значений).
+  final List<double> equalizerBands;
+
+  /// Имя выбранного пресета — только для интерфейса.
+  final String equalizerPresetId;
+
+  /// Убирать паузы из потока при воспроизведении.
+  final bool skipSilence;
+
+  /// Выравнивать громкость между тихими и громкими местами.
+  final bool audioNormalization;
+
   /// Стиль ползунка громкости — тот же набор, что у полосы перемотки.
   final ProgressBarStyle volumeSliderStyle;
 
@@ -737,6 +782,11 @@ class AppSettings {
     bool? disableBlur,
     double? blurRadius,
     bool? visualizerEnabled,
+    bool? equalizerEnabled,
+    List<double>? equalizerBands,
+    String? equalizerPresetId,
+    bool? skipSilence,
+    bool? audioNormalization,
     ProgressBarStyle? volumeSliderStyle,
     bool? titleBarCentered,
     bool? titleBarMatchesBackground,
@@ -803,6 +853,11 @@ class AppSettings {
       disableBlur: disableBlur ?? this.disableBlur,
       blurRadius: blurRadius ?? this.blurRadius,
       visualizerEnabled: visualizerEnabled ?? this.visualizerEnabled,
+      equalizerEnabled: equalizerEnabled ?? this.equalizerEnabled,
+      equalizerBands: equalizerBands ?? this.equalizerBands,
+      equalizerPresetId: equalizerPresetId ?? this.equalizerPresetId,
+      skipSilence: skipSilence ?? this.skipSilence,
+      audioNormalization: audioNormalization ?? this.audioNormalization,
       volumeSliderStyle: volumeSliderStyle ?? this.volumeSliderStyle,
       titleBarCentered: titleBarCentered ?? this.titleBarCentered,
       titleBarMatchesBackground:
@@ -872,6 +927,11 @@ class AppSettings {
         'disableBlur': disableBlur,
         'blurRadius': blurRadius,
         'visualizerEnabled': visualizerEnabled,
+        'equalizerEnabled': equalizerEnabled,
+        'equalizerBands': equalizerBands.join(','),
+        'equalizerPresetId': equalizerPresetId,
+        'skipSilence': skipSilence,
+        'audioNormalization': audioNormalization,
         'volumeSliderStyle': volumeSliderStyle.name,
         'titleBarCentered': titleBarCentered,
         'titleBarMatchesBackground': titleBarMatchesBackground,
@@ -953,6 +1013,11 @@ class AppSettings {
       disableBlur: json['disableBlur'] as bool? ?? false,
       blurRadius: (json['blurRadius'] as num?)?.toDouble() ?? 48,
       visualizerEnabled: json['visualizerEnabled'] as bool? ?? false,
+      equalizerEnabled: json['equalizerEnabled'] as bool? ?? false,
+      equalizerBands: _parseEqualizerBands(json['equalizerBands'] as String?),
+      equalizerPresetId: json['equalizerPresetId'] as String? ?? 'flat',
+      skipSilence: json['skipSilence'] as bool? ?? false,
+      audioNormalization: json['audioNormalization'] as bool? ?? false,
       volumeSliderStyle: ProgressBarStyle.fromName(
         json['volumeSliderStyle'] as String?,
       ),
