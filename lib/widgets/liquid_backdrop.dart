@@ -26,7 +26,7 @@ import '../state/providers.dart';
 ///   тестов) — рисуется статичный градиент ровно из тех же цветов, а причина
 ///   пишется в журнал;
 /// * не идёт воспроизведение — время стоит, то есть фон просто неподвижен.
-class LiquidBackdrop extends ConsumerStatefulWidget {
+class LiquidBackdrop extends ConsumerWidget {
   const LiquidBackdrop({super.key, required this.colors, this.animate = true});
 
   /// Три цвета палитры обложки (первый — основной), как у градиента фона.
@@ -37,10 +37,152 @@ class LiquidBackdrop extends ConsumerStatefulWidget {
   final bool animate;
 
   @override
-  ConsumerState<LiquidBackdrop> createState() => _LiquidBackdropState();
+  Widget build(BuildContext context, WidgetRef ref) {
+    // Только эти четыре значения и нужны фону: `select` не даёт перестраивать
+    // шейдер на каждое изменение любой другой настройки.
+    final (
+      double speed,
+      double scale,
+      double saturation,
+      LiquidColorSource source,
+    ) = ref.watch(
+      settingsControllerProvider.select(
+        (AppSettings s) => (
+          s.liquidSpeed,
+          s.liquidScale,
+          s.liquidSaturation,
+          s.liquidColorSource,
+        ),
+      ),
+    );
+
+    final List<Color> base = source == LiquidColorSource.theme
+        ? liquidThemeColors(Theme.of(context).colorScheme)
+        : colors;
+    return _LiquidSurface(
+      colors: _liquidPalette(base, saturation),
+      flowSpeed: speed,
+      blobScale: scale,
+      animate: animate,
+    );
+  }
 }
 
-class _LiquidBackdropState extends ConsumerState<LiquidBackdrop> {
+/// Живой предпросмотр «Жидкости» для диалога настроек.
+///
+/// Тот же шейдер, что и у фона плеера, но время в нём идёт всегда: предпросмотр
+/// не зависит от воспроизведения и не замирает вместе с паузой.
+class LiquidPreview extends StatefulWidget {
+  const LiquidPreview({
+    super.key,
+    required this.colors,
+    required this.speed,
+    required this.scale,
+    required this.saturation,
+  });
+
+  /// Три базовых цвета (до применения насыщенности).
+  final List<Color> colors;
+
+  /// Скорость течения — как настройка «Скорость течения».
+  final double speed;
+
+  /// Масштаб пятен — как настройка «Масштаб пятен».
+  final double scale;
+
+  /// Насыщенность — как одноимённая настройка.
+  final double saturation;
+
+  @override
+  State<LiquidPreview> createState() => _LiquidPreviewState();
+}
+
+class _LiquidPreviewState extends State<LiquidPreview> {
+  @override
+  Widget build(BuildContext context) => _LiquidSurface(
+        colors: _liquidPalette(widget.colors, widget.saturation),
+        flowSpeed: widget.speed,
+        blobScale: widget.scale,
+        animate: true,
+      );
+}
+
+/// Три цвета «Жидкости» из палитры приложения — для источника «Из темы».
+///
+/// Роли те же, что у градиента фона, — primary / secondary / tertiary, только
+/// контейнеры: тогда при смене источника фон остаётся той же светлоты. Одних
+/// ролей мало: в нейтральной или монохромной палитре их контейнеры совпадают
+/// почти вплотную, и «жидкость» выглядела залитой одним цветом (жалоба
+/// владельца). Поэтому разводим цвета ещё и по тону — в тёмной теме в светлую
+/// сторону, в светлой в тёмную: и там, и там контейнер уходит от подложки, а
+/// значит три цвета не могут слиться в один.
+List<Color> liquidThemeColors(ColorScheme scheme) {
+  final List<HSLColor> roles = <HSLColor>[
+    HSLColor.fromColor(scheme.primaryContainer),
+    HSLColor.fromColor(scheme.secondaryContainer),
+    HSLColor.fromColor(scheme.tertiaryContainer),
+  ];
+  // Тон берём от основного цвета, а не от каждого контейнера: у secondary и
+  // tertiary он может совпасть с primary (нейтральная палитра) или оказаться
+  // рядом (невыразительная тональная). Роли при этом сохраняют свой оттенок.
+  final double step = scheme.brightness == Brightness.dark ? 0.09 : -0.09;
+  final double base = roles[0].lightness;
+  return <Color>[
+    roles[0].toColor(),
+    roles[1].withLightness((base + step).clamp(0.0, 1.0)).toColor(),
+    roles[2].withLightness((base + step * 2).clamp(0.0, 1.0)).toColor(),
+  ];
+}
+
+/// Ровно три цвета: у шейдера три цветовые униформы. Меньше — повторяем
+/// последний, больше — лишние не нужны.
+///
+/// Альфу обнуляем в непрозрачность: шейдер выводит сплошной кадр, поэтому
+/// статичная подложка должна быть такой же, иначе подмена шейдера на неё была
+/// бы заметна по прозрачности. Насыщенность применяем здесь, а не в шейдере:
+/// так статичная подложка и жидкость выглядят одинаково.
+List<Color> _liquidPalette(List<Color> source, double saturation) {
+  final List<Color> filled = <Color>[
+    for (final Color color in source.take(3))
+      _saturate(color.withValues(alpha: 1), saturation),
+  ];
+  while (filled.length < 3) {
+    filled.add(filled.isEmpty ? const Color(0xFF000000) : filled.last);
+  }
+  return filled;
+}
+
+/// Множитель насыщенности: 1 — цвет как есть, 0 — серый той же светлоты.
+/// `HSLColor` меняет только насыщенность, поэтому от настройки фон не
+/// темнеет и не светлеет.
+Color _saturate(Color color, double factor) {
+  if (factor == 1.0) return color;
+  final HSLColor hsl = HSLColor.fromColor(color);
+  return hsl.withSaturation((hsl.saturation * factor).clamp(0.0, 1.0)).toColor();
+}
+
+/// Общая для фона и предпросмотра отрисовка жидкости: шейдер, его загрузка,
+/// часы и статичная подложка-замена. Различаются только цвета, параметры и то,
+/// идёт ли время — сама отрисовка одна, поэтому предпросмотр в настройках
+/// показывает ровно то же, что и плеер.
+class _LiquidSurface extends StatefulWidget {
+  const _LiquidSurface({
+    required this.colors,
+    required this.flowSpeed,
+    required this.blobScale,
+    required this.animate,
+  });
+
+  final List<Color> colors;
+  final double flowSpeed;
+  final double blobScale;
+  final bool animate;
+
+  @override
+  State<_LiquidSurface> createState() => _LiquidSurfaceState();
+}
+
+class _LiquidSurfaceState extends State<_LiquidSurface> {
   static const String _asset = 'shaders/liquid_backdrop.frag';
 
   /// Шаг анимации: ~30 кадров в секунду. Чаще незаметно, реже — заметно дёргается.
@@ -65,7 +207,7 @@ class _LiquidBackdropState extends ConsumerState<LiquidBackdrop> {
   }
 
   @override
-  void didUpdateWidget(covariant LiquidBackdrop old) {
+  void didUpdateWidget(covariant _LiquidSurface old) {
     super.didUpdateWidget(old);
     if (old.animate != widget.animate) _syncTicking();
   }
@@ -108,78 +250,20 @@ class _LiquidBackdropState extends ConsumerState<LiquidBackdrop> {
 
   @override
   Widget build(BuildContext context) {
-    // Только эти четыре значения и нужны фону: `select` не даёт перестраивать
-    // шейдер на каждое изменение любой другой настройки.
-    final (
-      double speed,
-      double scale,
-      double saturation,
-      LiquidColorSource source,
-    ) = ref.watch(
-      settingsControllerProvider.select(
-        (AppSettings s) => (
-          s.liquidSpeed,
-          s.liquidScale,
-          s.liquidSaturation,
-          s.liquidColorSource,
-        ),
-      ),
-    );
-
-    final List<Color> base = source == LiquidColorSource.theme
-        ? _themePalette(Theme.of(context).colorScheme)
-        : widget.colors;
-    final List<Color> colors = _palette(base, saturation);
     final ui.FragmentShader? shader = _shader;
-    if (shader == null || _broken) return _StaticPalette(colors: colors);
+    if (shader == null || _broken) return _StaticPalette(colors: widget.colors);
     return RepaintBoundary(
       child: CustomPaint(
         size: Size.infinite,
         painter: _LiquidPainter(
           shader: shader,
           time: _time,
-          colors: colors,
-          flowSpeed: speed,
-          blobScale: scale,
+          colors: widget.colors,
+          flowSpeed: widget.flowSpeed,
+          blobScale: widget.blobScale,
         ),
       ),
     );
-  }
-
-  /// Цвета палитры приложения — для источника «Из темы». Те же роли, что у
-  /// градиента фона: контейнеры, а не `primary`/`tertiary`, — тогда при смене
-  /// источника фон остаётся той же светлоты.
-  static List<Color> _themePalette(ColorScheme scheme) => <Color>[
-        scheme.primaryContainer,
-        scheme.secondaryContainer,
-        scheme.tertiaryContainer,
-      ];
-
-  /// Ровно три цвета: у шейдера три цветовые униформы. Меньше — повторяем
-  /// последний, больше — лишние не нужны.
-  ///
-  /// Альфу обнуляем в непрозрачность: шейдер выводит сплошной кадр, поэтому
-  /// статичная подложка должна быть такой же, иначе подмена шейдера на неё была
-  /// бы заметна по прозрачности. Насыщенность применяем здесь, а не в шейдере:
-  /// так статичная подложка и жидкость выглядят одинаково.
-  static List<Color> _palette(List<Color> source, double saturation) {
-    final List<Color> filled = <Color>[
-      for (final Color color in source.take(3))
-        _saturate(color.withValues(alpha: 1), saturation),
-    ];
-    while (filled.length < 3) {
-      filled.add(filled.isEmpty ? const Color(0xFF000000) : filled.last);
-    }
-    return filled;
-  }
-
-  /// Множитель насыщенности: 1 — цвет как есть, 0 — серый той же светлоты.
-  /// `HSLColor` меняет только насыщенность, поэтому от настройки фон не
-  /// темнеет и не светлеет.
-  static Color _saturate(Color color, double factor) {
-    if (factor == 1.0) return color;
-    final HSLColor hsl = HSLColor.fromColor(color);
-    return hsl.withSaturation((hsl.saturation * factor).clamp(0.0, 1.0)).toColor();
   }
 }
 

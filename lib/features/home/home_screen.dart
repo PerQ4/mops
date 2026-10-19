@@ -5,10 +5,8 @@ import 'package:material_3_expressive/material_3_expressive.dart' as m3e;
 
 import '../../core/theme/layout.dart';
 import '../../data/models/models.dart';
-import '../../data/sources/library_source.dart';
 import '../../state/auth_controller.dart';
 import '../../state/catalog_providers.dart';
-import '../../state/library_providers.dart';
 import '../../widgets/artwork.dart';
 import '../../widgets/horizontal_list.dart';
 import '../../widgets/async_views.dart';
@@ -16,12 +14,8 @@ import '../../widgets/empty_state.dart';
 import '../../widgets/media_card.dart';
 import '../../widgets/section_list.dart';
 import '../../widgets/track_menu.dart';
-import '../../widgets/wavy_underline.dart';
 import '../common/navigation.dart';
-import '../shell/content_navigator.dart';
-import '../shell/destinations.dart';
 import 'home_sections.dart';
-import 'now_playing_card.dart';
 
 /// Главная страница.
 ///
@@ -301,12 +295,11 @@ class _AccountButton extends StatelessWidget {
   }
 }
 
-/// Верхние блоки главной: карточка «сейчас играет», счётчики библиотеки,
-/// чипы категорий, «Слушать снова» и быстрый набор.
+/// Верхние блоки главной: чипы категорий, «Слушать снова» и быстрый набор.
 ///
-/// Все блоки появляются только при реальных данных: карточка — при играющем
-/// треке, чипы — из раздела «Настроения и жанры» YouTube, полка и плитки — из
-/// секций главной. Чего разбор не отдал, того на экране нет.
+/// Все три блока появляются только при реальных данных: чипы — из раздела
+/// «Настроения и жанры» YouTube, полка и плитки — из секций главной. Чего
+/// разбор не отдал, того на экране нет.
 class _HomeHeader extends StatelessWidget {
   const _HomeHeader({required this.top});
 
@@ -317,120 +310,12 @@ class _HomeHeader extends StatelessWidget {
     return Column(
       crossAxisAlignment: CrossAxisAlignment.stretch,
       children: <Widget>[
-        const NowPlayingCard(),
-        const _LibraryCounters(),
         const _CategoryChips(),
         if (top.listenAgain != null)
           _ListenAgainShelf(section: top.listenAgain!),
         if (top.quickPicks != null)
           _QuickPicksTiles(section: top.quickPicks!),
       ],
-    );
-  }
-}
-
-/// Две плашки-счётчика: «Понравившиеся песни · N» и «Ваши плейлисты · N».
-///
-/// Числа — реальные размеры разделов библиотеки, без выдуманных значений.
-/// Пока данные грузятся, показываем ноль: это честное «пока нечего», а не
-/// заглушка. Плашки не прячем при нуле — они и есть быстрый вход в раздел.
-class _LibraryCounters extends ConsumerWidget {
-  const _LibraryCounters();
-
-  @override
-  Widget build(BuildContext context, WidgetRef ref) {
-    final int songs = ref.watch(
-      likedSongsProvider.select(
-        (AsyncValue<List<Track>> value) => value.value?.length ?? 0,
-      ),
-    );
-    final int playlists = ref.watch(
-      likedPlaylistsProvider.select(
-        (AsyncValue<List<Playlist>> value) => value.value?.length ?? 0,
-      ),
-    );
-
-    return Padding(
-      padding: const EdgeInsets.fromLTRB(16, 4, 16, 8),
-      // IntrinsicHeight выравнивает высоту плашек: подписи разной длины
-      // переносятся на разное число строк, а «рядом» они должны читаться
-      // одной парой, а не разновысокими блоками.
-      child: IntrinsicHeight(
-        child: Row(
-          crossAxisAlignment: CrossAxisAlignment.stretch,
-          children: <Widget>[
-            Expanded(
-              child: _CounterCard(
-                label: 'Понравившиеся песни',
-                count: songs,
-                onTap: () => AppRoutes.playlist(
-                  context,
-                  LibrarySource.likedPlaylistBrowseId,
-                ),
-              ),
-            ),
-            const SizedBox(width: 12),
-            Expanded(
-              child: _CounterCard(
-                label: 'Ваши плейлисты',
-                count: playlists,
-                // Отдельной страницы «все плейлисты» нет — раздел живёт
-                // вкладкой библиотеки, туда и ведём.
-                onTap: () => selectShellDestination(
-                  ref,
-                  ShellDestination.library.index,
-                ),
-              ),
-            ),
-          ],
-        ),
-      ),
-    );
-  }
-}
-
-/// Плашка-счётчик: подпись с числом и стрелка «перейти».
-class _CounterCard extends StatelessWidget {
-  const _CounterCard({
-    required this.label,
-    required this.count,
-    required this.onTap,
-  });
-
-  final String label;
-  final int count;
-  final VoidCallback onTap;
-
-  @override
-  Widget build(BuildContext context) {
-    final TextTheme text = Theme.of(context).textTheme;
-    final ColorScheme scheme = Theme.of(context).colorScheme;
-    return Material(
-      color: scheme.surfaceContainerLow,
-      borderRadius: BorderRadius.circular(AppLayout.radiusL),
-      clipBehavior: Clip.antiAlias,
-      child: InkWell(
-        onTap: onTap,
-        child: Padding(
-          padding: const EdgeInsets.fromLTRB(16, 14, 10, 14),
-          child: Row(
-            children: <Widget>[
-              Expanded(
-                child: Text(
-                  '$label · $count',
-                  maxLines: 2,
-                  overflow: TextOverflow.ellipsis,
-                  style: text.titleSmall?.copyWith(
-                    fontWeight: FontWeight.w600,
-                    color: scheme.onSurface,
-                  ),
-                ),
-              ),
-              Icon(Icons.chevron_right, color: scheme.onSurfaceVariant),
-            ],
-          ),
-        ),
-      ),
     );
   }
 }
@@ -484,8 +369,7 @@ class _CategoryChips extends ConsumerWidget {
 }
 
 /// Заголовок блока — вид `HomeSectionHeader` (HomeScreenComponents.kt:210-270):
-/// высота ≥64, отступы 16/8, подпись `titleLarge` semibold. После подписи —
-/// короткая волнистая линия, как в Swiftify.
+/// высота ≥64, отступы 16/8, подпись `titleLarge` semibold.
 class _BlockTitle extends StatelessWidget {
   const _BlockTitle(this.title);
 
@@ -501,25 +385,14 @@ class _BlockTitle extends StatelessWidget {
         padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 8),
         child: Align(
           alignment: Alignment.centerLeft,
-          child: Row(
-            mainAxisSize: MainAxisSize.min,
-            children: <Widget>[
-              // Flexible, а не Expanded: волна должна стоять сразу за
-              // подписью, а не уезжать к правому краю.
-              Flexible(
-                child: Text(
-                  title,
-                  maxLines: 1,
-                  overflow: TextOverflow.ellipsis,
-                  style: text.titleLarge?.copyWith(
-                    fontWeight: FontWeight.w600,
-                    color: scheme.onSurface,
-                  ),
-                ),
-              ),
-              const SizedBox(width: 8),
-              const WavyUnderline(),
-            ],
+          child: Text(
+            title,
+            maxLines: 1,
+            overflow: TextOverflow.ellipsis,
+            style: text.titleLarge?.copyWith(
+              fontWeight: FontWeight.w600,
+              color: scheme.onSurface,
+            ),
           ),
         ),
       ),

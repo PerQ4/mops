@@ -4,7 +4,6 @@ import '../core/theme/layout.dart';
 import '../data/models/models.dart';
 import 'horizontal_list.dart';
 import 'media_card.dart';
-import 'wavy_underline.dart';
 
 /// Горизонтальная карусель секции: заголовок + прокручиваемые карточки.
 ///
@@ -65,24 +64,14 @@ class SectionCarousel extends StatelessWidget {
                               color: scheme.onSurfaceVariant,
                             ),
                           ),
-                        Row(
-                          // Flexible: волна идёт сразу за названием.
-                          mainAxisSize: MainAxisSize.min,
-                          children: <Widget>[
-                            Flexible(
-                              child: Text(
-                                section.title,
-                                maxLines: 1,
-                                overflow: TextOverflow.ellipsis,
-                                style: text.titleLarge?.copyWith(
-                                  fontWeight: FontWeight.w600,
-                                  color: scheme.onSurface,
-                                ),
-                              ),
-                            ),
-                            const SizedBox(width: 8),
-                            const WavyUnderline(),
-                          ],
+                        Text(
+                          section.title,
+                          maxLines: 1,
+                          overflow: TextOverflow.ellipsis,
+                          style: text.titleLarge?.copyWith(
+                            fontWeight: FontWeight.w600,
+                            color: scheme.onSurface,
+                          ),
                         ),
                       ],
                     ),
