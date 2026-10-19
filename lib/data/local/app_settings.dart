@@ -383,6 +383,7 @@ class AppSettings {
     this.sidebarWidth = 280,
     this.lyricsSource = LyricsSource.auto,
     this.audioQuality = AudioQuality.high,
+    this.lowDataMode = false,
     this.streamClient = StreamSource.auto,
     this.showLyricsInPlayer = true,
     this.lyricsTextScale = 1.0,
@@ -470,6 +471,15 @@ class AppSettings {
   /// ArchiveTune: фон и поверхности становятся #000000.
   final bool pureBlack;
   final AudioQuality audioQuality;
+
+  /// Режим низкого расхода трафика.
+  ///
+  /// Как `LowDataModeKey` в ArchiveTune, только без слежения за типом сети:
+  /// решение всегда за пользователем (на десктопе лимитный интернет бывает и
+  /// по Wi-Fi). Включённый режим понижает запрашиваемый размер обложек и
+  /// крупные превью видео (`i.ytimg.com`) не запрашивает вовсе — см.
+  /// `core/utils/artwork_urls.dart`.
+  final bool lowDataMode;
 
   /// Клиент YouTube, у которого запрашивается ссылка на поток.
   final StreamSource streamClient;
@@ -679,6 +689,7 @@ class AppSettings {
     double? sidebarWidth,
     LyricsSource? lyricsSource,
     AudioQuality? audioQuality,
+    bool? lowDataMode,
     StreamSource? streamClient,
     bool? showLyricsInPlayer,
     double? lyricsTextScale,
@@ -742,6 +753,7 @@ class AppSettings {
       sidebarWidth: sidebarWidth ?? this.sidebarWidth,
       lyricsSource: lyricsSource ?? this.lyricsSource,
       audioQuality: audioQuality ?? this.audioQuality,
+      lowDataMode: lowDataMode ?? this.lowDataMode,
       streamClient: streamClient ?? this.streamClient,
       showLyricsInPlayer: showLyricsInPlayer ?? this.showLyricsInPlayer,
       lyricsTextScale: lyricsTextScale ?? this.lyricsTextScale,
@@ -810,6 +822,7 @@ class AppSettings {
         'sidebarWidth': sidebarWidth,
         'lyricsSource': lyricsSource.name,
         'audioQuality': audioQuality.name,
+        'lowDataMode': lowDataMode,
         'streamClient': streamClient.name,
         'showLyricsInPlayer': showLyricsInPlayer,
         'lyricsTextScale': lyricsTextScale,
@@ -881,6 +894,7 @@ class AppSettings {
       sidebarWidth: (json['sidebarWidth'] as num?)?.toDouble() ?? 280,
       lyricsSource: LyricsSource.fromName(json['lyricsSource'] as String?),
       audioQuality: AudioQuality.fromName(json['audioQuality'] as String?),
+      lowDataMode: json['lowDataMode'] as bool? ?? false,
       streamClient: StreamSource.fromName(json['streamClient'] as String?),
       showLyricsInPlayer: json['showLyricsInPlayer'] as bool? ?? true,
       lyricsTextScale: (json['lyricsTextScale'] as num?)?.toDouble() ?? 1.0,

@@ -4,6 +4,7 @@ import 'package:cached_network_image/cached_network_image.dart';
 import 'package:flutter/material.dart';
 
 import '../core/theme/motion.dart';
+import '../core/utils/artwork_urls.dart';
 
 
 /// Тег [Hero] для обложки плеера.
@@ -73,13 +74,28 @@ class _ArtworkState extends State<Artwork> {
 
   @override
   Widget build(BuildContext context) {
+    // Слушаем режим низкого трафика: при его переключении обложка должна
+    // перезапроситься в меньшем размере, не дожидаясь перезахода на экран.
+    return ValueListenableBuilder<bool>(
+      valueListenable: artworkLowDataMode,
+      builder: (BuildContext context, bool _, Widget? _) => _build(context),
+    );
+  }
+
+  Widget _build(BuildContext context) {
     final ColorScheme scheme = Theme.of(context).colorScheme;
     final BorderRadius shape =
         widget.radius ?? BorderRadius.circular(12);
     final double? w = widget.width ?? widget.size;
     final double? h = widget.height ?? widget.size;
 
-    final List<String> variants = widget._variants;
+    // Ссылки обложки приходят уже готовыми, поэтому в низком режиме понижаем
+    // размер каждой на месте — иначе крупный адрес всё равно ушёл бы в сеть.
+    final List<String> variants = <String>[];
+    for (final String candidate in widget._variants) {
+      final String shrunk = shrinkArtwork(candidate);
+      if (shrunk.isNotEmpty && !variants.contains(shrunk)) variants.add(shrunk);
+    }
     final bool hasImage = variants.isNotEmpty && _attempt < variants.length;
 
     // Содержимое обложки без скругления. Его же переиспользует перелёт

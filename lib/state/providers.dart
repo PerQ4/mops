@@ -10,6 +10,7 @@ import '../core/innertube/innertube_client.dart';
 import '../core/net/anti_dpi.dart';
 import '../core/theme/seed_colors.dart';
 import '../core/theme/ui_scaler.dart';
+import '../core/utils/artwork_urls.dart';
 import '../data/local/app_settings.dart';
 import '../data/sources/catalog_source.dart';
 import '../data/sources/paxsenix_source.dart';
@@ -59,12 +60,14 @@ class SettingsController extends Notifier<AppSettings> {
   AppSettings build() {
     final AppSettings settings = ref.watch(initialSettingsProvider);
     _publishContentFilter(settings);
+    _publishLowDataMode(settings);
     return settings;
   }
 
   Future<void> _persist(AppSettings next) async {
     state = next;
     _publishContentFilter(next);
+    _publishLowDataMode(next);
     final SharedPreferences prefs = ref.read(sharedPreferencesProvider);
     await prefs.setString(kSettingsKey, next.encode());
   }
@@ -127,6 +130,10 @@ class SettingsController extends Notifier<AppSettings> {
 
   Future<void> setAudioQuality(AudioQuality quality) =>
       update((AppSettings s) => s.copyWith(audioQuality: quality));
+
+  /// Режим низкого расхода трафика: меньше обложек и никаких превью.
+  Future<void> setLowDataMode(bool value) =>
+      update((AppSettings s) => s.copyWith(lowDataMode: value));
 
   Future<void> setStreamClient(StreamSource client) =>
       update((AppSettings s) => s.copyWith(streamClient: client));
@@ -351,6 +358,15 @@ void _publishContentFilter(AppSettings settings) {
     hideVideo: settings.hideVideo,
     topSize: settings.topSize.value,
   );
+}
+
+/// Передаёт режим низкого трафика в утилиты обложек.
+///
+/// URL обложек строятся в обычных функциях и виджетах, у которых нет доступа
+/// к `ref` (модели треков, карточки, фоны плеера), поэтому, как и у фильтра
+/// содержимого, значение кладётся в общую переменную при каждой смене настроек.
+void _publishLowDataMode(AppSettings settings) {
+  artworkLowDataMode.value = settings.lowDataMode;
 }
 
 /// ---------------------------------------------------------------------------

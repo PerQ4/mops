@@ -269,33 +269,103 @@ class DiscordIpcClient {
       ? _WindowsPipeTransport(path)
       : _UnixSocketTransport(path);
 
-  /// Пути пайпов/сокетов Discord: индексы 0..9 для нескольких запущенных
-  /// клиентов, а также каталоги snap и flatpak.
+  /// Сколько индексов IPC перебирать. Discord выставляет `discord-ipc-0 …
+  /// discord-ipc-9`; разные одновременно запущенные клиенты (stable, Canary,
+  /// PTB, Vesktop) занимают разные номера.
+  static const int _ipcCount = 10;
+
+  /// Flatpak-идентификаторы Discord и сторонних сборок.
+  static const List<String> _flatpakAppIds = <String>[
+    'com.discordapp.Discord',
+    'com.discordapp.DiscordCanary',
+    'com.discordapp.DiscordPTB',
+    'dev.vencord.Vesktop',
+    'io.github.spacingbat3.webcord',
+  ];
+
+  /// Имена snap-пакетов тех же клиентов.
+  static const List<String> _snapNames = <String>[
+    'discord',
+    'discord-canary',
+    'discord-ptb',
+    'vesktop',
+  ];
+
+  /// Пути пайпов/сокетов всех сборок Discord.
+  ///
+  /// На Windows IPC — именованные пайпы в общем пространстве имён: ни сборка
+  /// (stable, Canary, PTB, Microsoft Store), ни каталог установки на имя пайпа
+  /// не влияют, поэтому перебор индексов закрывает их все сразу.
+  ///
+  /// На macOS и Linux сокет лежит в каталоге времени выполнения или во
+  /// временном каталоге. У Flatpak это `app/<id>`, у Snap — `snap.<имя>`;
+  /// сторонние клиенты (Vesktop, WebCord) ставятся и так, и так, поэтому их
+  /// идентификаторы перечислены рядом с Discord.
   Iterable<String> _candidatePaths() sync* {
     if (Platform.isWindows) {
-      for (int i = 0; i < 10; i++) {
+      for (int i = 0; i < _ipcCount; i++) {
         yield '\\\\?\\pipe\\discord-ipc-$i';
       }
       return;
     }
 
-    final String? runtime = Platform.environment['XDG_RUNTIME_DIR'];
-    final List<String> directories = <String>[
-      if (runtime != null && runtime.isNotEmpty) runtime,
-      if (Platform.environment['TMPDIR']?.isNotEmpty ?? false)
-        Platform.environment['TMPDIR']!,
-      if (Platform.environment['TMP']?.isNotEmpty ?? false)
-        Platform.environment['TMP']!,
-      if (Platform.environment['TEMP']?.isNotEmpty ?? false)
-        Platform.environment['TEMP']!,
-      '/tmp',
-      // Snap и Flatpak держат сокет в своём каталоге.
-      if (runtime != null && runtime.isNotEmpty) '$runtime/snap.discord',
-      if (runtime != null && runtime.isNotEmpty)
-        '$runtime/app/com.discordapp.Discord',
-    ];
+    final Map<String, String> env = Platform.environment;
+    final List<String> directories = <String>[];
+    void add(String? directory) {
+      if (directory == null || directory.isEmpty) return;
+      final String trimmed = directory.endsWith('/')
+          ? directory.substring(0, directory.length - 1)
+          : directory;
+      if (trimmed.isEmpty || directories.contains(trimmed)) return;
+      directories.add(trimmed);
+    }
+
+    // Обычные клиенты: сокет во временном каталоге пользователя.
+    add(env['XDG_RUNTIME_DIR']);
+    add(env['TMPDIR']);
+    add(env['TMP']);
+    add(env['TEMP']);
+    add('/tmp');
+
+    final String? home = env['HOME'];
+    if (Platform.isMacOS) {
+      // У Canary, PTB и сторонних сборок свой каталог данных.
+      if (home != null && home.isNotEmpty) {
+        for (final String name in <String>[
+          'discord',
+          'discordcanary',
+          'discordptb',
+        ]) {
+          add('$home/Library/Application Support/$name');
+        }
+      }
+      add(env['XDG_CONFIG_HOME']);
+    } else {
+      // Linux: Flatpak и Snap выносят сокет в песочницу приложения.
+      final String runtime = env['XDG_RUNTIME_DIR'] ?? '';
+      if (runtime.isNotEmpty) {
+        for (final String app in _flatpakAppIds) {
+          add('$runtime/app/$app');
+        }
+        for (final String snap in _snapNames) {
+          add('$runtime/snap.$snap');
+        }
+      }
+      if (home != null && home.isNotEmpty) {
+        // Домашний каталог Flatpak: `~/.var/app/<id>`.
+        for (final String app in _flatpakAppIds) {
+          add('$home/.var/app/$app');
+        }
+        // Snap-клиент видит собственный домашний каталог: `~/snap/<имя>/…`.
+        for (final String snap in _snapNames) {
+          add('$home/snap/$snap/current/.config/discord');
+        }
+      }
+      add(env['XDG_CONFIG_HOME']);
+    }
+
     for (final String directory in directories) {
-      for (int i = 0; i < 10; i++) {
+      for (int i = 0; i < _ipcCount; i++) {
         yield '$directory/discord-ipc-$i';
       }
     }

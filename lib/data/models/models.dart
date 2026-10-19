@@ -47,7 +47,15 @@ extension ThumbnailListX on List<Thumbnail> {
   String? get best => _pick(_maxWidth);
 
   /// Обложка, подходящая под квадрат заданной стороны (для списков — меньше трафик).
-  String? sized(int target) => _pick(target);
+  ///
+  /// В режиме низкого трафика и выбор меньше, и сама ссылка приводится к
+  /// меньшему размеру: среди готовых адресов может не оказаться подходящего,
+  /// тогда как YouTube отдаёт нужный размер по запросу.
+  String? sized(int target) {
+    final String? picked = _pick(artworkSizeFor(target));
+    if (picked == null) return null;
+    return artworkLowDataMode.value ? upgradeArtwork(picked, target) : picked;
+  }
 
   /// Заведомо больше любой реальной обложки YouTube.
   static const int _maxWidth = 99999;

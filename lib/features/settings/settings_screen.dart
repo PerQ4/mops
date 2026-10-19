@@ -387,6 +387,14 @@ class SettingsScreen extends ConsumerWidget {
               title: 'Доступ к сети',
               accent: scheme.tertiary,
               children: <Widget>[
+                SettingsSwitchRow(
+                  icon: Icons.data_saver_on,
+                  title: 'Низкий расход трафика',
+                  subtitle: 'Обложки меньшего размера, крупные кадры видео '
+                      'не запрашиваются',
+                  value: settings.lowDataMode,
+                  onChanged: controller.setLowDataMode,
+                ),
                 SettingsRow(
                   icon: settings.bypass.isEnabled
                       ? Icons.shield
