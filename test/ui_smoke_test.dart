@@ -453,6 +453,16 @@ void main() {
         child: child,
       ),
     );
+    // Иконка в шапке окна — обычный `Image.asset`, а он декодируется
+    // асинхронно. Без прогрева эталоны получали то иконку, то пустое место:
+    // расхождение ровно в её квадрате (18x18 в точке 10,8), из-за чего тест
+    // «мигал» и выглядел как чужая поломка.
+    await tester.runAsync(
+      () => precacheImage(
+        const AssetImage('assets/icon/mops_icon.png'),
+        tester.element(find.byType(ProviderScope).first),
+      ),
+    );
     await tester.pump(const Duration(milliseconds: 400));
   }
 

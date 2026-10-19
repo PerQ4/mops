@@ -10,10 +10,12 @@ import '../core/theme/motion.dart';
 import '../data/models/models.dart';
 import '../features/common/navigation.dart';
 import '../features/library/playlist_edit.dart';
+import '../features/playlist/song_replacement_dialog.dart';
 import '../state/auth_controller.dart';
 import '../state/library_providers.dart';
 import '../state/player_controller.dart';
 import 'artwork.dart';
+import 'async_views.dart';
 
 /// Контекстное меню трека: обложка, подписи и действия над треком.
 ///
@@ -29,6 +31,7 @@ Future<void> showTrackMenu(
   Track track, {
   bool rootNavigator = false,
   VoidCallback? onMediaInfo,
+  Future<void> Function(Track replacement)? replaceInPlaylist,
 }) {
   return showModalBottomSheet<void>(
     context: context,
@@ -45,6 +48,7 @@ Future<void> showTrackMenu(
       track: track,
       hostContext: context,
       onMediaInfo: onMediaInfo,
+      replaceInPlaylist: replaceInPlaylist,
     ),
   );
 }
@@ -54,6 +58,7 @@ class _TrackMenuSheet extends ConsumerWidget {
     required this.track,
     required this.hostContext,
     this.onMediaInfo,
+    this.replaceInPlaylist,
   });
 
   final Track track;
@@ -65,6 +70,11 @@ class _TrackMenuSheet extends ConsumerWidget {
   /// Показ параметров играющего потока. Задаёт только плеер: у трека из списка
   /// никакого потока ещё нет, и пункт там был бы враньём.
   final VoidCallback? onMediaInfo;
+
+  /// Подмена записи в плейлисте, из которого открыли меню. Задаёт экран
+  /// плейлиста: только он знает, можно ли править список. Без колбэка замена
+  /// всё равно происходит в очереди.
+  final Future<void> Function(Track replacement)? replaceInPlaylist;
 
   @override
   Widget build(BuildContext context, WidgetRef ref) {
@@ -92,6 +102,14 @@ class _TrackMenuSheet extends ConsumerWidget {
     final int queueIndex = queue.indexWhere((Track t) => t.id == track.id);
     final bool inQueue = queueIndex >= 0;
 
+    // Недоступность — отдельным `select`: отметка меняется редко, и без него
+    // список перестраивался бы на каждый тик позиции.
+    final bool unavailable = ref.watch(
+      playerControllerProvider.select(
+        (PlayerUiState s) => s.unavailableIds.contains(track.id),
+      ),
+    );
+
     // Перейти можно только туда, где есть id. Если YouTube его не отдал,
     // пункт не показываем вовсе — «мёртвая» кнопка путает сильнее, чем её
     // отсутствие.
@@ -108,6 +126,16 @@ class _TrackMenuSheet extends ConsumerWidget {
           children: <Widget>[
             _MenuHeader(track: track),
             const Divider(height: 1),
+            // Пункт только у действительно недоступного трека: для
+            // рабочего он был бы предложением искать замену исправной песне.
+            if (unavailable) ...<Widget>[
+              _MenuAction(
+                icon: Icons.find_replace,
+                title: 'Найти замену',
+                onTap: () => _findReplacement(context, ref),
+              ),
+              const Divider(height: 1),
+            ],
             if (artist != null)
               _MenuAction(
                 icon: Icons.person_outline,
@@ -292,6 +320,49 @@ class _TrackMenuSheet extends ConsumerWidget {
   void _openAddToPlaylist(BuildContext sheetContext) {
     Navigator.pop(sheetContext);
     showAddToPlaylistDialog(hostContext, track);
+  }
+
+  /// Открывает выбор замены и применяет его.
+  ///
+  /// Контроллер и колбэк плейлиста берём до закрытия листа: после
+  /// `Navigator.pop` виджет листа уничтожается, и обращаться к его `ref` уже
+  /// нельзя.
+  void _findReplacement(BuildContext sheetContext, WidgetRef ref) {
+    final PlayerController player = ref.read(playerControllerProvider.notifier);
+    final Future<void> Function(Track)? replaceInPlaylist =
+        this.replaceInPlaylist;
+    Navigator.pop(sheetContext);
+    unawaited(_replaceTrack(player, replaceInPlaylist));
+  }
+
+  Future<void> _replaceTrack(
+    PlayerController player,
+    Future<void> Function(Track)? replaceInPlaylist,
+  ) async {
+    final Track? replacement =
+        await showSongReplacementDialog(hostContext, track);
+    if (replacement == null) return;
+    if (!hostContext.mounted) return;
+
+    final ScaffoldMessengerState messenger = ScaffoldMessenger.of(hostContext);
+    try {
+      // Сначала плейлист: если сервер откажет, очередь останется прежней.
+      if (replaceInPlaylist != null) {
+        await replaceInPlaylist(replacement);
+      }
+      await player.replaceTrack(track, replacement);
+      messenger.showSnackBar(
+        SnackBar(
+          content: Text('«${track.title}» заменён на «${replacement.title}»'),
+        ),
+      );
+    } on Object catch (error) {
+      messenger.showSnackBar(
+        SnackBar(
+          content: Text('Не удалось заменить трек: ${describeError(error)}'),
+        ),
+      );
+    }
   }
 
   /// Первый исполнитель с id: у трека с несколькими авторами на страницу

@@ -18,7 +18,7 @@ import 'track_menu.dart';
 /// строками, справа длительность и меню. Никаких «прыгающих» размеров —
 /// высота строки зафиксирована, поэтому список не дёргается при прокрутке
 /// и при изменении системного масштаба.
-class TrackTile extends StatelessWidget {
+class TrackTile extends ConsumerWidget {
   const TrackTile({
     super.key,
     required this.track,
@@ -59,9 +59,18 @@ class TrackTile extends StatelessWidget {
   final bool enableSwipe;
 
   @override
-  Widget build(BuildContext context) {
+  Widget build(BuildContext context, WidgetRef ref) {
     final ColorScheme scheme = Theme.of(context).colorScheme;
     final TextTheme text = Theme.of(context).textTheme;
+
+    // Отметка ставится только после того, как YouTube действительно отказал
+    // в потоке из-за недоступности (см. PlayerController): до первой попытки
+    // трек считается обычным.
+    final bool unavailable = ref.watch(
+      playerControllerProvider.select(
+        (PlayerUiState s) => s.unavailableIds.contains(track.id),
+      ),
+    );
 
     // Активная строка идёт на `secondaryContainer`, поэтому цвет текста —
     // `onSecondaryContainer`, а не `primary`: иначе подпись сливается с фоном.
@@ -156,6 +165,7 @@ class TrackTile extends StatelessWidget {
                                 track: track,
                                 subtitleOverride: subtitleOverride,
                                 showDuration: showDuration,
+                                unavailable: unavailable,
                                 style: text.bodySmall?.copyWith(
                                   color: subtitleColor.withValues(
                                     alpha: isDimmed
@@ -214,11 +224,15 @@ class _TrackSubtitle extends StatefulWidget {
     required this.style,
     this.subtitleOverride,
     this.showDuration = true,
+    this.unavailable = false,
   });
 
   final Track track;
   final TextStyle? style;
   final String? subtitleOverride;
+
+  /// Помечать ли трек как недоступный: YouTube не отдал для него поток.
+  final bool unavailable;
 
   /// Длительность идёт частью подписи (через « • »), а не отдельным хвостом —
   /// так устроена подпись в `SongListItem`/`MediaMetadataListItem`.
@@ -252,8 +266,17 @@ class _TrackSubtitleState extends State<_TrackSubtitle> {
       // всё равно дописываем через « • », как это делает `joinByBullet`.
       final String text =
           _withDuration(override, widget.track.duration, widget.showDuration);
-      return Text(
-        text,
+      return Text.rich(
+        TextSpan(
+          children: <InlineSpan>[
+            TextSpan(text: text),
+            if (widget.unavailable)
+              TextSpan(
+                text: ' • Недоступен',
+                style: TextStyle(color: Theme.of(context).colorScheme.error),
+              ),
+          ],
+        ),
         maxLines: 1,
         overflow: TextOverflow.ellipsis,
         style: widget.style,
@@ -292,6 +315,15 @@ class _TrackSubtitleState extends State<_TrackSubtitle> {
     final String? album = widget.track.album?.name;
     if (album != null && album.isNotEmpty && album != widget.track.title) {
       spans.add(TextSpan(text: ' • $album'));
+    }
+
+    if (widget.unavailable) {
+      spans.add(
+        TextSpan(
+          text: ' • Недоступен',
+          style: TextStyle(color: Theme.of(context).colorScheme.error),
+        ),
+      );
     }
 
     return Text.rich(

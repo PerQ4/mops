@@ -185,17 +185,30 @@ class _PlaylistBody extends ConsumerWidget {
               // `setVideoId`. У «Мне нравится» удаление не показываем: это
               // снятие лайка, и живёт оно в меню трека.
               final bool removable = !liked && track.setVideoId != null;
+              // Подменить запись можно там же, где её вообще разрешено
+              // править: в своём плейлисте или в «Мне нравится» (там замена —
+              // это снять лайк со старого и поставить новому).
+              final bool canReplace = liked || track.setVideoId != null;
+              void openMenu() => showTrackMenu(
+                    context,
+                    track,
+                    replaceInPlaylist: canReplace
+                        ? (Track replacement) =>
+                            _replaceInPlaylist(ref, track, replacement)
+                        : null,
+                  );
               return TrackTile(
                 track: track,
                 isCurrent: isCurrent,
                 isPlaying: isCurrent && playing,
+                onMenu: openMenu,
                 onTap: () => ref
                     .read(playerControllerProvider.notifier)
                     .playTrack(track, context: playlist.tracks),
                 trailing: removable
                     ? _TrackActions(
                         onRemove: () => _removeTrack(context, ref, track),
-                        onMenu: () => showTrackMenu(context, track),
+                        onMenu: openMenu,
                       )
                     : null,
               );
@@ -274,6 +287,66 @@ class _PlaylistBody extends ConsumerWidget {
     } on Object catch (error) {
       messenger.showSnackBar(SnackBar(content: Text(describeError(error))));
     }
+  }
+
+  /// Подменяет запись плейлиста найденной заменой.
+  ///
+  /// У YouTube нет мутации «заменить трек»: в своём плейлисте это удаление
+  /// старой записи плюс добавление новой (в ArchiveTune `replace` работает так
+  /// же), а в «Мне нравится» — снять лайк со старого и поставить новому.
+  /// Если добавление не прошло, старую запись возвращаем: иначе плейлист
+  /// потерял бы трек вместо его замены.
+  Future<void> _replaceInPlaylist(
+    WidgetRef ref,
+    Track oldTrack,
+    Track replacement,
+  ) async {
+    if (replacement.id == oldTrack.id) return;
+    final LibrarySource library = ref.read(librarySourceProvider);
+
+    if (LibrarySource.isLikedPlaylist(playlist.id)) {
+      await library.setLiked(oldTrack.id, liked: false);
+      try {
+        await library.setLiked(replacement.id, liked: true);
+      } on Object {
+        // Возвращаем лайк старому треку, иначе подмена теряла бы запись.
+        await library.setLiked(oldTrack.id, liked: true);
+        rethrow;
+      }
+      ref.invalidate(likedSongsProvider);
+      ref.invalidate(likedSongsPlaylistProvider);
+      return;
+    }
+
+    final String? setVideoId = oldTrack.setVideoId;
+    // Чужую запись сервер удалять откажется — подмены не будет.
+    if (setVideoId == null) return;
+
+    // Замена уже лежит в плейлисте: повторное добавление создало бы дубль,
+    // достаточно убрать старую запись.
+    final bool alreadyPresent =
+        playlist.tracks.any((Track t) => t.id == replacement.id);
+    await library.removeFromPlaylist(
+      playlist.id,
+      oldTrack.id,
+      setVideoId: setVideoId,
+    );
+    if (!alreadyPresent) {
+      try {
+        await library.addToPlaylist(playlist.id, <String>[replacement.id]);
+      } on Object {
+        // Добавление не прошло — возвращаем старую запись, чтобы плейлист не
+        // потерял трек. Если и это не вышло, пробрасываем исходную ошибку:
+        // она объясняет, что именно сломалось.
+        try {
+          await library.addToPlaylist(playlist.id, <String>[oldTrack.id]);
+        } on Object {
+          // нет
+        }
+        rethrow;
+      }
+    }
+    invalidatePlaylistCaches(ref, playlist.id);
   }
 }
 

@@ -55,6 +55,7 @@ class PlayerUiState {
     this.audioDevices = const <AudioOutputDevice>[],
     this.audioDeviceName = 'auto',
     this.sleepTimer = 0,
+    this.unavailableIds = const <String>{},
   });
 
   final List<Track> queue;
@@ -93,6 +94,11 @@ class PlayerUiState {
   /// поэтому подпись не «уезжает» из-за задержек тика.
   final int sleepTimer;
 
+  /// Треки, для которых YouTube не отдал поток именно из-за недоступности
+  /// (удалён, скрыт, ограничен по региону). Обычные сетевые ошибки сюда не
+  /// попадают: для них замена не нужна, достаточно повторить попытку.
+  final Set<String> unavailableIds;
+
   Track? get current =>
       (index >= 0 && index < queue.length) ? queue[index] : null;
 
@@ -128,6 +134,7 @@ class PlayerUiState {
     List<AudioOutputDevice>? audioDevices,
     String? audioDeviceName,
     int? sleepTimer,
+    Set<String>? unavailableIds,
   }) {
     return PlayerUiState(
       queue: queue ?? this.queue,
@@ -144,6 +151,7 @@ class PlayerUiState {
       audioDevices: audioDevices ?? this.audioDevices,
       audioDeviceName: audioDeviceName ?? this.audioDeviceName,
       sleepTimer: sleepTimer ?? this.sleepTimer,
+      unavailableIds: unavailableIds ?? this.unavailableIds,
     );
   }
 }
@@ -424,6 +432,57 @@ class PlayerController extends Notifier<PlayerUiState> {
       return;
     }
     if (removedCurrent) unawaited(_loadCurrent());
+  }
+
+  /// Подменяет трек во всех позициях очереди.
+  ///
+  /// Позиция воспроизведения и состояние «играет/пауза» не меняются. Если
+  /// заменяется играющий трек, сначала загружается новый поток, затем
+  /// возвращаются прежняя позиция и пауза: иначе подмена начинала бы песню
+  /// с начала и включала звук там, где он был выключен.
+  Future<void> replaceTrack(Track oldTrack, Track replacement) async {
+    if (oldTrack.id == replacement.id) return;
+    if (!state.queue.any((Track t) => t.id == oldTrack.id)) return;
+
+    final bool wasCurrent = state.current?.id == oldTrack.id;
+    final PlaybackState playback = state.playback;
+
+    final List<Track> queue = <Track>[
+      for (final Track track in state.queue)
+        if (track.id == oldTrack.id)
+          Track(
+            id: replacement.id,
+            title: replacement.title,
+            artists: replacement.artists,
+            album: replacement.album,
+            duration: replacement.duration,
+            thumbnails: replacement.thumbnails,
+            isExplicit: replacement.isExplicit,
+            // Контекст плейлиста в очереди сохраняем: по нему боковая панель
+            // понимает, какой плейлист сейчас звучит. Запись `setVideoId`
+            // относится к старому видео и новой записи уже не подходит.
+            playlistId: track.playlistId,
+            isVideo: replacement.isVideo,
+          )
+        else
+          track,
+    ];
+    state = state.copyWith(queue: queue);
+
+    if (!wasCurrent) {
+      _persistSnapshot();
+      return;
+    }
+
+    await _loadCurrent(autoplay: playback.isPlaying);
+    // Пока резолвили поток, пользователь мог переключить трек — тогда
+    // возвращать позицию уже некуда.
+    if (state.current?.id != replacement.id) return;
+
+    if (playback.position > Duration.zero) {
+      await seek(playback.position);
+    }
+    _persistSnapshot();
   }
 
   /// Переставляет элемент очереди.
@@ -733,7 +792,7 @@ class PlayerController extends Notifier<PlayerUiState> {
 
   // -------------------------------------------------------------- private
 
-  Future<void> _loadCurrent() async {
+  Future<void> _loadCurrent({bool autoplay = true}) async {
     // Любая настоящая загрузка снимает «восстановленный» режим: дальше
     // позицию ведёт движок, а не снимок.
     _restorePending = false;
@@ -764,8 +823,14 @@ class PlayerController extends Notifier<PlayerUiState> {
       // tool/plain_get_check.dart: обычный GET — 200, перемотка диапазоном —
       // 206). Прежний GStreamer слал открытый диапазон `Range: bytes=0-` и
       // получал 403 «Forbidden», из-за чего файл приходилось качать целиком.
-      await _engine.load(resolved.url.toString(), autoplay: true);
-      state = state.copyWith(resolving: false, downloading: false);
+      await _engine.load(resolved.url.toString(), autoplay: autoplay);
+      state = state.copyWith(
+        resolving: false,
+        downloading: false,
+        // Успешная загрузка снимает прежнюю отметку: трек мог быть помечен
+        // недоступным при временном сбое, и держать её после звука нельзя.
+        unavailableIds: <String>{...state.unavailableIds}..remove(track.id),
+      );
 
       // Предзагрузку следующего трека через посредника не используем: она была
       // нужна только GStreamer. Код оставлен под флагом — пригодится, если
@@ -773,10 +838,17 @@ class PlayerController extends Notifier<PlayerUiState> {
       if (_preloadEnabled) unawaited(_warmNext());
       return;
     } on StreamResolutionException catch (error) {
+      // Резолвер отличает «недоступно» (удалено, скрыто, регион) от сетевого
+      // сбоя. Только первый случай даёт смысл искать замену — во втором
+      // достаточно повторить попытку.
+      final bool unavailable = error.message.contains('недоступно');
       state = state.copyWith(
         resolving: false,
         downloading: false,
         error: error.message,
+        unavailableIds: unavailable
+            ? <String>{...state.unavailableIds, track.id}
+            : state.unavailableIds,
       );
     } on StreamDownloadException catch (error) {
       state = state.copyWith(
