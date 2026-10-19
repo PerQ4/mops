@@ -42,6 +42,9 @@ class SpotifyClient {
 
   String? _token;
   DateTime? _tokenExpiry;
+  // Cookie сессии храним, чтобы обновить токен, когда он истечёт: без неё
+  // придётся заново открывать браузер посреди переноса.
+  String? _spDc;
   String? _nuanceSecret;
   String? _nuanceVersion;
 
@@ -97,6 +100,7 @@ class SpotifyClient {
     }
 
     _token = token;
+    _spDc = spDc;
     _tokenExpiry = DateTime.now().add(
       Duration(seconds: (json?['accessTokenExpirationTimestampMs'] as num?)
                   ?.toInt() !=
@@ -122,11 +126,14 @@ class SpotifyClient {
         final String? id = item['id'] as String?;
         final String? name = item['name'] as String?;
         if (id == null || name == null) continue;
-        final dynamic tracks = item['tracks'];
+        // `tracks` у плейлиста объявлено устаревшим, актуальное имя —
+        // `items`; читаем новое, на старое оставляем запас.
+        final dynamic collection = item['items'] ?? item['tracks'];
         result.add(SpotifyPlaylist(
           id: id,
           name: name,
-          trackCount: (tracks is Map ? tracks['total'] as num? : null)?.toInt() ?? 0,
+          trackCount:
+              (collection is Map ? collection['total'] as num? : null)?.toInt() ?? 0,
         ));
       }
       url = page['next'] as String?;
@@ -134,24 +141,43 @@ class SpotifyClient {
     return result;
   }
 
-  /// Треки плейлиста.
-  Future<List<SpotifyTrack>> playlistTracks(String playlistId) async {
-    final List<SpotifyTrack> result = <SpotifyTrack>[];
-    String? url = '$_api/playlists/$playlistId/tracks?limit=100';
+  /// Треки плейлиста и число пропущенных записей.
+  ///
+  /// Пропускаем то, что нельзя перенести как песню: эпизоды подкастов,
+  /// локальные файлы и удалённые из Spotify записи (`null` вместо трека).
+  /// Счётчик `skipped` нужен, чтобы отличить «плейлист пуст» от «в плейлисте
+  /// только подкасты и локальные файлы» — сообщения об этом разные.
+  Future<({List<SpotifyTrack> tracks, int skipped})> playlistTracks(
+    String playlistId,
+  ) async {
+    final List<SpotifyTrack> tracks = <SpotifyTrack>[];
+    int skipped = 0;
+    // `/items` — актуальный адрес: `/tracks` (и имя поля `track`) Spotify
+    // объявил устаревшими. Максимум `limit` у этого эндпоинта — 50 (раньше
+    // было 100), дальше страницы идут по `next`.
+    String? url = '$_api/playlists/$playlistId/items?limit=50';
     while (url != null) {
       final Map<String, dynamic>? page = await _getJson(url);
       if (page == null) break;
       for (final dynamic item
           in page['items'] as List<dynamic>? ?? <dynamic>[]) {
         if (item is! Map<String, dynamic>) continue;
-        final dynamic track = item['track'];
-        if (track is! Map<String, dynamic>) continue;
-        final SpotifyTrack? parsed = _parseTrack(track);
-        if (parsed != null) result.add(parsed);
+        // Запись лежит в `item`; `track` — устаревшее имя того же объекта.
+        final dynamic entry = item['item'] ?? item['track'];
+        if (entry is! Map<String, dynamic>) {
+          skipped++;
+          continue;
+        }
+        final SpotifyTrack? parsed = _parseTrack(entry);
+        if (parsed == null) {
+          skipped++;
+          continue;
+        }
+        tracks.add(parsed);
       }
       url = page['next'] as String?;
     }
-    return result;
+    return (tracks: tracks, skipped: skipped);
   }
 
   /// Лайкнутые треки пользователя.
@@ -175,9 +201,15 @@ class SpotifyClient {
   }
 
   SpotifyTrack? _parseTrack(Map<String, dynamic> json) {
+    // Эпизод подкаста — тоже объект с `id` и `name`, но в YouTube Music это
+    // не песня: искать его по названию значит тянуть в плейлист случайный
+    // трек. Признак — тип `episode` (плюс поле `show`, которого у трека нет).
+    if (json['type'] == 'episode' || json['show'] != null) return null;
+
     final String? id = json['id'] as String?;
     final String? name = json['name'] as String?;
-    if (id == null || name == null) return null;
+    // У локальных файлов (`is_local`) `id` пуст — переносить нечего.
+    if (id == null || id.isEmpty || name == null || name.isEmpty) return null;
 
     final List<String> artists = <String>[
       for (final dynamic a in json['artists'] as List<dynamic>? ?? <dynamic>[])
@@ -197,10 +229,37 @@ class SpotifyClient {
     );
   }
 
-  Future<Map<String, dynamic>?> _getJson(String url) => _request(
-        Uri.parse(url),
-        headers: <String, String>{'Authorization': 'Bearer $_token'},
-      );
+  /// Запрос к Web API с авторизацией.
+  ///
+  /// Токен Spotify живёт около часа, а перенос большого плейлиста легко его
+  /// переживает: при 401 один раз перезапрашиваем токен по сохранённой cookie
+  /// `sp_dc` и повторяем запрос. Прочие отказы переводим в понятный текст —
+  /// раньше любой не-200 молча возвращал `null`, и вставший на середине
+  /// перенос выглядел как «в плейлисте нет треков».
+  Future<Map<String, dynamic>?> _getJson(
+    String url, {
+    bool canRetry = true,
+  }) async {
+    final ({int status, Map<String, dynamic>? body}) response = await _send(
+      Uri.parse(url),
+      headers: <String, String>{'Authorization': 'Bearer $_token'},
+    );
+    if (response.status >= 200 && response.status < 300) return response.body;
+    if (response.status == 401 && canRetry && _spDc != null) {
+      await authorize(_spDc!);
+      return _getJson(url, canRetry: false);
+    }
+    throw SpotifyException(_errorText(response.status));
+  }
+
+  static String _errorText(int status) => switch (status) {
+        401 => 'Сессия Spotify истекла. Войдите заново.',
+        403 => 'Spotify не дал доступ к этим данным.',
+        404 => 'Spotify не нашёл запрошенную страницу.',
+        429 => 'Spotify ограничил частоту запросов. Подождите минуту.',
+        0 => 'Spotify не ответил. Проверьте соединение.',
+        _ => 'Spotify ответил ошибкой ($status).',
+      };
 
   /// Секрет TOTP и его версия (кэшируются на время работы).
   ///
@@ -278,6 +337,19 @@ class SpotifyClient {
     Uri uri, {
     String method = 'GET',
     Map<String, String> headers = const <String, String>{},
+  }) async =>
+      (await _send(uri, method: method, headers: headers)).body;
+
+  /// Выполняет HTTP-запрос и отдаёт код ответа вместе с разобранным телом.
+  ///
+  /// Тело — `null` при не-2xx и при ответе без JSON. Ошибки сети не
+  /// пробрасываем: их заменяет код 0, чтобы вызывающий сам решал, что делать
+  /// (для токена и времени сервера сбой — это просто `null`, для Web API —
+  /// понятное сообщение).
+  Future<({int status, Map<String, dynamic>? body})> _send(
+    Uri uri, {
+    String method = 'GET',
+    Map<String, String> headers = const <String, String>{},
   }) async {
     try {
       final HttpClientRequest request =
@@ -288,18 +360,21 @@ class SpotifyClient {
 
       final HttpClientResponse response =
           await request.close().timeout(const Duration(seconds: 20));
-      if (response.statusCode < 200 || response.statusCode >= 300) {
-        await response.drain<void>();
-        return null;
-      }
+      final int status = response.statusCode;
       final String body = await response.transform(utf8.decoder).join();
-      if (body.isEmpty) return null;
+      if (status < 200 || status >= 300 || body.isEmpty) {
+        return (status: status, body: null);
+      }
       final dynamic decoded = jsonDecode(body);
-      if (decoded is Map<String, dynamic>) return decoded;
-      if (decoded is List<dynamic>) return <String, dynamic>{'items': decoded};
-      return null;
+      if (decoded is Map<String, dynamic>) {
+        return (status: status, body: decoded);
+      }
+      if (decoded is List<dynamic>) {
+        return (status: status, body: <String, dynamic>{'items': decoded});
+      }
+      return (status: status, body: null);
     } on Object {
-      return null;
+      return (status: 0, body: null);
     }
   }
 

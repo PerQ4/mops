@@ -125,7 +125,10 @@ class _SpotifyImportScreenState extends ConsumerState<SpotifyImportScreen> {
         report.add(result.error != null
             ? '«${result.name}»: ${result.error}'
             : '«${result.name}»: перенесено ${result.matched}'
-                '${result.missed.isEmpty ? "" : ", не найдено ${result.missed.length}"}');
+                '${result.missed.isEmpty ? "" : ", не найдено ${result.missed.length}"}'
+                // Подкасты и локальные файлы пропускаются осознанно: без этой
+                // строки «перенесено 3 из 40» выглядело бы как сбой переноса.
+                '${result.skipped == 0 ? "" : ", пропущено ${result.skipped}"}');
       }
 
       if (!mounted) return;

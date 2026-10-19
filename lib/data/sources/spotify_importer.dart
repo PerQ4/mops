@@ -11,6 +11,7 @@ class ImportResult {
     required this.name,
     required this.matched,
     required this.missed,
+    this.skipped = 0,
     this.playlistId,
     this.error,
   });
@@ -18,6 +19,11 @@ class ImportResult {
   final String name;
   final int matched;
   final List<SpotifyTrack> missed;
+
+  /// Записи Spotify, которые переносить нечем: эпизоды подкастов, локальные
+  /// файлы и удалённые треки. Не путать с [missed] — там песни, которых не
+  /// нашлось в YouTube Music.
+  final int skipped;
   final String? playlistId;
   final String? error;
 }
@@ -44,13 +50,32 @@ class SpotifyImporter {
     SpotifyPlaylist playlist, {
     void Function(int done, int total)? onProgress,
   }) async {
-    final List<SpotifyTrack> tracks = await spotify.playlistTracks(playlist.id);
+    // Чтение плейлиста — единственный шаг, где сбой Spotify не должен валить
+    // весь перенос: показываем понятную причину именно по этому плейлисту.
+    final ({List<SpotifyTrack> tracks, int skipped}) fetched;
+    try {
+      fetched = await spotify.playlistTracks(playlist.id);
+    } on SpotifyException catch (error) {
+      return ImportResult(
+        name: playlist.name,
+        matched: 0,
+        missed: const <SpotifyTrack>[],
+        error: error.message,
+      );
+    }
+
+    final List<SpotifyTrack> tracks = fetched.tracks;
     if (tracks.isEmpty) {
       return ImportResult(
         name: playlist.name,
         matched: 0,
         missed: const <SpotifyTrack>[],
-        error: 'В плейлисте нет треков или Spotify его не отдал.',
+        skipped: fetched.skipped,
+        error: fetched.skipped > 0
+            // Пустой ответ и «в плейлисте только подкасты/локальные файлы» —
+            // разные вещи, и советы пользователю тоже разные.
+            ? 'В плейлисте только подкасты и локальные файлы — переносить нечего.'
+            : 'Spotify не отдал треки этого плейлиста.',
       );
     }
 
@@ -75,38 +100,64 @@ class SpotifyImporter {
         name: playlist.name,
         matched: 0,
         missed: missed,
+        skipped: fetched.skipped,
         error: 'Ни один трек не нашёлся в YouTube Music.',
       );
     }
 
     // Плейлист создаём сразу с треками: так меньше запросов, а приватность
     // оставляем приватной — пользователь сам решит, делать ли её общей.
-    final String? playlistId = await library.createPlaylist(
-      title: playlist.name,
-      videoIds: videoIds.take(100).toList(),
-    );
+    final String? playlistId;
+    try {
+      playlistId = await library.createPlaylist(
+        title: playlist.name,
+        videoIds: videoIds.take(100).toList(),
+      );
+    } on Object catch (error) {
+      return ImportResult(
+        name: playlist.name,
+        matched: 0,
+        missed: missed,
+        skipped: fetched.skipped,
+        error: 'Плейлист создать не удалось: $error',
+      );
+    }
     if (playlistId == null) {
       return ImportResult(
         name: playlist.name,
         matched: videoIds.length,
         missed: missed,
+        skipped: fetched.skipped,
         error: 'Треки нашлись, но плейлист создать не удалось.',
       );
     }
 
     // YouTube принимает не больше сотни треков за раз: остальное докладываем
-    // отдельными запросами.
+    // отдельными запросами. Сбой на середине не должен «терять» уже созданный
+    // плейлист — сообщаем, что добавилось частично.
     for (int i = 100; i < videoIds.length; i += 100) {
-      await library.addToPlaylist(
-        playlistId,
-        videoIds.sublist(i, math.min(i + 100, videoIds.length)),
-      );
+      try {
+        await library.addToPlaylist(
+          playlistId,
+          videoIds.sublist(i, math.min(i + 100, videoIds.length)),
+        );
+      } on Object catch (error) {
+        return ImportResult(
+          name: playlist.name,
+          matched: i,
+          missed: missed,
+          skipped: fetched.skipped,
+          playlistId: playlistId,
+          error: 'Плейлист создан, но часть треков не добавилась: $error',
+        );
+      }
     }
 
     return ImportResult(
       name: playlist.name,
       matched: videoIds.length,
       missed: missed,
+      skipped: fetched.skipped,
       playlistId: playlistId,
     );
   }
