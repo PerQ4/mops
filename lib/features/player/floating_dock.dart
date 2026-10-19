@@ -13,6 +13,7 @@ import '../../state/player_controller.dart';
 import '../../state/player_panel.dart';
 import '../../state/providers.dart';
 import '../../widgets/artwork.dart';
+import '../../widgets/marquee_text.dart';
 import '../../widgets/track_menu.dart';
 import '../common/navigation.dart';
 import '../shell/content_navigator.dart';
@@ -492,6 +493,7 @@ class _PlayerIslandState extends ConsumerState<_PlayerIsland> {
                   downloading: downloading,
                   downloadProgress: downloadProgress,
                   error: error,
+                  playing: isPlaying,
                 ),
               ),
               _IslandControls(
@@ -661,12 +663,16 @@ class _IslandTitles extends StatelessWidget {
     required this.downloading,
     required this.downloadProgress,
     required this.error,
+    required this.playing,
   });
 
   final Track track;
   final bool downloading;
   final double downloadProgress;
   final String? error;
+
+  /// Играет ли трек: на паузе бегущие строки замирают.
+  final bool playing;
 
   @override
   Widget build(BuildContext context) {
@@ -675,6 +681,10 @@ class _IslandTitles extends StatelessWidget {
     final String subtitle = downloading
         ? 'Загрузка ${(downloadProgress * 100).round()}%'
         : error ?? track.artistLine;
+    // Исполнителя прокручиваем только когда это обычная подпись: у прогресса
+    // загрузки текст меняется по нескольку раз в секунду, а ошибку нужно
+    // читать целиком сразу — обе строки остаются обычным текстом.
+    final bool marqueeSubtitle = !downloading && error == null;
 
     return InkWell(
       onTap: () => AppRoutes.nowPlaying(context),
@@ -685,23 +695,29 @@ class _IslandTitles extends StatelessWidget {
           mainAxisAlignment: MainAxisAlignment.center,
           crossAxisAlignment: CrossAxisAlignment.start,
           children: <Widget>[
-            Text(
+            MarqueeText(
               track.title,
-              maxLines: 1,
-              overflow: TextOverflow.ellipsis,
+              playing: playing,
               style: text.bodyMedium?.copyWith(fontWeight: FontWeight.w600),
             ),
             const SizedBox(height: 1),
-            Text(
-              subtitle,
-              maxLines: 1,
-              overflow: TextOverflow.ellipsis,
-              style: text.bodySmall?.copyWith(
-                color: error != null
-                    ? scheme.error
-                    : scheme.onSurfaceVariant,
+            if (marqueeSubtitle)
+              MarqueeText(
+                subtitle,
+                playing: playing,
+                style: text.bodySmall?.copyWith(
+                  color: scheme.onSurfaceVariant,
+                ),
+              )
+            else
+              Text(
+                subtitle,
+                maxLines: 1,
+                overflow: TextOverflow.ellipsis,
+                style: text.bodySmall?.copyWith(
+                  color: error != null ? scheme.error : scheme.onSurfaceVariant,
+                ),
               ),
-            ),
           ],
         ),
       ),

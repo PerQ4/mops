@@ -13,6 +13,7 @@ import '../../state/library_providers.dart';
 import '../../state/player_controller.dart';
 import '../../widgets/artist_line.dart';
 import '../../widgets/artwork.dart';
+import '../../widgets/marquee_text.dart';
 import '../../widgets/track_menu.dart';
 import '../../widgets/track_tile.dart';
 import '../player/artwork_progress_ring.dart';
@@ -88,7 +89,13 @@ class _PlayerRightPanelSlotState extends ConsumerState<PlayerRightPanelSlot> {
           maxWidth: width,
           child: Stack(
             children: <Widget>[
-              const PlayerRightPanel(),
+              // Панель свёрнута — её тикеры выключены: бегущая строка не
+              // должна крутиться за закрытой панелью (да и `pumpAndSettle`
+              // в тестах тогда не зависал бы).
+              TickerMode(
+                enabled: widget.open,
+                child: const PlayerRightPanel(),
+              ),
               // Ручка ширины: тянем за левый край панели.
               Positioned(
                 left: 0,
@@ -463,10 +470,10 @@ class _PanelTrackRow extends ConsumerWidget {
                 mainAxisAlignment: MainAxisAlignment.center,
                 crossAxisAlignment: CrossAxisAlignment.start,
                 children: <Widget>[
-                  Text(
+                  MarqueeText(
                     track.title,
-                    maxLines: 1,
-                    overflow: TextOverflow.ellipsis,
+                    // Прокрутка стоит на паузе вместе с треком.
+                    playing: player.isPlaying,
                     style: text.titleMedium?.copyWith(
                       fontWeight: FontWeight.w700,
                     ),
