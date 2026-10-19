@@ -1,5 +1,6 @@
 import 'dart:async';
 import 'dart:convert';
+import 'dart:typed_data';
 
 import 'package:http/http.dart' as http;
 
@@ -268,17 +269,8 @@ class InnerTubeClient {
     );
 
     final Map<String, String> built = <String, String>{
-      'User-Agent': _userAgent,
-      'Accept': '*/*',
-      'Accept-Language': '$locale,en;q=0.9',
+      ..._baseHeaders(cfg),
       'Content-Type': 'application/json',
-      'X-Origin': _origin,
-      'X-Goog-Visitor-Id': cfg.visitorData,
-      'X-YouTube-Client-Name': cfg.clientName,
-      'X-YouTube-Client-Version': cfg.clientVersion,
-      'X-YouTube-Utc-Offset':
-          (-DateTime.now().timeZoneOffset.inMinutes).toString(),
-      'Cookie': _cookieHeader,
     };
 
     // Дополнительные заголовки вызывающего перекрывают стандартные: так можно
@@ -366,6 +358,147 @@ class InnerTubeClient {
     Map<String, dynamic> body,
   ) {
     return post(endpoint, body: body, authenticated: true);
+  }
+
+  /// Ресайзбл-загрузка файла (протокол Google `resumable`).
+  ///
+  /// Загрузка идёт мимо `/youtubei`: [path] — путь на том же хосте, например
+  /// `/playlist_image_upload/playlist_custom_thumbnail`. Первый запрос
+  /// (`start`) объявляет размер и тип файла и получает в заголовке
+  /// `X-Goog-Upload-URL` адрес для байтов; второй (`upload, finalize`)
+  /// отправляет их целиком с нулевого смещения. Возвращает разобранный JSON
+  /// второго ответа — у обложки плейлиста там лежит `encryptedBlobId`.
+  ///
+  /// [metadata] — тело первого запроса. Для картинки веб-клиент отправляет
+  /// пустое тело (размер и тип уходят заголовками), поэтому по умолчанию
+  /// `null`; JSON нужен другим видам загрузки.
+  Future<Map<String, dynamic>> uploadResumable(
+    String path, {
+    required Uint8List bytes,
+    required String contentType,
+    Map<String, String> query = const <String, String>{},
+    Map<String, dynamic>? metadata,
+    bool authenticated = true,
+    Duration timeout = const Duration(seconds: 60),
+  }) async {
+    final InnerTubeConfig cfg = await bootstrap();
+
+    Uri startUri = Uri.parse('$_origin$path');
+    if (query.isNotEmpty) {
+      startUri = startUri.replace(
+        queryParameters: <String, String>{
+          ...startUri.queryParameters,
+          ...query,
+        },
+      );
+    }
+
+    final Map<String, String> startHeaders = <String, String>{
+      ..._baseHeaders(cfg),
+      // `origin` проверяется сервером так же, как у обычных запросов;
+      // `X-Origin` уже лежит в базовых заголовках.
+      'Origin': _origin,
+      'Content-Type':
+          metadata == null ? 'text/plain; charset=utf-8' : 'application/json',
+      'X-Goog-Upload-Protocol': 'resumable',
+      'X-Goog-Upload-Command': 'start',
+      'X-Goog-Upload-Header-Content-Length': '${bytes.length}',
+      'X-Goog-Upload-Header-Content-Type': contentType,
+    };
+    if (authenticated) startHeaders.addAll(auth.headers);
+
+    final http.Response start = await _http
+        .post(
+          startUri,
+          headers: startHeaders,
+          body: metadata == null ? null : utf8.encode(jsonEncode(metadata)),
+        )
+        .timeout(timeout);
+    _captureCookies(start);
+
+    if (start.statusCode < 200 || start.statusCode >= 300) {
+      throw InnerTubeException(
+        'YouTube не начал загрузку файла (HTTP ${start.statusCode})',
+        statusCode: start.statusCode,
+        body: start.body,
+      );
+    }
+
+    final String? uploadUrl = _header(start, 'x-goog-upload-url');
+    if (uploadUrl == null || uploadUrl.isEmpty) {
+      throw InnerTubeException(
+        'YouTube не вернул адрес загрузки (X-Goog-Upload-URL).',
+        statusCode: start.statusCode,
+        body: start.body,
+      );
+    }
+
+    final Uri uploadUri = Uri.parse(uploadUrl);
+    // Сюда уедут cookie и подпись, поэтому адрес не должен уводить их на
+    // чужой хост: ожидаем только https и домен YouTube.
+    if (uploadUri.scheme != 'https' ||
+        !(uploadUri.host == 'youtube.com' ||
+            uploadUri.host.endsWith('.youtube.com'))) {
+      throw InnerTubeException(
+        'YouTube вернул неожиданный адрес загрузки: $uploadUrl',
+      );
+    }
+
+    final Map<String, String> uploadHeaders = <String, String>{
+      ..._baseHeaders(cfg),
+      'Origin': _origin,
+      // Тип картинки уже объявлен в заголовке первого запроса; сам запрос
+      // с байтами веб-клиент помечает текстовым типом (так же делает
+      // ytmusicapi — с `image/*` сервер отвечает ошибкой).
+      'Content-Type': 'text/html; charset=UTF-8',
+      'X-Goog-Upload-Command': 'upload, finalize',
+      'X-Goog-Upload-Offset': '0',
+    };
+    if (authenticated) uploadHeaders.addAll(auth.headers);
+
+    final http.Response res = await _http
+        .post(uploadUri, headers: uploadHeaders, body: bytes)
+        .timeout(timeout);
+    _captureCookies(res);
+
+    if (res.statusCode < 200 || res.statusCode >= 300) {
+      throw InnerTubeException(
+        'YouTube отклонил загрузку файла (HTTP ${res.statusCode})',
+        statusCode: res.statusCode,
+        body: res.body,
+      );
+    }
+
+    final dynamic decoded = jsonDecode(utf8.decode(res.bodyBytes));
+    if (decoded is Map<String, dynamic>) return decoded;
+    throw InnerTubeException('Неожиданный ответ загрузки файла.');
+  }
+
+  /// Заголовки, общие для всех запросов к music.youtube.com.
+  Map<String, String> _baseHeaders(InnerTubeConfig cfg) => <String, String>{
+        'User-Agent': _userAgent,
+        'Accept': '*/*',
+        'Accept-Language': '$locale,en;q=0.9',
+        'X-Origin': _origin,
+        'X-Goog-Visitor-Id': cfg.visitorData,
+        'X-YouTube-Client-Name': cfg.clientName,
+        'X-YouTube-Client-Version': cfg.clientVersion,
+        'X-YouTube-Utc-Offset':
+            (-DateTime.now().timeZoneOffset.inMinutes).toString(),
+        'Cookie': _cookieHeader,
+      };
+
+  /// Значение заголовка без учёта регистра.
+  ///
+  /// `package:http` обычно отдаёт имена в нижнем регистре, но полагаться на
+  /// это в протоколе загрузки не стоит: заголовок `X-Goog-Upload-URL`
+  /// приходит от другого обработчика YouTube.
+  static String? _header(http.BaseResponse response, String name) {
+    final String lower = name.toLowerCase();
+    for (final MapEntry<String, String> entry in response.headers.entries) {
+      if (entry.key.toLowerCase() == lower) return entry.value;
+    }
+    return null;
   }
 
   Map<String, dynamic> _context(InnerTubeConfig cfg) => <String, dynamic>{

@@ -1,4 +1,5 @@
 import 'dart:io';
+import 'dart:typed_data';
 
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
@@ -16,6 +17,7 @@ import '../../widgets/track_menu.dart';
 import '../../widgets/track_tile.dart';
 import '../album/media_hero.dart';
 import 'm3u_export.dart';
+import 'playlist_cover.dart';
 
 /// Страница плейлиста.
 class PlaylistScreen extends ConsumerWidget {
@@ -455,6 +457,12 @@ class _PlaylistActionsSheet extends ConsumerWidget {
           ),
           if (canEdit)
             _PlaylistSheetAction(
+              icon: Icons.add_photo_alternate_outlined,
+              title: 'Сменить обложку',
+              onTap: signedIn ? () => _changeCover(context, ref) : null,
+            ),
+          if (canEdit)
+            _PlaylistSheetAction(
               icon: Icons.edit_outlined,
               title: 'Переименовать',
               onTap: signedIn ? () => _rename(context, ref) : null,
@@ -550,6 +558,74 @@ class _PlaylistActionsSheet extends ConsumerWidget {
       messenger.showSnackBar(
         SnackBar(content: Text('Не удалось сохранить плейлист: $error')),
       );
+    }
+  }
+
+  /// Смена обложки: путь к файлу → кроппер → загрузка.
+  ///
+  /// Ошибки проговариваются словами: у загрузки несколько разных причин
+  /// отказа (чужой плейлист, истёкшая сессия, слишком большой файл), и
+  /// «не удалось» не помогает понять, что делать.
+  Future<void> _changeCover(BuildContext sheetContext, WidgetRef ref) async {
+    final ScaffoldMessengerState messenger = ScaffoldMessenger.of(hostContext);
+    // Лист закрываем сразу: дальше поверх страницы открываются свои диалоги,
+    // и лист не должен висеть под ними.
+    Navigator.pop(sheetContext);
+
+    final String? path = await showPlaylistCoverPathDialog(hostContext);
+    if (path == null || !hostContext.mounted) return;
+
+    final Uint8List? png;
+    try {
+      png = await cropPlaylistCover(hostContext, path);
+    } on PlaylistImageException catch (error) {
+      messenger.showSnackBar(SnackBar(content: Text(error.message)));
+      return;
+    } on Object catch (error) {
+      messenger.showSnackBar(SnackBar(content: Text(describeError(error))));
+      return;
+    }
+    if (png == null || !hostContext.mounted) return;
+
+    // Загрузка недешёвая и неотменяемая: пока она идёт, повторное нажатие
+    // не должно отправить второй файл.
+    final NavigatorState navigator =
+        Navigator.of(hostContext, rootNavigator: true);
+    showDialog<void>(
+      context: hostContext,
+      barrierDismissible: false,
+      builder: (BuildContext dialogContext) => const AlertDialog(
+        content: Row(
+          children: <Widget>[
+            SizedBox(
+              width: 24,
+              height: 24,
+              child: CircularProgressIndicator(strokeWidth: 3),
+            ),
+            SizedBox(width: 20),
+            Expanded(child: Text('Загружаем обложку…')),
+          ],
+        ),
+      ),
+    );
+
+    try {
+      await ref
+          .read(librarySourceProvider)
+          .setPlaylistImage(playlist.id, png);
+      invalidatePlaylistCaches(ref, playlist.id);
+      messenger.showSnackBar(
+        const SnackBar(content: Text('Обложка плейлиста обновлена')),
+      );
+    } on PlaylistImageException catch (error) {
+      messenger.showSnackBar(SnackBar(content: Text(error.message)));
+    } on Object catch (error) {
+      messenger.showSnackBar(SnackBar(content: Text(describeError(error))));
+    } finally {
+      // Диалог открывали через корневой навигатор (так делает showDialog) —
+      // закрывать его нужно там же, иначе можно снять страницу. Навигатор
+      // держим отдельно: страница за время загрузки может закрыться.
+      if (navigator.mounted) navigator.pop();
     }
   }
 

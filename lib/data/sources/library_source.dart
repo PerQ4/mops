@@ -1,3 +1,5 @@
+import 'dart:typed_data';
+
 import '../../core/innertube/innertube_client.dart';
 import '../../core/innertube/renderer.dart';
 import '../models/models.dart';
@@ -16,6 +18,19 @@ class AccountInfo {
   final String? channelId;
   final String? handle;
   final String? avatarUrl;
+}
+
+/// Отказ при смене обложки с текстом, понятным пользователю.
+///
+/// Отдельный тип, потому что причины разные, а `describeError` сводит все
+/// ответы 401/403 к «нужен вход»: для чужого плейлиста это неправда.
+class PlaylistImageException implements Exception {
+  const PlaylistImageException(this.message);
+
+  final String message;
+
+  @override
+  String toString() => message;
 }
 
 /// Операции, доступные только после входа в аккаунт.
@@ -469,6 +484,115 @@ class LibrarySource {
       <String, dynamic>{'playlistId': _rawPlaylistId(playlistId)},
     );
     _requireSucceeded(response, 'удалить плейлист');
+  }
+
+  /// Предел размера обложки плейлиста — 2 МиБ.
+  static const int maxPlaylistImageBytes = 2 * 1024 * 1024;
+
+  /// Ставит свою обложку плейлиста.
+  ///
+  /// Обложка меняется в два этапа, и это не прихоть клиента: файл уходит на
+  /// отдельный `playlist_image_upload` по ресайзбл-протоколу и возвращает
+  /// зашифрованный blob-id, а к плейлисту он привязывается обычной мутацией
+  /// `browse/edit_playlist` с действием `ACTION_SET_CUSTOM_THUMBNAIL`.
+  /// Формат обоих запросов восстановлен по живому трафику веб-клиента
+  /// (ytmusicapi, issue #711 и PR #866); официально он не описан.
+  ///
+  /// [imageBytes] — уже квадратный PNG (его готовит кроппер). Размер
+  /// проверяется здесь, а не только в интерфейсе: сервер тоже откажет, но
+  /// его ответ не объясняет, что именно не так.
+  Future<void> setPlaylistImage(String playlistId, Uint8List imageBytes) async {
+    if (isLikedPlaylist(playlistId)) {
+      throw const PlaylistImageException(
+        'У плейлиста «Мне нравится» своей обложки нет: YouTube собирает её '
+        'из обложек треков.',
+      );
+    }
+    if (imageBytes.isEmpty) {
+      throw const PlaylistImageException('Файл обложки пуст.');
+    }
+    if (imageBytes.length > maxPlaylistImageBytes) {
+      throw PlaylistImageException(
+        'Обложка весит ${(imageBytes.length / (1024 * 1024)).toStringAsFixed(1)} МБ '
+        'при пределе 2 МБ. Уменьшите картинку.',
+      );
+    }
+
+    // Конфигурацию получаем до загрузки: если страница YouTube Music не
+    // открылась (регион, сеть), это не «нет прав на плейлист», и выдавать
+    // ошибку за отказ сервера нельзя.
+    await _client.bootstrap();
+
+    try {
+      final Map<String, dynamic> uploaded = await _client.uploadResumable(
+        '/playlist_image_upload/playlist_custom_thumbnail',
+        bytes: imageBytes,
+        contentType: 'image/png',
+      );
+
+      final dynamic rawBlob = uploaded['encryptedBlobId'] ??
+          uploaded['playlistScottyEncryptedBlobId'];
+      final String? blob =
+          rawBlob is String && rawBlob.isNotEmpty ? rawBlob : null;
+      if (blob == null) {
+        // Файл мог уехать, но без id его не к чему привязать. Молча
+        // «успехом» это считать нельзя.
+        throw const PlaylistImageException(
+          'YouTube принял файл, но не вернул идентификатор обложки. '
+          'Обложка не изменена.',
+        );
+      }
+
+      // Последний шаг — обычная правка плейлиста, но статус проверяем строго:
+      // если сервер его не прислал, подтвердить смену нельзя, и молчать об
+      // этом (как `_requireSucceeded`) значит показать ложный успех.
+      final Map<String, dynamic> response = await _client.mutate(
+        'browse/edit_playlist',
+        <String, dynamic>{
+          'playlistId': _rawPlaylistId(playlistId),
+          'actions': <Map<String, dynamic>>[
+            <String, dynamic>{
+              'action': 'ACTION_SET_CUSTOM_THUMBNAIL',
+              'addedCustomThumbnail': <String, dynamic>{
+                'imageKey': <String, dynamic>{
+                  'type': 'PLAYLIST_IMAGE_TYPE_CUSTOM_THUMBNAIL',
+                  'name': 'studio_square_thumbnail',
+                },
+                'playlistScottyEncryptedBlobId': blob,
+              },
+            },
+          ],
+        },
+      );
+      final dynamic status = response['status'];
+      if (status is! String || status != 'STATUS_SUCCEEDED') {
+        throw PlaylistImageException(
+          status is String && status.isNotEmpty
+              ? 'YouTube не сменил обложку: сервер ответил «$status».'
+              : 'YouTube не подтвердил смену обложки. Откройте плейлист '
+                  'и проверьте: возможно, изменение не применилось.',
+        );
+      }
+    } on InnerTubeException catch (error) {
+      throw PlaylistImageException(_imageErrorMessage(error));
+    }
+  }
+
+  /// Переводит сетевую ошибку загрузки обложки в объяснение.
+  static String _imageErrorMessage(InnerTubeException error) {
+    switch (error.statusCode) {
+      case 401:
+        return 'Сессия истекла — войдите в аккаунт заново и повторите.';
+      case 403:
+        return 'YouTube не разрешил сменить обложку. Это можно делать только '
+            'в своём плейлисте и только под своим аккаунтом.';
+      case 413:
+        return 'Файл слишком большой для YouTube. Уменьшите картинку '
+            'и попробуйте снова.';
+      default:
+        if (error.statusCode == null) return error.message;
+        return '${error.message}. YouTube не принял обложку.';
+    }
   }
 
   /// Правка плейлиста одним запросом (`browse/edit_playlist`).
