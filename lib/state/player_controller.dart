@@ -6,6 +6,7 @@ import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 
 import '../core/audio/audio_engine.dart';
+import '../core/scrobbling/scrobbler.dart';
 import '../data/local/queue_snapshot.dart';
 import '../data/models/models.dart';
 import '../data/sources/stream_downloader.dart';
@@ -166,6 +167,11 @@ class PlayerController extends Notifier<PlayerUiState> {
   /// но так не нужен `late final`, который ломается при пересоздании нотификатора.
   AudioEngine get _engine => ref.read(audioEngineProvider);
 
+  /// Скробблинг: Last.fm и ListenBrainz живут за одним хуком — правило
+  /// «когда отправлять» для площадок общее (см. `core/scrobbling`).
+  ScrobblerController get _scrobbler =>
+      ref.read(scrobblingProvider.notifier);
+
   StreamSubscription<PlaybackState>? _engineSub;
   StreamSubscription<List<AudioOutputDevice>>? _devicesSub;
   final Random _random = Random();
@@ -228,12 +234,19 @@ class PlayerController extends Notifier<PlayerUiState> {
       if (playback.status == PlaybackStatus.error && playback.error != null) {
         state = state.copyWith(error: playback.error);
       }
-      // На ошибке и во время перемотки вперёд не идём: «конец трека» здесь
-      // ложный, а настоящее завершение придёт без этих условий.
-      if (playback.status == PlaybackStatus.completed &&
+
+      // Скробблинг: «сейчас играет» и накопление прослушанного. Идёт до
+      // обработки конца трека: там очередь перескочит на следующий, а закрыть
+      // статистику нужно по сыгравшему треку.
+      final bool acceptedEnd = playback.status == PlaybackStatus.completed &&
           !_seeking &&
           !_handlingEnd &&
-          !playback.hasError) {
+          !playback.hasError;
+      _scrobblePlayback(playback, completed: acceptedEnd);
+
+      // На ошибке и во время перемотки вперёд не идём: «конец трека» здесь
+      // ложный, а настоящее завершение придёт без этих условий.
+      if (acceptedEnd) {
         // Не await: обработчик не должен блокировать поток событий.
         _handlingEnd = true;
         unawaited(
@@ -919,6 +932,25 @@ class PlayerController extends Notifier<PlayerUiState> {
     } on Object {
       // Предзагрузка не критична: трек просто начнётся как обычно.
     }
+  }
+
+  /// Передаёт сервису скробблинга, что сейчас играет и сколько уже сыграно.
+  ///
+  /// Сетевые ошибки сюда не доходят: сервис гасит их в лог сам, и
+  /// воспроизведение от статистики не зависит.
+  void _scrobblePlayback(PlaybackState playback, {required bool completed}) {
+    final Track? track = state.current;
+    if (track == null) {
+      _scrobbler.reset();
+      return;
+    }
+    _scrobbler.onPlayback(
+      track,
+      position: playback.position,
+      duration: playback.duration,
+      isPlaying: playback.isPlaying,
+      completed: completed,
+    );
   }
 
   Future<void> _handleTrackEnded() async {
