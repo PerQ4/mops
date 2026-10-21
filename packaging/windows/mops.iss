@@ -5,7 +5,7 @@
 ; Версию передаём ключом /DAppVersion=<тег>; значение ниже — только запасное,
 ; для ручной сборки без ключа, и его надо держать тем же, что в pubspec.yaml.
 #ifndef AppVersion
-  #define AppVersion "0.2.12"
+  #define AppVersion "0.2.13"
 #endif
 
 [Setup]
