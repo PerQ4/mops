@@ -49,6 +49,47 @@ class AppFont {
   }
 }
 
+/// Слои состояний — наведение, фокус, нажатие.
+///
+/// Прозрачности взяты из спецификации Material 3: наведение 8 %, фокус и
+/// нажатие по 12 %. Раньше каждое место подбирало их само — нажатие в
+/// настройках 6 % от `primary`, кнопки окна 12 % и 20 % от `onSurface`,
+/// подсветка иконок 12 % от `primary`, — а наведение и фокус вообще шли
+/// дефолтами Flutter (4 % и серая заливка `0x66BCBCBC`), которые выбивались из
+/// палитры и на светлой, и на тёмной теме. Один набор значений делает отклик
+/// на одно и то же действие одинаковым во всём интерфейсе.
+///
+/// Роль цвета одна — содержимое элемента: `onSurface` для нейтральных
+/// поверхностей (строки, панели, меню) и `primary` для акцентных (ползунок
+/// слайдера). Поэтому [base] и передаёт эту роль там, где она не
+/// `onSurface`.
+abstract final class AppStateLayers {
+  /// Наведение — 8 %: видно, но не спорит с содержимым строки.
+  static const double hoverOpacity = 0.08;
+
+  /// Фокус — 12 %. По спецификации M3 совпадает с нажатием: клавиатура и мышь
+  /// дают одинаково заметный отклик.
+  static const double focusOpacity = 0.12;
+
+  /// Нажатие — 12 %.
+  static const double pressedOpacity = 0.12;
+
+  /// Слой наведения поверх [base] (по умолчанию `onSurface`).
+  static Color hover(ColorScheme scheme, {Color? base}) =>
+      _layer(scheme, hoverOpacity, base);
+
+  /// Слой фокуса поверх [base] (по умолчанию `onSurface`).
+  static Color focus(ColorScheme scheme, {Color? base}) =>
+      _layer(scheme, focusOpacity, base);
+
+  /// Слой нажатия поверх [base] (по умолчанию `onSurface`).
+  static Color pressed(ColorScheme scheme, {Color? base}) =>
+      _layer(scheme, pressedOpacity, base);
+
+  static Color _layer(ColorScheme scheme, double opacity, Color? base) =>
+      (base ?? scheme.onSurface).withValues(alpha: opacity);
+}
+
 /// Сборка темы Material 3 / Material 3 Expressive.
 ///
 /// Тема строится вокруг готового [ColorScheme] (сгенерированного из seed-цвета
@@ -148,6 +189,17 @@ class AppTheme {
       canvasColor: scheme.surface,
       splashFactory: InkRipple.splashFactory,
       visualDensity: VisualDensity.standard,
+      // Состояния интерактивных элементов — из одного набора [AppStateLayers]:
+      // `InkWell`, `ListTile`, меню и строки списков берут эти цвета, поэтому
+      // наведение, фокус и нажатие выглядят одинаково на всех экранах.
+      // Без них Flutter подставлял свои: наведение 4 %, фокус 12 % чистого
+      // белого/чёрного и серую волну 40 % — она «вспыхивала» поверх палитры.
+      hoverColor: AppStateLayers.hover(scheme),
+      focusColor: AppStateLayers.focus(scheme),
+      highlightColor: AppStateLayers.pressed(scheme),
+      // Волна при нажатии — тот же слой, что и подсветка: состояние одно,
+      // поэтому и цвет один.
+      splashColor: AppStateLayers.pressed(scheme),
       // Полосы прокрутки на десктопе: тонкие и неяркие, чтобы не спорить
       // с содержимым.
       // Выделение текста и курсор: в M3 это primary, а не системный синий.
@@ -235,7 +287,12 @@ class AppTheme {
       ),
       iconButtonTheme: IconButtonThemeData(
         style: IconButton.styleFrom(
-          highlightColor: scheme.primary.withValues(alpha: 0.12),
+          // Все три состояния — из общего набора: без явных значений
+          // `styleFrom` оставлял наведение и фокус пустыми, и у иконок
+          // откликалась только волна нажатия.
+          hoverColor: AppStateLayers.hover(scheme),
+          focusColor: AppStateLayers.focus(scheme),
+          highlightColor: AppStateLayers.pressed(scheme),
         ),
       ),
       // Чипы-капсулы без обводки: в ArchiveTune они отличаются от фона только
@@ -253,7 +310,10 @@ class AppTheme {
         activeTrackColor: scheme.primary,
         inactiveTrackColor: scheme.surfaceContainerHighest,
         thumbColor: scheme.primary,
-        overlayColor: scheme.primary.withValues(alpha: 0.12),
+        // Ореол вокруг ползунка — состояние, но роль у него акцентная: он
+        // лежит на дорожке цвета primary, и нейтральная заливка выглядела бы
+        // грязным пятном.
+        overlayColor: AppStateLayers.pressed(scheme, base: scheme.primary),
         // Expressive-слайдер тяготеет к «капсульным» формам.
         thumbShape: const RoundSliderThumbShape(enabledThumbRadius: 8),
         trackShape: const RoundedRectSliderTrackShape(),

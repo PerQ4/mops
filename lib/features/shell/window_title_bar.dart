@@ -2,15 +2,16 @@ import 'dart:io';
 
 import 'package:flutter/gestures.dart';
 import 'package:flutter/material.dart';
-import 'package:flutter/services.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 
 import '../../data/local/app_settings.dart';
+import '../../core/theme/app_theme.dart';
 import '../../core/theme/motion.dart';
 import '../../state/player_controller.dart';
 import '../../state/providers.dart';
 import '../../state/shell.dart';
 import 'destinations.dart';
+import 'window_channel.dart';
 
 /// Есть ли у окна своя заголовочная панель (только Windows).
 bool get hasCustomTitleBar => Platform.isWindows;
@@ -30,28 +31,12 @@ class WindowTitleBar extends ConsumerStatefulWidget {
 }
 
 class _WindowTitleBarState extends ConsumerState<WindowTitleBar> {
-  static const MethodChannel _channel = MethodChannel('mops/window');
-
-  bool _maximized = false;
-
   @override
   void initState() {
     super.initState();
-    _syncMaximized();
-  }
-
-  Future<void> _syncMaximized() async {
-    try {
-      final bool value =
-          await _channel.invokeMethod<bool>('isMaximized') ?? false;
-      if (mounted) setState(() => _maximized = value);
-    } on Object {
-      // Канал есть только на Windows.
-    }
-  }
-
-  void _invoke(String method) {
-    _channel.invokeMethod<void>(method).catchError((Object _) {});
+    // Подписываемся на нативные события и спрашиваем текущее состояние: окно
+    // могло быть развёрнуто ещё до появления шапки.
+    WindowChannel.attach();
   }
 
   @override
@@ -105,14 +90,15 @@ class _WindowTitleBarState extends ConsumerState<WindowTitleBar> {
             Positioned.fill(
               child: Listener(
                 onPointerDown: (PointerDownEvent event) {
-                  if (event.buttons == kPrimaryButton) _invoke('startDrag');
+                  if (event.buttons == kPrimaryButton) {
+                    WindowChannel.invoke('startDrag');
+                  }
                 },
                 child: GestureDetector(
                   behavior: HitTestBehavior.opaque,
-                  onDoubleTap: () {
-                    _invoke('toggleMaximize');
-                    _syncMaximized();
-                  },
+                  // Состояние после двойного клика придёт событием WM_SIZE,
+                  // отдельно спрашивать его не нужно.
+                  onDoubleTap: () => WindowChannel.invoke('toggleMaximize'),
                 ),
               ),
             ),
@@ -163,19 +149,24 @@ class _WindowTitleBarState extends ConsumerState<WindowTitleBar> {
                 children: <Widget>[
                   _CircleButton(
                     icon: Icons.remove,
-                    onTap: () => _invoke('minimize'),
+                    label: 'Свернуть',
+                    onTap: () => WindowChannel.invoke('minimize'),
                   ),
-                  _CircleButton(
-                    icon: _maximized ? Icons.filter_none : Icons.crop_square,
-                    onTap: () {
-                      _invoke('toggleMaximize');
-                      _syncMaximized();
+                  ValueListenableBuilder<bool>(
+                    valueListenable: WindowChannel.maximized,
+                    builder: (BuildContext context, bool maximized, Widget? _) {
+                      return _CircleButton(
+                        icon: maximized ? Icons.filter_none : Icons.crop_square,
+                        label: maximized ? 'Восстановить' : 'Развернуть',
+                        onTap: () => WindowChannel.invoke('toggleMaximize'),
+                      );
                     },
                   ),
                   _CircleButton(
                     icon: Icons.close,
+                    label: 'Закрыть',
                     danger: true,
-                    onTap: () => _invoke('close'),
+                    onTap: () => WindowChannel.invoke('close'),
                   ),
                 ],
               ),
@@ -190,17 +181,24 @@ class _WindowTitleBarState extends ConsumerState<WindowTitleBar> {
 /// Круглая кнопка окна в духе M3 Expressive: круг, при наведении — заливка.
 /// У закрытия заливка красная, как принято в Windows.
 ///
-/// Подсветка сделана вручную (`MouseRegion` + `AnimatedContainer`), а не
-/// `InkWell`: панель висит выше `Scaffold`, `Material`-предка над ней нет, и
-/// штатные чернила Material просто некуда было бы рисовать.
+/// Подсветка сделана вручную (`AnimatedContainer`), а не `InkWell`: панель
+/// висит выше `Scaffold`, `Material`-предка над ней нет, и штатные чернила
+/// Material просто некуда было бы рисовать.
+///
+/// Кнопка доступна с клавиатуры: `FocusableActionDetector` даёт фокус по Tab
+/// и разбирает Enter/Space (они приходят стандартным `ActivateIntent`).
 class _CircleButton extends StatefulWidget {
   const _CircleButton({
     required this.icon,
+    required this.label,
     required this.onTap,
     this.danger = false,
   });
 
   final IconData icon;
+
+  /// Доступное имя кнопки для экранного диктора.
+  final String label;
   final VoidCallback onTap;
   final bool danger;
 
@@ -211,26 +209,40 @@ class _CircleButton extends StatefulWidget {
 class _CircleButtonState extends State<_CircleButton> {
   bool _hover = false;
   bool _pressed = false;
+  bool _focused = false;
 
   @override
   Widget build(BuildContext context) {
     final ColorScheme scheme = Theme.of(context).colorScheme;
-    final Color hoverColor = widget.danger
-        ? const Color(0xFFC42B1C)
-        : scheme.onSurface.withValues(alpha: 0.12);
-    final Color pressedColor = widget.danger
-        ? const Color(0xFFA81F14)
-        : scheme.onSurface.withValues(alpha: 0.20);
+    // Слои состояний — из общего словаря, а не своими альфами: здесь были
+    // 0.12 и 0.20, в настройках 0.06, у иконок 0.12. Красные кнопки окна
+    // остаются своими: это семантический цвет закрытия, а не слой темы.
+    final Color hoverColor =
+        widget.danger ? const Color(0xFFC42B1C) : AppStateLayers.hover(scheme);
+    final Color pressedColor =
+        widget.danger ? const Color(0xFFA81F14) : AppStateLayers.pressed(scheme);
     final bool filled = _hover || _pressed;
 
-    return Padding(
-      padding: const EdgeInsets.symmetric(horizontal: 2),
-      child: MouseRegion(
-        onEnter: (_) => setState(() => _hover = true),
-        onExit: (_) => setState(() {
-          _hover = false;
-          _pressed = false;
-        }),
+    // `Tooltip` требует предка `Overlay`. Шапка висит в `MaterialApp.builder`
+    // выше навигатора, и оверлея приложения над ней нет: без проверки
+    // `Tooltip` падает с «No Overlay widget found». Если обернуть шапку (или
+    // всю колонку builder'а) в `Overlay`, подсказки включатся сами.
+    final bool canShowHint = Overlay.maybeOf(context) != null;
+
+    final Widget button = Semantics(
+      button: true,
+      label: widget.label,
+      child: FocusableActionDetector(
+        onShowHoverHighlight: (bool value) => setState(() => _hover = value),
+        onFocusChange: (bool value) => setState(() => _focused = value),
+        actions: <Type, Action<Intent>>{
+          ActivateIntent: CallbackAction<ActivateIntent>(
+            onInvoke: (ActivateIntent _) {
+              widget.onTap();
+              return null;
+            },
+          ),
+        },
         child: GestureDetector(
           // Клик ловит вся площадка кнопки, а не только глиф иконки.
           behavior: HitTestBehavior.opaque,
@@ -248,6 +260,11 @@ class _CircleButtonState extends State<_CircleButton> {
               color: !filled
                   ? Colors.transparent
                   : (_pressed ? pressedColor : hoverColor),
+              // Кольцо — только при фокусе с клавиатуры: мышью оно не
+              // нужно, а без него непонятно, какая кнопка сейчас активна.
+              border: _focused
+                  ? Border.all(color: scheme.primary, width: 1.5)
+                  : null,
             ),
             child: Icon(
               widget.icon,
@@ -259,6 +276,19 @@ class _CircleButtonState extends State<_CircleButton> {
           ),
         ),
       ),
+    );
+
+    return Padding(
+      padding: const EdgeInsets.symmetric(horizontal: 2),
+      child: canShowHint
+          ? Tooltip(
+              message: widget.label,
+              // Имя кнопки уже задано в `Semantics` — иначе диктор прочитал бы
+              // его дважды: как подпись и как подсказку.
+              excludeFromSemantics: true,
+              child: button,
+            )
+          : button,
     );
   }
 }

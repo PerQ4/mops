@@ -169,8 +169,10 @@ class SettingsDivider extends StatelessWidget {
 /// Строка настроек с переходом — `SettingsRow` из ArchiveTune.
 ///
 /// Слева кружок 36 с иконкой 20, затем заголовок `bodyLarge` и подпись
-/// `bodySmall`, справа шеврон. Нажатие подсвечивает фон акцентом (6 %) и
-/// сжимает строку до 0.98 — как в оригинале (`animateFloatAsState`).
+/// `bodySmall`, справа шеврон. Наведение подсвечивает фон слоем 8 %, нажатие —
+/// 12 % и сжимает строку до 0.98 — как в оригинале (`animateFloatAsState`).
+/// Слои берутся из [AppStateLayers], а не подбираются на месте: та же
+/// прозрачность стоит у остальных строк и кнопок.
 class SettingsRow extends StatelessWidget {
   const SettingsRow({
     super.key,
@@ -289,10 +291,16 @@ class _SettingsRowBase extends StatefulWidget {
 
 class _SettingsRowBaseState extends State<_SettingsRowBase> {
   bool _pressed = false;
+  bool _hovered = false;
 
   void _setPressed(bool value) {
     if (_pressed == value) return;
     setState(() => _pressed = value);
+  }
+
+  void _setHovered(bool value) {
+    if (_hovered == value) return;
+    setState(() => _hovered = value);
   }
 
   @override
@@ -305,70 +313,88 @@ class _SettingsRowBaseState extends State<_SettingsRowBase> {
     // подсветки нет.
     final bool interactive = widget.onTap != null;
 
-    return GestureDetector(
-      behavior: HitTestBehavior.opaque,
-      onTapDown: interactive ? (_) => _setPressed(true) : null,
-      onTapUp: interactive ? (_) => _setPressed(false) : null,
-      onTapCancel: interactive ? () => _setPressed(false) : null,
-      onTap: widget.onTap,
-      child: AnimatedScale(
-        scale: _pressed ? 0.98 : 1,
-        duration: AppMotion.fast,
-        curve: AppMotion.springSnappy,
-        child: AnimatedContainer(
+    // Строка — `GestureDetector` без `InkWell` (нужна своя анимация сжатия),
+    // поэтому наведение приходится отслеживать самим: иначе на десктопе
+    // строка не откликается на мышь, в отличие от остальных списков.
+    return MouseRegion(
+      cursor: interactive ? SystemMouseCursors.click : MouseCursor.defer,
+      onEnter: (_) {
+        if (interactive) _setHovered(true);
+      },
+      // Выход гасим всегда, даже у выключенной строки: иначе подсветка
+      // осталась бы висеть, если строку отключили под курсором.
+      onExit: (_) => _setHovered(false),
+      child: GestureDetector(
+        behavior: HitTestBehavior.opaque,
+        onTapDown: interactive ? (_) => _setPressed(true) : null,
+        onTapUp: interactive ? (_) => _setPressed(false) : null,
+        onTapCancel: interactive ? () => _setPressed(false) : null,
+        onTap: widget.onTap,
+        child: AnimatedScale(
+          scale: _pressed ? 0.98 : 1,
           duration: AppMotion.fast,
-          curve: AppMotion.snappy,
-          color: _pressed
-              ? scheme.primary.withValues(alpha: 0.06)
-              : Colors.transparent,
-          padding: const EdgeInsets.symmetric(
-            horizontal: SettingsDims.rowHorizontalPadding,
-            vertical: SettingsDims.rowVerticalPadding,
-          ),
-          child: Row(
-            children: <Widget>[
-              Container(
-                width: SettingsDims.rowIconSize,
-                height: SettingsDims.rowIconSize,
-                decoration: BoxDecoration(
-                  color: accent.withValues(alpha: 0.12),
-                  shape: BoxShape.circle,
+          curve: AppMotion.springSnappy,
+          child: AnimatedContainer(
+            duration: AppMotion.fast,
+            curve: AppMotion.snappy,
+            // Нажатие перекрывает наведение; у неинтерактивной строки фон
+            // всегда прозрачный — состояние не «залипает».
+            color: !interactive
+                ? Colors.transparent
+                : _pressed
+                    ? AppStateLayers.pressed(scheme)
+                    : _hovered
+                        ? AppStateLayers.hover(scheme)
+                        : Colors.transparent,
+            padding: const EdgeInsets.symmetric(
+              horizontal: SettingsDims.rowHorizontalPadding,
+              vertical: SettingsDims.rowVerticalPadding,
+            ),
+            child: Row(
+              children: <Widget>[
+                Container(
+                  width: SettingsDims.rowIconSize,
+                  height: SettingsDims.rowIconSize,
+                  decoration: BoxDecoration(
+                    color: accent.withValues(alpha: 0.12),
+                    shape: BoxShape.circle,
+                  ),
+                  child: Icon(
+                    widget.icon,
+                    size: SettingsDims.rowIconInnerSize,
+                    color: accent,
+                  ),
                 ),
-                child: Icon(
-                  widget.icon,
-                  size: SettingsDims.rowIconInnerSize,
-                  color: accent,
-                ),
-              ),
-              const SizedBox(width: 14),
-              Expanded(
-                child: Column(
-                  crossAxisAlignment: CrossAxisAlignment.start,
-                  mainAxisSize: MainAxisSize.min,
-                  children: <Widget>[
-                    Text(
-                      widget.title,
-                      style: theme.textTheme.bodyLarge
-                          ?.copyWith(fontWeight: FontWeight.w500),
-                    ),
-                    if (widget.subtitle != null) ...<Widget>[
-                      const SizedBox(height: 1),
+                const SizedBox(width: 14),
+                Expanded(
+                  child: Column(
+                    crossAxisAlignment: CrossAxisAlignment.start,
+                    mainAxisSize: MainAxisSize.min,
+                    children: <Widget>[
                       Text(
-                        widget.subtitle!,
-                        style: theme.textTheme.bodySmall
-                            ?.copyWith(color: scheme.onSurfaceVariant),
-                        maxLines: widget.subtitleMaxLines,
-                        overflow: TextOverflow.ellipsis,
+                        widget.title,
+                        style: theme.textTheme.bodyLarge
+                            ?.copyWith(fontWeight: FontWeight.w500),
                       ),
+                      if (widget.subtitle != null) ...<Widget>[
+                        const SizedBox(height: 1),
+                        Text(
+                          widget.subtitle!,
+                          style: theme.textTheme.bodySmall
+                              ?.copyWith(color: scheme.onSurfaceVariant),
+                          maxLines: widget.subtitleMaxLines,
+                          overflow: TextOverflow.ellipsis,
+                        ),
+                      ],
                     ],
-                  ],
+                  ),
                 ),
-              ),
-              if (widget.trailing != null) ...<Widget>[
-                const SizedBox(width: 4),
-                widget.trailing!,
+                if (widget.trailing != null) ...<Widget>[
+                  const SizedBox(width: 4),
+                  widget.trailing!,
+                ],
               ],
-            ],
+            ),
           ),
         ),
       ),

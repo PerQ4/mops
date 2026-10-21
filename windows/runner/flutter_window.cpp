@@ -88,6 +88,25 @@ bool FlutterWindow::OnCreate() {
   return true;
 }
 
+void FlutterWindow::NotifyMaximizedChanged() {
+  HWND hwnd = GetHandle();
+  // Ранние WM_SIZE приходят до создания канала — их пропускаем: начальное
+  // состояние Dart всё равно спрашивает сам.
+  if (hwnd == nullptr || !window_channel_) {
+    return;
+  }
+
+  const bool maximized = IsZoomed(hwnd) != 0;
+  if (reported_maximized_.has_value() && *reported_maximized_ == maximized) {
+    return;
+  }
+  reported_maximized_ = maximized;
+
+  window_channel_->InvokeMethod(
+      "maximizedChanged",
+      std::make_unique<flutter::EncodableValue>(maximized));
+}
+
 void FlutterWindow::OnDestroy() {
   if (flutter_controller_) {
     flutter_controller_ = nullptr;
@@ -116,6 +135,14 @@ FlutterWindow::MessageHandler(HWND hwnd, UINT const message,
       break;
 
     case WM_SIZE:
+      // Развернуть окно можно не только кнопкой: Win+стрелка, Aero Snap,
+      // двойной клик по шапке. WM_SIZE — единственное общее место, где видно
+      // любое такое изменение, поэтому состояние уходит в Dart событием.
+      // Иконка в шапке больше не угадывается по клику.
+      if (wparam != SIZE_MINIMIZED) {
+        NotifyMaximizedChanged();
+      }
+      [[fallthrough]];
     case WM_EXITSIZEMOVE:
       // Живое изменение размера: движок может не успеть отрисовать кадр, и по
       // краю окна остаётся картинка прежнего размера. Просим перерисовать.
