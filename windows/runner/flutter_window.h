@@ -6,6 +6,7 @@
 #include <flutter/method_channel.h>
 #include <flutter/standard_method_codec.h>
 
+#include <atomic>
 #include <memory>
 #include <optional>
 #include <string>
@@ -26,6 +27,8 @@ class FlutterWindow : public Win32Window {
   void OnDestroy() override;
   LRESULT MessageHandler(HWND window, UINT const message, WPARAM const wparam,
                          LPARAM const lparam) noexcept override;
+  void OnChildContentMessage(HWND child, UINT message, WPARAM wparam,
+                             LPARAM lparam) override;
 
  private:
   // Сообщает Dart, развёрнуто окно или нет. Событие уходит только при
@@ -39,6 +42,16 @@ class FlutterWindow : public Win32Window {
   // Отдаёт действие в Dart событием `mediaKey`. true — событие отправлено
   // (или это дубль уже обработанного).
   bool HandleMediaCommand(MediaCommand command);
+
+  // Перетаскивание своей шапки без модального цикла системного SC_MOVE:
+  // окно само ведёт себя за курсором до отпускания кнопки, поэтому поток
+  // остаётся свободным для канала и ответов Flutter.
+  void BeginDrag();
+  void EndDrag();
+  // Двигает окно так, чтобы точка захвата осталась под курсором.
+  void UpdateDrag(POINT cursor);
+  // Развёрнутое окно перед перетаскиванием уменьшается под курсором.
+  void RestoreFromMaximizedForDrag(HWND hwnd, POINT cursor);
 
   // The project to run.
   flutter::DartProject project_;
@@ -64,6 +77,26 @@ class FlutterWindow : public Win32Window {
   // play/pause сработал бы дважды и ничего бы не изменил.
   std::optional<MediaCommand> last_media_command_;
   ULONGLONG last_media_command_tick_ = 0;
+
+  // Состояние перетаскивания своей шапки.
+  bool dragging_ = false;
+  bool drag_restore_pending_ = false;
+  POINT drag_cursor_start_ = {0, 0};
+  RECT drag_window_start_ = {0, 0, 0, 0};
+
+  // Нажатие, с которого начинается возможное перетаскивание. Запоминается на
+  // WM_LBUTTONDOWN: команда startDrag приходит через канал уже после него.
+  bool press_recorded_ = false;
+  POINT press_cursor_ = {0, 0};
+  RECT press_window_ = {0, 0, 0, 0};
+  ULONGLONG press_tick_ = 0;
+  // 0 — тянет мышь; иначе номер указателя касания/пера.
+  UINT32 drag_pointer_id_ = 0;
+
+  // Колбэк первого кадра ставится в очередь движка и может выполниться уже
+  // после OnDestroy: флаг держится отдельно от окна и гасится при разрушении.
+  std::shared_ptr<std::atomic<bool>> alive_ =
+      std::make_shared<std::atomic<bool>>(true);
 
   // Последнее состояние, о котором Dart уже знает. WM_SIZE приходит на каждый
   // шаг перетаскивания границы, и без этой проверки канал бы захлебнулся.

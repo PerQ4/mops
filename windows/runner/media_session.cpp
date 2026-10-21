@@ -56,9 +56,19 @@ std::optional<MediaCommand> CommandFromButton(
 }  // namespace
 
 struct MediaSession::Impl {
-  // Кнопки приходят на поток WinRT, а окно в этот момент может закрываться:
-  // дескриптор обнуляется до отписки, и поздняя кнопка никуда не постится.
-  std::atomic<HWND> window{nullptr};
+  // Обработчик WinRT живёт на своём потоке и может быть уже в работе, когда
+  // окно закрывается и Impl удаляется. Поэтому всё, что нужно обработчику,
+  // лежит в отдельном состоянии под shared_ptr: он владеет своей копией и
+  // после удаления Impl не касается освобождённой памяти.
+  struct HandlerState {
+    // Дескриптор обнуляется до отписки, и поздняя кнопка никуда не постится.
+    std::atomic<HWND> window{nullptr};
+    // Гасится в Detach до отписки: событие, пришедшее в этот момент, уже
+    // ничего не отправит.
+    std::atomic<bool> alive{false};
+  };
+
+  std::shared_ptr<HandlerState> handler = std::make_shared<HandlerState>();
   SystemMediaTransportControls controls{nullptr};
   winrt::event_token button_token{};
   bool subscribed = false;
@@ -94,22 +104,26 @@ bool MediaSession::Attach(HWND window) {
     controls.IsPreviousEnabled(true);
     controls.PlaybackStatus(MediaPlaybackStatus::Closed);
 
-    Impl* impl = impl_.get();
-    impl->window.store(window, std::memory_order_release);
-    impl->button_token = controls.ButtonPressed(
-        [impl](SystemMediaTransportControls const&,
-               SystemMediaTransportControlsButtonPressedEventArgs const& args) {
+    // Копия shared_ptr остаётся в лямбде: обработчик не держит Impl.
+    std::shared_ptr<Impl::HandlerState> handler = impl_->handler;
+    handler->window.store(window, std::memory_order_release);
+    handler->alive.store(true, std::memory_order_release);
+    impl_->button_token = controls.ButtonPressed(
+        [handler](SystemMediaTransportControls const&,
+                  SystemMediaTransportControlsButtonPressedEventArgs const&
+                      args) {
           const std::optional<MediaCommand> command =
               CommandFromButton(args.Button());
           if (!command.has_value()) return;
-          HWND hwnd = impl->window.load(std::memory_order_acquire);
+          if (!handler->alive.load(std::memory_order_acquire)) return;
+          HWND hwnd = handler->window.load(std::memory_order_acquire);
           if (hwnd != nullptr) {
             ::PostMessageW(hwnd, kMediaCommandMessage,
                            static_cast<WPARAM>(*command), 0);
           }
         });
-    impl->subscribed = true;
-    impl->controls = controls;
+    impl_->subscribed = true;
+    impl_->controls = controls;
     return true;
   } catch (...) {
     // Оверлей — необязательная часть. Старая Windows или запрет политики
@@ -153,7 +167,13 @@ void MediaSession::Clear() {
 
 void MediaSession::Detach() {
   if (!impl_) return;
-  impl_->window.store(nullptr, std::memory_order_release);
+
+  // Сначала гасим живость: обработчик, уже выполняющийся на потоке WinRT,
+  // после этой строки ничего не отправит. Общее состояние он держит сам,
+  // поэтому освобождать Impl можно сразу следом.
+  impl_->handler->alive.store(false, std::memory_order_release);
+  impl_->handler->window.store(nullptr, std::memory_order_release);
+
   if (impl_->subscribed && impl_->controls) {
     try {
       impl_->controls.ButtonPressed(impl_->button_token);

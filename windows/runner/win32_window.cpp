@@ -114,14 +114,26 @@ LRESULT CALLBACK ChildContentWndProc(HWND child,
                                      UINT message,
                                      WPARAM wparam,
                                      LPARAM lparam) {
+  HWND parent = GetAncestor(child, GA_PARENT);
+
   if (message == WM_NCHITTEST) {
-    HWND parent = GetAncestor(child, GA_PARENT);
     if (HitTestResizeBorder(parent, lparam) != 0) {
       // Точка у кромки окна: пропускаем определение попадания к родителю.
       // Возвращать зону растягивания самому нельзя — тогда система считает
       // кромкой содержимое, и при перетаскивании окно и содержимое расходятся:
       // тянется содержимое, а окно стоит.
       return HTTRANSPARENT;
+    }
+  }
+
+  // Родитель может следить за мышью для перетаскивания своей шапки. Захват
+  // мыши при этом остаётся у содержимого: иначе Flutter не получил бы
+  // отпускание кнопки и его состояние указателя залипло бы.
+  if (parent != nullptr) {
+    auto* owner = reinterpret_cast<Win32Window*>(
+        GetWindowLongPtr(parent, GWLP_USERDATA));
+    if (owner != nullptr) {
+      owner->HandleChildContentMessage(child, message, wparam, lparam);
     }
   }
 
@@ -300,8 +312,8 @@ Win32Window::MessageHandler(HWND hwnd,
       // масштабируем по DPI, иначе на HiDPI минимум окажется крошечным.
       const double scale = static_cast<double>(GetWindowDpi(hwnd)) / 96.0;
       auto* info = reinterpret_cast<MINMAXINFO*>(lparam);
-      info->ptMinTrackSize.x = static_cast<LONG>(960 * scale);
-      info->ptMinTrackSize.y = static_cast<LONG>(600 * scale);
+      info->ptMinTrackSize.x = static_cast<LONG>(kMinWindowWidth * scale);
+      info->ptMinTrackSize.y = static_cast<LONG>(kMinWindowHeight * scale);
 
       // Без WS_CAPTION Windows разворачивает окно на ВЕСЬ монитор и накрывает
       // панель задач. Ограничиваем разворот рабочей областью: панель задач
@@ -379,7 +391,9 @@ Win32Window::MessageHandler(HWND hwnd,
       return 0;
   }
 
-  return DefWindowProc(window_handle_, message, wparam, lparam);
+  // Именно hwnd: после WM_DESTROY window_handle_ уже нулевой, а WM_NCDESTROY
+  // ещё приходит — с nullptr вместо дескриптора система не доводит разрушение.
+  return DefWindowProc(hwnd, message, wparam, lparam);
 }
 
 void Win32Window::Destroy() {
@@ -429,6 +443,11 @@ HWND Win32Window::GetHandle() {
 
 void Win32Window::SetQuitOnClose(bool quit_on_close) {
   quit_on_close_ = quit_on_close;
+}
+
+void Win32Window::HandleChildContentMessage(HWND child, UINT message,
+                                            WPARAM wparam, LPARAM lparam) {
+  OnChildContentMessage(child, message, wparam, lparam);
 }
 
 bool Win32Window::OnCreate() {

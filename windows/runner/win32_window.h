@@ -7,6 +7,14 @@
 #include <memory>
 #include <string>
 
+// Минимальный размер окна в логических пикселях: на меньшем раскладка
+// ломается — островки, боковая библиотека и панель плеера перестают
+// помещаться. Физический минимум считается умножением на DPI/96, причём в
+// двух местах: ограничение размера (WM_GETMINMAXINFO) и раскладка окна по
+// половине экрана (FlutterWindow::SnapWindow).
+constexpr int kMinWindowWidth = 960;
+constexpr int kMinWindowHeight = 600;
+
 // A class abstraction for a high DPI-aware Win32 Window. Intended to be
 // inherited from by classes that wish to specialize with custom
 // rendering and input handling
@@ -55,6 +63,11 @@ class Win32Window {
   // Return a RECT representing the bounds of the current client area.
   RECT GetClientArea();
 
+  // Сообщения дочернего окна содержимого (окна Flutter). Нужен наследникам,
+  // которые следят за перетаскиванием, не отбирая у содержимого захват мыши.
+  void HandleChildContentMessage(HWND child, UINT message, WPARAM wparam,
+                                 LPARAM lparam);
+
  protected:
   // Processes and route salient window messages for mouse handling,
   // size change and DPI. Delegates handling of these to member overloads that
@@ -70,6 +83,11 @@ class Win32Window {
 
   // Called when Destroy is called.
   virtual void OnDestroy();
+
+  // Сообщение дочернего окна содержимого. По умолчанию ничего не делает:
+  // базовому окну следить не за чем.
+  virtual void OnChildContentMessage(HWND child, UINT message, WPARAM wparam,
+                                     LPARAM lparam) {}
 
  private:
   friend class WindowClassRegistrar;
