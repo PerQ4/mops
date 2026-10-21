@@ -4,6 +4,7 @@ import 'dart:io';
 import '../models/models.dart';
 import '../../core/innertube/innertube_client.dart';
 import '../../core/innertube/renderer.dart';
+import '../../features/podcast/podcast_models.dart';
 import 'browse_parser.dart';
 
 /// Что искать в YouTube Music.
@@ -121,6 +122,14 @@ class CatalogSource {
   static const String _browseHome = 'FEmusic_home';
   static const String _browseExplore = 'FEmusic_explore';
 
+  /// Библиотека подкастов: подписки пользователя.
+  ///
+  /// Отдельный раздел YouTube Music, а не `FEmusic_liked_playlists`: подкасты
+  /// там не появляются, и без него кнопка «Подписаться» не находила бы
+  /// подтверждения сервера.
+  static const String _browseLibraryPodcasts =
+      'FEmusic_library_non_music_audio_list';
+
   /// Главная страница: порция секций и токен следующей порции.
   ///
   /// `continuation == null` — первый запрос. Если ответ содержит токен, его
@@ -172,6 +181,597 @@ class CatalogSource {
     final Map<String, dynamic> res = await _client.browse(browseId);
     return _applyContentFilter(BrowseParser.homeSections(res), limitTop: true);
   }
+
+  // ------------------------------------------------------------- подкасты
+
+  /// Обзор подкастов (`FEmusic_podcasts`): карусели и полки с шоу.
+  Future<List<PodcastSection>> podcastSections() async {
+    await _waitForBlocked();
+    final Map<String, dynamic> res =
+        await _client.browse(ExploreSection.podcasts.browseId);
+    return _podcastSectionsFrom(res);
+  }
+
+  /// Шоу, на которые оформлена подписка.
+  ///
+  /// Раздел библиотеки YouTube Music отдаёт сетку плиток
+  /// `musicTwoRowItemRenderer`, где первая плитка — служебная «Add podcast».
+  /// Её отбрасываем: открывать в приложении нечего.
+  Future<List<PodcastShow>> libraryPodcasts() async {
+    final Map<String, dynamic> res = await _client.browse(
+      _browseLibraryPodcasts,
+      authenticated: true,
+    );
+
+    final List<PodcastShow> shows = <PodcastShow>[];
+    final Set<String> seen = <String>{};
+    final List<dynamic> grid = traverseList(
+      res,
+      <String>['gridRenderer', 'items'],
+    );
+    final List<dynamic> entries = grid.isNotEmpty
+        ? grid
+        : traverseList(res, <String>['musicTwoRowItemRenderer']);
+    for (final dynamic entry in entries) {
+      final dynamic renderer = entry is Map
+          ? (entry['musicTwoRowItemRenderer'] ??
+              entry['musicResponsiveListItemRenderer'] ??
+              entry)
+          : null;
+      final PodcastShow? show = _podcastTile(renderer);
+      if (show == null) continue;
+      if (seen.add(show.key)) shows.add(show);
+    }
+    return shows;
+  }
+
+  /// Страница подкаста.
+  ///
+  /// [showId] — ключ шоу: звуковой id плейлиста (`PL…`) или browse-id
+  /// страницы (`MPSP…`). YouTube понимает только второе, поэтому префикс
+  /// добавляется по необходимости.
+  ///
+  /// Эпизоды приходят постранично полкой `musicShelfRenderer` во второй
+  /// колонке страницы, продолжения — `musicShelfContinuation`. Забираем
+  /// несколько первых страниц (не весь архив): у шоу с сотнями выпусков
+  /// открытие иначе стоило бы десятков запросов.
+  Future<PodcastShow> podcastShow(String showId) async {
+    await _waitForBlocked();
+    final String browseId =
+        showId.startsWith('MPSP') ? showId : 'MPSP$showId';
+    final Map<String, dynamic> res = await _client.browse(
+      browseId,
+      authenticated: _client.hasAuth,
+    );
+
+    final Map<dynamic, dynamic>? header = _podcastHeader(res);
+    final String title = _podcastHeaderTitle(header) ?? 'Подкаст';
+    final (String? author, String? authorId) =
+        _podcastHeaderAuthor(header);
+    final List<Thumbnail> thumbnails = _podcastShowThumbnails(res, header);
+
+    final List<PodcastEpisode> episodes = <PodcastEpisode>[];
+    final Set<String> seenEpisodes = <String>{};
+    void addEpisodes(List<dynamic> nodes) {
+      for (final dynamic node in nodes) {
+        final PodcastEpisode? episode = _podcastEpisode(
+          node,
+          showTitle: title,
+          showThumbnails: thumbnails,
+          showPlaylistId: _podcastPlaylistId(showId),
+        );
+        if (episode == null) continue;
+        if (seenEpisodes.add(episode.id)) episodes.add(episode);
+      }
+    }
+
+    addEpisodes(_podcastEpisodeNodes(res));
+
+    String? token = BrowseParser.continuationToken(res);
+    int guard = 0;
+    while (token != null && guard++ < 3) {
+      final Map<String, dynamic> page = await _client.browse(
+        browseId,
+        continuation: token,
+        authenticated: _client.hasAuth,
+      );
+      final int before = episodes.length;
+      addEpisodes(
+        traverseList(page, <String>['musicShelfContinuation', 'contents']),
+      );
+      if (episodes.length == before) break;
+      final String? next = BrowseParser.continuationToken(page);
+      if (next == token) break;
+      token = next;
+    }
+
+    return PodcastShow(
+      browseId: browseId,
+      playlistId: _podcastPlaylistId(showId),
+      title: title,
+      author: author,
+      authorId: authorId,
+      description: _podcastDescription(res),
+      thumbnails: thumbnails,
+      episodes: episodes,
+    );
+  }
+
+  /// Обзор подкастов: полки и карусели в порядке ответа.
+  List<PodcastSection> _podcastSectionsFrom(Map<String, dynamic> res) {
+    final List<PodcastSection> sections = <PodcastSection>[];
+    final Set<String> seen = <String>{};
+
+    void addShelf(dynamic shelf) {
+      if (shelf is! Map) return;
+      final List<PodcastShow> shows = <PodcastShow>[];
+      for (final dynamic entry
+          in traverseList(shelf, <String>['contents'])) {
+        final dynamic renderer = entry is Map
+            ? (entry['musicTwoRowItemRenderer'] ??
+                entry['musicResponsiveListItemRenderer'] ??
+                entry)
+            : null;
+        final PodcastShow? show = _podcastTile(renderer);
+        if (show == null) continue;
+        if (seen.add(show.key)) shows.add(show);
+      }
+      if (shows.isEmpty) return;
+      final String title = (textOf(shelf['title']) ?? '').trim();
+      sections.add(PodcastSection(
+        title: title.isEmpty ? 'Подкасты' : title,
+        shows: shows,
+      ));
+    }
+
+    for (final dynamic entry in traverseList(
+      res,
+      <String>['sectionListRenderer', 'contents'],
+    )) {
+      if (entry is! Map) continue;
+      final dynamic carousel = entry['musicCarouselShelfRenderer'];
+      if (carousel != null) {
+        addShelf(carousel);
+        continue;
+      }
+      final dynamic shelf = entry['musicShelfRenderer'];
+      if (shelf != null) {
+        addShelf(shelf);
+        continue;
+      }
+      // Некоторые полки завёрнуты в `itemSectionRenderer`.
+      final dynamic itemSection = entry['itemSectionRenderer'];
+      if (itemSection != null) {
+        for (final dynamic inner
+            in traverseList(itemSection, <String>['musicCarouselShelfRenderer'])) {
+          addShelf(inner);
+        }
+        for (final dynamic inner
+            in traverseList(itemSection, <String>['musicShelfRenderer'])) {
+          addShelf(inner);
+        }
+      }
+    }
+
+    // Разметка незнакома — собираем всё, что похоже на шоу, в одну полку.
+    if (sections.isEmpty) {
+      for (final dynamic renderer
+          in traverseList(res, <String>['musicTwoRowItemRenderer'])) {
+        final PodcastShow? show = _podcastTile(renderer);
+        if (show == null) continue;
+        if (seen.add(show.key)) {
+          sections.add(PodcastSection(
+            title: 'Подкасты',
+            shows: <PodcastShow>[show],
+          ));
+        }
+      }
+    }
+
+    return sections;
+  }
+
+  Map<dynamic, dynamic>? _podcastHeader(Map<String, dynamic> res) {
+    for (final dynamic header
+        in traverseList(res, <String>['musicResponsiveHeaderRenderer'])) {
+      if (header is Map) return header;
+    }
+    return null;
+  }
+
+  String? _podcastHeaderTitle(Map<dynamic, dynamic>? header) {
+    if (header == null) return null;
+    final String title = (textOf(header['title']) ?? '').trim();
+    return title.isEmpty ? null : title;
+  }
+
+  /// Автор шоу: имя и канал из `straplineTextOne`.
+  ///
+  /// В шапке новой разметки подпись — единственное место с автором; в
+  /// подзаголовке там тип записи. Служебные разделители и подпись «Подкаст»
+  /// отбрасываем.
+  (String?, String?) _podcastHeaderAuthor(Map<dynamic, dynamic>? header) {
+    if (header == null) return (null, null);
+    final List<dynamic> runs =
+        traverseList(header, <String>['straplineTextOne', 'runs']);
+    for (final dynamic run in runs) {
+      if (run is! Map) continue;
+      final String text = (textOf(run) ?? '').trim();
+      if (text.isEmpty || text == '•') continue;
+      if (_podcastStopWords.contains(text.toLowerCase())) continue;
+      final String? id = traverseString(run, <String>[
+        'navigationEndpoint',
+        'browseEndpoint',
+        'browseId',
+      ]);
+      return (text, id);
+    }
+    return (null, null);
+  }
+
+  String? _podcastDescription(Map<String, dynamic> res) {
+    for (final dynamic node
+        in traverseList(res, <String>['musicDescriptionShelfRenderer'])) {
+      if (node is! Map) continue;
+      final String text = (textOf(node['description']) ?? '').trim();
+      if (text.isNotEmpty) return text;
+      final String whole = (textOf(node) ?? '').trim();
+      if (whole.isNotEmpty) return whole;
+    }
+    return null;
+  }
+
+  /// Крупные обложки шоу. Сначала — картинка шапки, затем любые превью
+  /// страницы: у гостевого ответа шапка бывает урезана.
+  List<Thumbnail> _podcastShowThumbnails(
+    Map<String, dynamic> res,
+    Map<dynamic, dynamic>? header,
+  ) {
+    List<Thumbnail> thumbs = _podcastThumbnails(header);
+    if (thumbs.isNotEmpty) return thumbs;
+    thumbs = _podcastThumbnails(traverseList(
+      res,
+      <String>['musicThumbnailRenderer', 'thumbnail', 'thumbnails'],
+    ));
+    if (thumbs.isNotEmpty) return thumbs;
+    return _podcastThumbnails(traverseList(res, <String>['thumbnails']));
+  }
+
+  /// Полки эпизодов: основная — во второй колонке страницы.
+  List<dynamic> _podcastEpisodeNodes(Map<String, dynamic> res) {
+    final List<dynamic> secondary = traverseList(
+      res,
+      <String>['secondaryContents', 'sectionListRenderer', 'contents'],
+    );
+    if (secondary.isNotEmpty) {
+      final List<dynamic> found = traverseList(
+        secondary,
+        <String>['musicShelfRenderer', 'contents'],
+      );
+      if (found.isNotEmpty) return found;
+    }
+    return traverseList(res, <String>['musicShelfRenderer', 'contents']);
+  }
+
+  PodcastEpisode? _podcastEpisode(
+    dynamic node, {
+    required String showTitle,
+    required List<Thumbnail> showThumbnails,
+    String? showPlaylistId,
+  }) {
+    if (node is! Map) return null;
+    final dynamic renderer = node['musicMultiRowListItemRenderer'] ??
+        node['musicResponsiveListItemRenderer'] ??
+        node;
+    if (renderer is! Map) return null;
+
+    final String title = (textOf(renderer['title']) ?? '').trim();
+    if (title.isEmpty) return null;
+
+    final String? episodeBrowseId = traverseFirstString(
+      renderer,
+      <List<String>>[
+        <String>['title', 'runs', 'navigationEndpoint', 'browseEndpoint', 'browseId'],
+        <String>['navigationEndpoint', 'browseEndpoint', 'browseId'],
+      ],
+    );
+
+    String? videoId = traverseFirstString(renderer, <List<String>>[
+      <String>['onTap', 'watchEndpoint', 'videoId'],
+      <String>[
+        'playbackProgress',
+        'musicPlaybackProgressRenderer',
+        'playNavigationEndpoint',
+        'watchEndpoint',
+        'videoId',
+      ],
+      <String>['navigationEndpoint', 'watchEndpoint', 'videoId'],
+      <String>[
+        'overlay',
+        'musicItemThumbnailOverlayRenderer',
+        'content',
+        'musicPlayButtonRenderer',
+        'playNavigationEndpoint',
+        'watchEndpoint',
+        'videoId',
+      ],
+    ]);
+    // Запасной путь: у страницы эпизода browse-id — `MPED` + videoId.
+    if ((videoId == null || videoId.isEmpty) &&
+        episodeBrowseId != null &&
+        episodeBrowseId.startsWith('MPED') &&
+        episodeBrowseId.length > 4) {
+      videoId = episodeBrowseId.substring(4);
+    }
+    if (videoId == null || videoId.isEmpty) return null;
+
+    final String? date = _firstRunText(renderer, 'subtitle');
+    final String? description =
+        (textOf(renderer['description']) ?? '').trim().isEmpty
+            ? null
+            : textOf(renderer['description'])!.trim();
+
+    final dynamic durationText = traverse(
+      renderer,
+      <String>[
+        'playbackProgress',
+        'musicPlaybackProgressRenderer',
+        'durationText',
+      ],
+    );
+    final String? durationRaw = durationText is Map
+        ? _joinedRuns(durationText)
+        : textOf(durationText) ?? textOf(renderer['lengthText']);
+    final Duration duration = _parsePodcastDuration(durationRaw) ??
+        Duration.zero;
+
+    List<Thumbnail> thumbnails = _podcastThumbnails(renderer);
+    if (thumbnails.isEmpty) thumbnails = showThumbnails;
+
+    return PodcastEpisode(
+      track: Track(
+        id: videoId,
+        title: title,
+        // Автор эпизода в строке не приходит: в плеере подкаст подписан
+        // названием шоу, как это делает YouTube Music.
+        artists: showTitle.isEmpty
+            ? const <ArtistRef>[]
+            : <ArtistRef>[ArtistRef(name: showTitle)],
+        duration: duration,
+        thumbnails: thumbnails,
+        playlistId: showPlaylistId,
+      ),
+      date: date,
+      browseId: episodeBrowseId,
+      description: description,
+    );
+  }
+
+  /// Плитка шоу (`musicTwoRowItemRenderer`) из обзора или библиотеки.
+  PodcastShow? _podcastTile(dynamic renderer) {
+    if (renderer is! Map) return null;
+
+    final String? browseId = traverseFirstString(renderer, <List<String>>[
+      <String>['navigationEndpoint', 'browseEndpoint', 'browseId'],
+      <String>['onTap', 'browseEndpoint', 'browseId'],
+    ]);
+    final String pageType = traverseFirstString(renderer, <List<String>>[
+          <String>[
+            'navigationEndpoint',
+            'browseEndpoint',
+            'browseEndpointContextSupportedConfigs',
+            'browseEndpointContextMusicConfig',
+            'pageType',
+          ],
+          <String>[
+            'onTap',
+            'browseEndpoint',
+            'browseEndpointContextSupportedConfigs',
+            'browseEndpointContextMusicConfig',
+            'pageType',
+          ],
+        ]) ??
+        '';
+    final bool isPodcast = pageType.contains('PODCAST') ||
+        (browseId != null && browseId.startsWith('MPSP'));
+    if (!isPodcast) return null;
+
+    final String title = (textOf(renderer['title']) ?? '').trim();
+    if (title.isEmpty) return null;
+    // Первая плитка библиотеки — «Add podcast», а не шоу.
+    if (_podcastStopWords.contains(title.toLowerCase()) ||
+        title.toLowerCase().contains('add podcast') ||
+        title.toLowerCase().contains('добавить подкаст')) {
+      return null;
+    }
+
+    final String? playlistId =
+        _podcastTilePlaylistId(renderer) ?? _podcastPlaylistId(browseId ?? '');
+    if (playlistId == null && (browseId == null || browseId.isEmpty)) {
+      return null;
+    }
+
+    return PodcastShow(
+      browseId: browseId ?? 'MPSP$playlistId',
+      playlistId: playlistId,
+      title: title,
+      author: _podcastTileAuthor(renderer),
+      thumbnails: _podcastThumbnails(renderer),
+    );
+  }
+
+  String? _podcastTilePlaylistId(dynamic renderer) {
+    return traverseFirstString(renderer, <List<String>>[
+      <String>[
+        'thumbnailOverlay',
+        'musicItemThumbnailOverlayRenderer',
+        'content',
+        'musicPlayButtonRenderer',
+        'playNavigationEndpoint',
+        'watchPlaylistEndpoint',
+        'playlistId',
+      ],
+      <String>[
+        'overlay',
+        'musicItemThumbnailOverlayRenderer',
+        'content',
+        'musicPlayButtonRenderer',
+        'playNavigationEndpoint',
+        'watchPlaylistEndpoint',
+        'playlistId',
+      ],
+      <String>[
+        'menu',
+        'menuRenderer',
+        'items',
+        'menuNavigationItemRenderer',
+        'navigationEndpoint',
+        'watchPlaylistEndpoint',
+        'playlistId',
+      ],
+      <String>[
+        'menu',
+        'menuRenderer',
+        'items',
+        'menuNavigationItemRenderer',
+        'navigationEndpoint',
+        'watchEndpoint',
+        'playlistId',
+      ],
+      <String>[
+        'navigationEndpoint',
+        'watchPlaylistEndpoint',
+        'playlistId',
+      ],
+    ]);
+  }
+
+  String? _podcastTileAuthor(dynamic renderer) {
+    final List<String> parts = <String>[];
+    for (final dynamic run in traverseList(renderer, <String>['subtitle', 'runs'])) {
+      if (run is! Map) continue;
+      final String text = (textOf(run) ?? '').trim();
+      if (text.isEmpty || text == '•') continue;
+      if (_podcastStopWords.contains(text.toLowerCase())) continue;
+      parts.add(text);
+    }
+    if (parts.isEmpty) return null;
+    return parts.join(' • ');
+  }
+
+  /// Текст первого run указанного поля (`subtitle.runs[0].text`).
+  String? _firstRunText(dynamic node, String field) {
+    for (final dynamic run in traverseList(node, <String>[field, 'runs'])) {
+      if (run is! Map) continue;
+      final String text = (textOf(run) ?? '').trim();
+      if (text.isEmpty || text == '•') continue;
+      return text;
+    }
+    return null;
+  }
+
+  /// Склеивает runs в один текст: `durationText` приходит как `{"runs":[…]}`.
+  String? _joinedRuns(dynamic node) {
+    if (node is! Map) return textOf(node);
+    final List<dynamic> runs = traverseList(node, <String>['runs']);
+    if (runs.isEmpty) return textOf(node);
+    final String joined = runs
+        .whereType<Map>()
+        .map((Map run) => run['text']?.toString() ?? '')
+        .join()
+        .trim();
+    return joined.isEmpty ? textOf(node) : joined;
+  }
+
+  /// Локализованная длительность: «25 мин», «1 ч 5 мин», «1 hr 5 min».
+  ///
+  /// Обычный `parseDurationText` понимает только `25:00`; у эпизодов же
+  /// YouTube отдаёт словами. Точность — до минут, как в подписи строки; точную
+  /// длительность плеер потом сообщает сам.
+  Duration? _parsePodcastDuration(String? raw) {
+    if (raw == null || raw.trim().isEmpty) return null;
+    final String text = raw.trim();
+
+    final Duration? clock = parseDurationText(text);
+    if (clock != null) return clock;
+
+    final RegExp units = RegExp(
+      r'(\d+)\s*(часа|часов|час|ч|hours|hour|hrs|hr|h|минуты|минут|минута|мин|м|minutes|minute|mins|min|m|секунды|секунд|секунда|сек|seconds|second|secs|sec|s)',
+      caseSensitive: false,
+    );
+    int hours = 0;
+    int minutes = 0;
+    int seconds = 0;
+    bool any = false;
+    for (final RegExpMatch match in units.allMatches(text)) {
+      final int value = int.tryParse(match.group(1) ?? '') ?? 0;
+      final String unit = (match.group(2) ?? '').toLowerCase();
+      any = true;
+      if (unit == 'ч' ||
+          unit == 'час' ||
+          unit == 'часа' ||
+          unit == 'часов' ||
+          unit.startsWith('h')) {
+        hours += value;
+      } else if (unit == 'м' ||
+          unit.startsWith('мин') ||
+          unit.startsWith('min') ||
+          unit == 'm') {
+        minutes += value;
+      } else {
+        seconds += value;
+      }
+    }
+    if (!any) return null;
+    return Duration(hours: hours, minutes: minutes, seconds: seconds);
+  }
+
+  String? _podcastPlaylistId(String id) {
+    if (id.isEmpty) return null;
+    if (id.startsWith('MPSP')) {
+      final String rest = id.substring(4);
+      return rest.isEmpty ? null : rest;
+    }
+    return id;
+  }
+
+  List<Thumbnail> _podcastThumbnails(dynamic node) {
+    if (node == null) return const <Thumbnail>[];
+    final List<dynamic> thumbs = <dynamic>[
+      ...traverseList(
+        node,
+        <String>['thumbnail', 'musicThumbnailRenderer', 'thumbnail', 'thumbnails'],
+      ),
+    ];
+    final List<Thumbnail> result = _thumbnailsOf(thumbs);
+    if (result.isNotEmpty) return result;
+    return _thumbnailsOf(traverseList(node, <String>['thumbnail', 'thumbnails']));
+  }
+
+  List<Thumbnail> _thumbnailsOf(List<dynamic> thumbs) {
+    final List<Thumbnail> result = <Thumbnail>[];
+    for (final dynamic thumb in thumbs) {
+      if (thumb is! Map) continue;
+      final dynamic url = thumb['url'];
+      if (url is! String || url.isEmpty) continue;
+      result.add(Thumbnail(
+        url: url,
+        width: (thumb['width'] as num?)?.toInt(),
+        height: (thumb['height'] as num?)?.toInt(),
+      ));
+    }
+    return result;
+  }
+
+  /// Служебные подписи плиток подкастов — это не автор.
+  static const Set<String> _podcastStopWords = <String>{
+    'подкаст',
+    'подкасты',
+    'podcast',
+    'podcasts',
+    'add podcast',
+    'добавить подкаст',
+  };
 
   /// Настроения и жанры — подписи категорий для чипов главной.
   ///

@@ -17,6 +17,7 @@ import '../../widgets/section_list.dart';
 import '../../widgets/track_tile.dart';
 import '../common/navigation.dart';
 import '../playlist/playlist_screen.dart';
+import '../podcast/podcast_library_section.dart';
 import 'library_empty_state.dart';
 import 'library_spotlight_tile.dart';
 import 'local_files_section.dart';
@@ -63,7 +64,11 @@ class _LibraryScreenState extends ConsumerState<LibraryScreen> {
           const SizedBox(width: 4),
         ],
       ),
-      body: auth.isSignedIn || _filter == LibraryFilter.localFiles
+      body: auth.isSignedIn ||
+              _filter == LibraryFilter.localFiles ||
+              // Обзор подкастов в YouTube Music публичный: гость тоже может
+              // открыть шоу и послушать выпуск. Подписки появятся после входа.
+              _filter == LibraryFilter.podcasts
           ? Column(
               children: <Widget>[
                 _FilterChips(
@@ -99,6 +104,7 @@ class _LibraryScreenState extends ConsumerState<LibraryScreen> {
       LibraryFilter.artists => const _ArtistsGrid(),
       LibraryFilter.albums => const _AlbumsGrid(),
       LibraryFilter.subscriptions => const _SubscriptionsGrid(),
+      LibraryFilter.podcasts => const PodcastLibrarySection(),
       LibraryFilter.localFiles => const LocalFilesSection(),
     };
   }
@@ -125,6 +131,7 @@ enum LibraryFilter {
   artists('Исполнители', Icons.person),
   albums('Альбомы', Icons.album),
   subscriptions('Подписки', Icons.subscriptions),
+  podcasts('Подкасты', Icons.podcasts),
   localFiles('Локальные файлы', Icons.folder_outlined);
 
   const LibraryFilter(this.label, this.icon);
