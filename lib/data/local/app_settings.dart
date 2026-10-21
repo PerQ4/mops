@@ -94,6 +94,54 @@ enum LyricsSource {
       );
 }
 
+/// Режим отображения текста песни (задача 3.1).
+///
+/// Классический — прежний вид: строки одного размера, активная выделена
+/// насыщенностью. V2 усиливает контраст: активная строка крупнее, соседние
+/// мельче и прозрачнее. Enhanced добавляет отдельную панель активной строки —
+/// на широком экране список и текущая строка стоят рядом.
+enum LyricsMode {
+  classic('Классический', 'Строки одного размера, активная выделена насыщенностью'),
+  v2('V2', 'Крупная активная строка, соседние мельче и прозрачнее'),
+  enhanced(
+    'Enhanced',
+    'Активная строка на отдельной панели, список рядом — на широком экране',
+  );
+
+  const LyricsMode(this.label, this.description);
+
+  final String label;
+  final String description;
+
+  static LyricsMode fromName(String? name) => LyricsMode.values.firstWhere(
+        (LyricsMode v) => v.name == name,
+        orElse: () => LyricsMode.classic,
+      );
+}
+
+/// Стиль анимации текста песни (задача 3.2).
+///
+/// Один стиль отвечает и за появление активной строки, и за подсветку слов.
+/// Длительности и кривые берутся из словаря движений (`AppMotion`), поэтому
+/// «Отключить анимации» делает любой из стилей мгновенным.
+enum LyricsAnimationStyle {
+  none('Нет', 'Строка и слова появляются сразу, без движения'),
+  fade('Плавное', 'Мягкое проявление строки и подсветки — как было'),
+  spring('Пружинное', 'Появление с отдачей, слово подскакивает заметнее'),
+  scale('Масштаб', 'Строка и слово вырастают из меньшего размера');
+
+  const LyricsAnimationStyle(this.label, this.description);
+
+  final String label;
+  final String description;
+
+  static LyricsAnimationStyle fromName(String? name) =>
+      LyricsAnimationStyle.values.firstWhere(
+        (LyricsAnimationStyle v) => v.name == name,
+        orElse: () => LyricsAnimationStyle.fade,
+      );
+}
+
 /// Какие каталоги Paxsenix спрашивать.
 ///
 /// Как `paxsenixProviders` в ArchiveTune: ключ у Paxsenix один, а каталоги за
@@ -459,6 +507,8 @@ class AppSettings {
     this.lyricsTextScale = 1.0,
     this.lyricsLineSpacing = 1.35,
     this.lyricsLineBlur = true,
+    this.lyricsMode = LyricsMode.classic,
+    this.lyricsAnimationStyle = LyricsAnimationStyle.fade,
     this.lyricsProviderOrder = kDefaultLyricsOrder,
     // Источники, выключенные пользователем (как `providerPreferenceKeys`
     // в ArchiveTune). Храним именно выключенные: новый источник по умолчанию
@@ -599,6 +649,12 @@ class AppSettings {
 
   /// Размывать неактивные строки текста (как `LyricsLineBlurKey`).
   final bool lyricsLineBlur;
+
+  /// Режим отображения текста: классический, V2 или Enhanced (задача 3.1).
+  final LyricsMode lyricsMode;
+
+  /// Стиль появления строки и подсветки слов (задача 3.2).
+  final LyricsAnimationStyle lyricsAnimationStyle;
 
   /// Порядок источников текста в режиме «Авто» — как `LyricsProviderOrderKey`
   /// в ArchiveTune. Первый источник в списке — приоритетный.
@@ -829,6 +885,8 @@ class AppSettings {
     double? lyricsTextScale,
     double? lyricsLineSpacing,
     bool? lyricsLineBlur,
+    LyricsMode? lyricsMode,
+    LyricsAnimationStyle? lyricsAnimationStyle,
     List<LyricsSource>? lyricsProviderOrder,
     List<LyricsSource>? lyricsDisabledProviders,
     bool? paxsenixAppleMusic,
@@ -904,6 +962,9 @@ class AppSettings {
       lyricsTextScale: lyricsTextScale ?? this.lyricsTextScale,
       lyricsLineSpacing: lyricsLineSpacing ?? this.lyricsLineSpacing,
       lyricsLineBlur: lyricsLineBlur ?? this.lyricsLineBlur,
+      lyricsMode: lyricsMode ?? this.lyricsMode,
+      lyricsAnimationStyle:
+          lyricsAnimationStyle ?? this.lyricsAnimationStyle,
       lyricsProviderOrder: lyricsProviderOrder ?? this.lyricsProviderOrder,
       lyricsDisabledProviders:
           lyricsDisabledProviders ?? this.lyricsDisabledProviders,
@@ -985,6 +1046,8 @@ class AppSettings {
         'lyricsTextScale': lyricsTextScale,
         'lyricsLineSpacing': lyricsLineSpacing,
         'lyricsLineBlur': lyricsLineBlur,
+        'lyricsMode': lyricsMode.name,
+        'lyricsAnimationStyle': lyricsAnimationStyle.name,
         'lyricsProviderOrder':
             lyricsProviderOrder.map((LyricsSource s) => s.name).join(','),
         'lyricsDisabledProviders':
@@ -1070,6 +1133,10 @@ class AppSettings {
       lyricsTextScale: (json['lyricsTextScale'] as num?)?.toDouble() ?? 1.0,
       lyricsLineSpacing: (json['lyricsLineSpacing'] as num?)?.toDouble() ?? 1.35,
       lyricsLineBlur: json['lyricsLineBlur'] as bool? ?? true,
+      lyricsMode: LyricsMode.fromName(json['lyricsMode'] as String?),
+      lyricsAnimationStyle: LyricsAnimationStyle.fromName(
+        json['lyricsAnimationStyle'] as String?,
+      ),
       lyricsProviderOrder: _parseLyricsOrder(
         json['lyricsProviderOrder'] as String?,
       ),

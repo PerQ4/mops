@@ -22,6 +22,7 @@ import '../../state/ui_scale.dart';
 import '../../widgets/liquid_backdrop.dart';
 import '../common/navigation.dart';
 import 'font_settings.dart';
+import 'lyrics_animation_screen.dart';
 import 'settings_components.dart';
 import 'updates_screen.dart';
 
@@ -306,6 +307,20 @@ class SettingsScreen extends ConsumerWidget {
                   subtitle: 'Открывать текст по умолчанию, если он есть',
                   value: settings.showLyricsInPlayer,
                   onChanged: controller.setShowLyrics,
+                ),
+                // Вид текста — до размера и анимации: сначала выбирают, как
+                // строка выглядит, затем уже её кегль и движение.
+                SettingsRow(
+                  icon: Icons.format_align_left,
+                  title: 'Вид текста песни',
+                  subtitle: settings.lyricsMode.label,
+                  onTap: () => _pickLyricsMode(context, controller, settings),
+                ),
+                SettingsRow(
+                  icon: Icons.animation,
+                  title: 'Анимация текста',
+                  subtitle: settings.lyricsAnimationStyle.label,
+                  onTap: () => _openLyricsAnimation(context),
                 ),
                 SettingsRow(
                   icon: Icons.text_fields,
@@ -639,6 +654,35 @@ class SettingsScreen extends ConsumerWidget {
           Animation<double> secondaryAnimation,
         ) =>
             const UpdatesScreen(),
+        transitionsBuilder: (
+          BuildContext context,
+          Animation<double> animation,
+          Animation<double> secondaryAnimation,
+          Widget child,
+        ) =>
+            motion.routeTransition(
+          animation: animation,
+          begin: const Offset(0, 0.02),
+          child: child,
+        ),
+      ),
+    );
+  }
+
+  /// Экран анимации текста открывается так же, как «Обновления»: он относится
+  /// только к настройкам, поэтому общий словарь маршрутов не расширяем.
+  void _openLyricsAnimation(BuildContext context) {
+    final MotionTransition motion = AppMotion.pageEnter;
+    Navigator.of(context).push<void>(
+      PageRouteBuilder<void>(
+        transitionDuration: motion.duration,
+        reverseTransitionDuration: motion.reverseDuration ?? motion.duration,
+        pageBuilder: (
+          BuildContext context,
+          Animation<double> animation,
+          Animation<double> secondaryAnimation,
+        ) =>
+            const LyricsAnimationScreen(),
         transitionsBuilder: (
           BuildContext context,
           Animation<double> animation,
@@ -1318,6 +1362,22 @@ class SettingsScreen extends ConsumerWidget {
     );
     field.dispose();
     if (result != null) await controller.setDiscordApplicationId(result);
+  }
+
+  Future<void> _pickLyricsMode(
+    BuildContext context,
+    SettingsController controller,
+    AppSettings settings,
+  ) async {
+    final LyricsMode? result = await _showChoice<LyricsMode>(
+      context,
+      title: 'Вид текста песни',
+      current: settings.lyricsMode,
+      values: LyricsMode.values,
+      label: (LyricsMode v) => v.label,
+      description: (LyricsMode v) => v.description,
+    );
+    if (result != null) await controller.setLyricsMode(result);
   }
 
   Future<void> _pickLyricsTextScale(

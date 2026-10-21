@@ -522,6 +522,27 @@ abstract final class AppMotion {
     curve: MotionCurve.fastOutSlowIn,
   );
 
+  /// Появление активной строки текста «пружиной» (стиль «Пружинное»).
+  ///
+  /// Это не `SpringSimulation`: строка появляется один раз и должна
+  /// остановиться сама, поэтому отдачу даёт expressive-кривая с перелётом.
+  /// Пружина в `TweenAnimationBuilder` не затухала бы без внешнего таймера.
+  static MotionTransition get lyricsLineSpring => _motion(_lyricsLineSpring);
+  static const MotionTransition _lyricsLineSpring = MotionTransition(
+    duration: MotionDuration.medium3,
+    curve: MotionCurve.expressiveFastSpatial,
+  );
+
+  /// Появление активной строки из меньшего размера (стиль «Масштаб»).
+  ///
+  /// Без перелёта: это рост, а не отдача, поэтому expressive-кривая здесь
+  /// только подчёркивала бы конец движения.
+  static MotionTransition get lyricsLineGrow => _motion(_lyricsLineGrow);
+  static const MotionTransition _lyricsLineGrow = MotionTransition(
+    duration: MotionDuration.medium2,
+    curve: MotionCurve.emphasizedDecelerate,
+  );
+
   // ------------------------------------------- прежние имена словаря
 
   // Часть кода (настройки) зовёт их напрямую, поэтому они остаются: значения

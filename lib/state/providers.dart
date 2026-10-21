@@ -309,6 +309,14 @@ class SettingsController extends Notifier<AppSettings> {
   Future<void> setLyricsLineBlur(bool value) =>
       update((AppSettings s) => s.copyWith(lyricsLineBlur: value));
 
+  /// Вид текста песни: классический, V2 или Enhanced (задача 3.1).
+  Future<void> setLyricsMode(LyricsMode mode) =>
+      update((AppSettings s) => s.copyWith(lyricsMode: mode));
+
+  /// Стиль анимации строки и подсветки слов (задача 3.2).
+  Future<void> setLyricsAnimationStyle(LyricsAnimationStyle style) =>
+      update((AppSettings s) => s.copyWith(lyricsAnimationStyle: style));
+
   /// Порядок источников текста (первый — приоритетный).
   Future<void> setLyricsProviderOrder(List<LyricsSource> order) =>
       update((AppSettings s) => s.copyWith(lyricsProviderOrder: order));

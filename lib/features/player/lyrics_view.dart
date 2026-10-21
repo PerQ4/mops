@@ -46,8 +46,8 @@ const double _viewportAnchor = 0.35;
 /// Прозрачность непоющегося слова/строки (`LyricsV2.kt:203 inactiveAlpha`).
 const double _inactiveAlpha = 0.35;
 
-/// Оформление строк по расстоянию до активной (`LyricsV2.kt:549-583`).
-const List<double> _alphaTable = <double>[1, 0.52, 0.30, 0.18, 0.10];
+/// Прозрачность строк, пока пользователь листает вручную
+/// (`LyricsV2.kt:559-565`). В классическом режиме ею же пользуется нота.
 const List<double> _manualAlphaTable = <double>[1, 0.72, 0.56, 0.40, 0.28];
 
 /// То же для ноты-вставки: дальше третьей ступени она гаснет до
@@ -59,21 +59,18 @@ const List<double> _interludeAlphaTable =
 /// Сторона квадрата с нотой (`LyricsV2.kt`, instrumental-строка: 48 dp).
 const double _interludeNoteSize = 48;
 
-
-/// То же, но пока пользователь листает вручную (`LyricsV2.kt:559-565`).
-
-/// Радиус размытия неактивных строк (`LyricsV2.kt:584-590`).
-///
-/// Размытие — это и есть смысл эффекта: текст уходит в глубину по мере
-/// удаления от активной строки, а не просто гаснет. Значения как в оригинале.
-const List<double> _blurTable = <double>[0, 2, 5, 12];
-
 /// Предельная ширина колонки текста.
 ///
 /// Ограничение из практики чтения: строка длиннее ~560 px уже не читается
 /// как строка. В ArchiveTune такого ограничения нет только потому, что там
 /// телефон.
 const double _lyricsColumnWidth = 560;
+
+/// С какой ширины Enhanced показывает отдельную панель активной строки.
+///
+/// Порог — 840 dp из Material: уже этого рядом с колонкой текста не остаётся
+/// места, и панель превращалась бы в две узкие полосы.
+const double _enhancedBreakpoint = 840;
 
 /// Сколько строк помещается на экране телефона — эталон оригинала.
 ///
@@ -101,8 +98,6 @@ double tableValue(List<double> table, double index) {
 // выключить одной настройкой, а не править здесь по одной.
 
 /// Оформление «караоке» (`LyricsV2.kt:1207-1228`).
-const double _wordBounceFactor = 1;
-const double _wordGlowFactor = 1;
 const double _wordFillEdgeDp = 8;
 
 /// Сглаживание позиции между обновлениями движка
@@ -148,6 +143,187 @@ class _LyricsScrollBehavior extends MaterialScrollBehavior {
     ScrollableDetails details,
   ) =>
       child;
+}
+
+/// Профиль анимации текста (задача 3.2).
+///
+/// Один стиль отвечает сразу за появление активной строки и за подсветку слов:
+/// так поведение не распадается на две несогласованные настройки. Длительности
+/// и кривые приходят из `AppMotion`, поэтому «Отключить анимации» превращает
+/// любой стиль в мгновенный без отдельной ветки в виджете.
+@immutable
+class LyricsAnimationProfile {
+  const LyricsAnimationProfile({
+    required this.enter,
+    required this.exit,
+    required this.fromScale,
+    required this.wordBounce,
+    required this.wordGlow,
+  });
+
+  /// Появление активной строки.
+  final MotionTransition enter;
+
+  /// Уход строки из активного состояния.
+  final MotionTransition exit;
+
+  /// Масштаб, с которого активная строка «дорастает» до единицы.
+  final double fromScale;
+
+  /// Множитель подскока слова: 1 — как в исходном виде, 0 — без движения.
+  final double wordBounce;
+
+  /// Множитель свечения поющегося слова.
+  final double wordGlow;
+
+  /// Профиль для выбранного стиля.
+  ///
+  /// «Плавное» повторяет прежнее поведение (прозрачность, лёгкий масштаб и
+  /// подскок слова), поэтому классический вид по умолчанию не меняется.
+  static LyricsAnimationProfile of(LyricsAnimationStyle style) {
+    switch (style) {
+      case LyricsAnimationStyle.none:
+        return LyricsAnimationProfile(
+          enter: AppMotion.lyricsLineFadeIn.instant,
+          exit: AppMotion.lyricsLineFadeOut.instant,
+          fromScale: 1,
+          wordBounce: 0,
+          wordGlow: 0,
+        );
+      case LyricsAnimationStyle.fade:
+        return LyricsAnimationProfile(
+          enter: AppMotion.lyricsLineFadeIn,
+          exit: AppMotion.lyricsLineFadeOut,
+          fromScale: 0.95,
+          wordBounce: 1,
+          wordGlow: 1,
+        );
+      case LyricsAnimationStyle.spring:
+        return LyricsAnimationProfile(
+          enter: AppMotion.lyricsLineSpring,
+          exit: AppMotion.lyricsLineFadeOut,
+          fromScale: 0.82,
+          wordBounce: 1.5,
+          wordGlow: 1.2,
+        );
+      case LyricsAnimationStyle.scale:
+        return LyricsAnimationProfile(
+          enter: AppMotion.lyricsLineGrow,
+          exit: AppMotion.lyricsLineFadeOut,
+          fromScale: 0.72,
+          wordBounce: 4,
+          wordGlow: 0.5,
+        );
+    }
+  }
+}
+
+/// Оформление строк по режиму отображения (задача 3.1).
+///
+/// Таблицы задают, насколько строка «уходит в глубину» с расстоянием. В
+/// классическом режиме остаются прежние значения; V2 сильнее гасит соседей и
+/// делает активную строку крупнее; Enhanced — промежуточный вариант для
+/// списка рядом с отдельной панелью активной строки.
+@immutable
+class _LyricsLook {
+  const _LyricsLook({
+    required this.mode,
+    required this.animation,
+    required this.blurEnabled,
+    required this.lineSpacing,
+  });
+
+  final LyricsMode mode;
+  final LyricsAnimationStyle animation;
+  final bool blurEnabled;
+  final double lineSpacing;
+
+  LyricsAnimationProfile get profile {
+    final LyricsAnimationProfile base = LyricsAnimationProfile.of(animation);
+    // «Отключить анимации» гасит и декоративный подскок слова: сама заливка
+    // караоке остаётся позиционной, но движение вокруг неё исчезает.
+    if (!AppMotion.animationsDisabled) return base;
+    return LyricsAnimationProfile(
+      enter: base.enter.instant,
+      exit: base.exit.instant,
+      fromScale: 1,
+      wordBounce: 0,
+      wordGlow: 0,
+    );
+  }
+
+  bool get isClassic => mode == LyricsMode.classic;
+  bool get isEnhanced => mode == LyricsMode.enhanced;
+
+  static const List<double> _classicAlpha = <double>[1, 0.52, 0.30, 0.18, 0.10];
+  static const List<double> _classicManualAlpha =
+      <double>[1, 0.72, 0.56, 0.40, 0.28];
+  static const List<double> _v2Alpha = <double>[1, 0.42, 0.24, 0.12, 0.06];
+  static const List<double> _v2ManualAlpha = <double>[1, 0.68, 0.52, 0.38, 0.26];
+  static const List<double> _enhancedAlpha = <double>[1, 0.48, 0.30, 0.16, 0.08];
+  static const List<double> _enhancedManualAlpha =
+      <double>[1, 0.70, 0.55, 0.40, 0.28];
+
+  static const List<double> _classicBlur = <double>[0, 2, 5, 12];
+  static const List<double> _v2Blur = <double>[0, 3, 8, 16];
+  static const List<double> _enhancedBlur = <double>[0, 2.5, 6, 12];
+
+  static const List<double> _v2Size = <double>[1.30, 0.84, 0.76, 0.70, 0.66];
+  static const List<double> _enhancedSize =
+      <double>[1.14, 0.88, 0.82, 0.76, 0.72];
+
+  /// Прозрачность строки по расстоянию до активной.
+  double alpha(
+    int distance,
+    double step, {
+    required bool manual,
+    required bool active,
+  }) {
+    if (active) return 1;
+    final List<double> table;
+    if (isClassic) {
+      table = manual ? _classicManualAlpha : _classicAlpha;
+    } else if (isEnhanced) {
+      table = manual ? _enhancedManualAlpha : _enhancedAlpha;
+    } else {
+      table = manual ? _v2ManualAlpha : _v2Alpha;
+    }
+    return tableValue(table, distance / step);
+  }
+
+  /// Размытие строки по расстоянию. Выключенная настройка размытия и ручная
+  /// прокрутка дают ноль: человек читает то, за чем листал.
+  double blur(
+    int distance,
+    double step, {
+    required bool manual,
+    required bool active,
+    required bool visible,
+  }) {
+    if (!blurEnabled || active || !visible || manual) return 0;
+    final List<double> table =
+        isClassic ? _classicBlur : (isEnhanced ? _enhancedBlur : _v2Blur);
+    return tableValue(table, distance / step);
+  }
+
+  /// Размер строки относительно базового. Классический режим не меняет
+  /// кегль по расстоянию — активная выделяется насыщенностью.
+  double sizeScale(int distance, double step) {
+    if (isClassic) return 1;
+    return tableValue(isEnhanced ? _enhancedSize : _v2Size, distance / step);
+  }
+
+  /// Кегль активной строки — по нему считается высота строки для автопрокрутки.
+  double get activeSizeScale => isClassic ? 1 : (isEnhanced ? 1.14 : 1.30);
+
+  /// Масштаб неактивной строки в покое: в классическом режиме строки чуть
+  /// меньше активной — так было до появления режимов.
+  double get restingScale => isClassic ? 0.95 : 1;
+
+  FontWeight weight(bool active) {
+    if (active) return FontWeight.w800;
+    return isClassic ? FontWeight.w600 : FontWeight.w500;
+  }
 }
 
 /// Текст песни: синхронизированный (с автопрокруткой) или обычный.
@@ -928,6 +1104,22 @@ class _WordTiming {
   final int endMs;
 }
 
+/// Разбивает пословную разметку строки на участки с выведенным концом.
+///
+/// Отдельная функция, а не метод состояния: те же времена нужны панели
+/// Enhanced, которая строится вне списка строк.
+List<_WordTiming> _wordTimingsFor(TimedLyric line, int lineEndMs) {
+  final List<TimedWord>? words = line.words;
+  if (words == null || words.isEmpty) return const <_WordTiming>[];
+  return List<_WordTiming>.generate(words.length, (int i) {
+    final int start = words[i].time.inMilliseconds;
+    int end = words[i].end?.inMilliseconds ??
+        (i + 1 < words.length ? words[i + 1].time.inMilliseconds : lineEndMs);
+    if (end <= start) end = start + 1;
+    return _WordTiming(text: words[i].text, startMs: start, endMs: end);
+  });
+}
+
 /// Строка списка отображения: настоящая строка текста либо инструментальная
 /// вставка.
 ///
@@ -1384,18 +1576,8 @@ class _SyncedLyricsState extends ConsumerState<_SyncedLyrics>
     return end;
   }
 
-  List<_WordTiming> _wordTimings(int index) {
-    final List<TimedWord>? words = widget.lines[index].words;
-    if (words == null || words.isEmpty) return const <_WordTiming>[];
-    final int lineEnd = _lineEndMs(index);
-    return List<_WordTiming>.generate(words.length, (int i) {
-      final int start = words[i].time.inMilliseconds;
-      int end = words[i].end?.inMilliseconds ??
-          (i + 1 < words.length ? words[i + 1].time.inMilliseconds : lineEnd);
-      if (end <= start) end = start + 1;
-      return _WordTiming(text: words[i].text, startMs: start, endMs: end);
-    });
-  }
+  List<_WordTiming> _wordTimings(int index) =>
+      _wordTimingsFor(widget.lines[index], _lineEndMs(index));
 
   @override
   Widget build(BuildContext context) {
@@ -1422,11 +1604,32 @@ class _SyncedLyricsState extends ConsumerState<_SyncedLyrics>
     final double scale = ref.watch(
       settingsControllerProvider.select((AppSettings s) => s.lyricsTextScale),
     );
+    final LyricsMode mode = ref.watch(
+      settingsControllerProvider.select((AppSettings s) => s.lyricsMode),
+    );
+    final LyricsAnimationStyle animationStyle = ref.watch(
+      settingsControllerProvider
+          .select((AppSettings s) => s.lyricsAnimationStyle),
+    );
+    final bool blurEnabled = ref.watch(
+      settingsControllerProvider.select((AppSettings s) => s.lyricsLineBlur),
+    );
+    final double lineSpacing = ref.watch(
+      settingsControllerProvider
+          .select((AppSettings s) => s.lyricsLineSpacing),
+    );
+
     final double baseSize = (theme.titleLarge?.fontSize ?? 22) * scale;
-    // Высота строки: межстрочный 1.35 плюс отступы строки (10 сверху и 10
-    // снизу, см. `_LyricLine`). Вставка держит ту же высоту, поэтому текст под
-    // ней не дёргается, когда в ней появляется содержимое.
-    _lineHeight = baseSize * 1.35 + 20;
+    final _LyricsLook look = _LyricsLook(
+      mode: mode,
+      animation: animationStyle,
+      blurEnabled: blurEnabled,
+      lineSpacing: lineSpacing,
+    );
+    // Высота строки: самый крупный кегль режима плюс отступы строки (10 сверху
+    // и 10 снизу, см. `_LyricLine`). Вставка держит ту же высоту, поэтому текст
+    // под ней не дёргается, когда в ней появляется содержимое.
+    _lineHeight = baseSize * look.activeSizeScale * look.lineSpacing + 20;
 
     // Список отображения пересобираем перед раскладкой: он задаёт и число
     // ключей, и индексы для прокрутки.
@@ -1474,6 +1677,7 @@ class _SyncedLyricsState extends ConsumerState<_SyncedLyrics>
                       blurVisible: i >= _firstVisible && i <= _lastVisible,
                       step: _lineStep,
                       positionMs: _positionMs,
+                      look: look,
                       // Пауза в тексте сдвинута оффсетом так же, как строки:
                       // чтобы попасть в её начало, сдвигаем и цель перемотки.
                       onSeek: () => ref
@@ -1512,6 +1716,7 @@ class _SyncedLyricsState extends ConsumerState<_SyncedLyrics>
                       positionMs: _positionMs,
                       words: _wordTimings(_display[i].lineIndex),
                       baseSize: baseSize,
+                      look: look,
                       search: widget.search,
                       romanized: widget.romanized[_display[i].lineIndex],
                     ),
@@ -1520,6 +1725,42 @@ class _SyncedLyricsState extends ConsumerState<_SyncedLyrics>
               ),
             ),
           ),
+        );
+      },
+    );
+
+    // Enhanced — единственный режим с другой раскладкой: на широком экране
+    // активная строка уезжает в отдельную панель, список остаётся справа.
+    // На узком окне он честно работает как V2: отдельной панели там негде
+    // развернуться.
+    final Widget content = LayoutBuilder(
+      builder: (BuildContext context, BoxConstraints constraints) {
+        if (!look.isEnhanced || constraints.maxWidth < _enhancedBreakpoint) {
+          return list;
+        }
+        return Row(
+          crossAxisAlignment: CrossAxisAlignment.stretch,
+          children: <Widget>[
+            Expanded(
+              flex: 4,
+              child: _EnhancedFocus(
+                lines: widget.lines,
+                display: _display,
+                activeIndex: _activeIndex,
+                positionMs: _positionMs,
+                romanized: widget.romanized,
+                baseSize: baseSize,
+                look: look,
+                search: widget.search,
+                wordsFor: _wordTimings,
+              ),
+            ),
+            VerticalDivider(
+              width: 1,
+              color: Theme.of(context).colorScheme.outlineVariant,
+            ),
+            Expanded(flex: 6, child: list),
+          ],
         );
       },
     );
@@ -1533,7 +1774,7 @@ class _SyncedLyricsState extends ConsumerState<_SyncedLyrics>
         onNotification: _onScrollNotification,
         child: Stack(
           children: <Widget>[
-            list,
+            content,
             if (_manualScrolling && !widget.search.isActive)
               Positioned(
                 left: 0,
@@ -1569,6 +1810,7 @@ class _LyricLine extends StatelessWidget {
     required this.positionMs,
     required this.words,
     required this.baseSize,
+    required this.look,
     required this.search,
     this.romanized,
     this.onTap,
@@ -1598,39 +1840,13 @@ class _LyricLine extends StatelessWidget {
   final ValueNotifier<int> positionMs;
   final List<_WordTiming> words;
   final double baseSize;
+
+  /// Режим и стиль анимации — общие для всех строк списка.
+  final _LyricsLook look;
   final _LyricsSearch search;
 
   /// Латиница под строкой; `null` — романизации нет.
   final String? romanized;
-
-  /// Прозрачность строки по расстоянию (`LyricsV2.kt:549-583`).
-  ///
-  /// Расстояние делим на [step]: на телефоне он равен единице, и таблица
-  /// выдаёт ровно оригинальные значения; на большом экране, где видно больше
-  /// строк, ступени растягиваются — иначе погас бы почти весь текст.
-  double get _alpha {
-    if (active) return 1;
-    return tableValue(
-      manualScrolling ? _manualAlphaTable : _alphaTable,
-      distance / step,
-    );
-  }
-
-  /// Размытие строки по расстоянию (`LyricsV2.kt:584-590`).
-  ///
-  /// Размываются ВСЕ строки, которые сейчас видны на экране: размытие — это и
-  /// есть смысл эффекта, текст уходит в глубину по мере удаления от активной
-  /// строки, а не просто гаснет. Строки за краем экрана не размываем только
-  /// потому, что их не видно: `ImageFilter` — самый дорогой слой в строке, и
-  /// платить за невидимое незачем.
-  double get _blur {
-    if (active || !blurVisible) return 0;
-    // Ручная прокрутка — размытие снимаем: человек ушёл от активной строки и
-    // читает то, что перед ним. Размывать по расстоянию от строки, которая
-    // осталась выше, значит гасить именно то, за чем он листал.
-    if (manualScrolling) return 0;
-    return tableValue(_blurTable, distance / step);
-  }
 
   @override
   Widget build(BuildContext context) {
@@ -1641,74 +1857,105 @@ class _LyricLine extends StatelessWidget {
       top: first ? 0 : 10,
       bottom: 10,
     );
-    final double targetAlpha = _alpha;
-    final double targetBlur = _blur;
-    final double targetScale = active ? 1 : 0.95;
-    final MotionTransition lineFade = active
-        ? AppMotion.lyricsLineFadeIn
-        : AppMotion.lyricsLineFadeOut;
+    final double targetAlpha = look.alpha(
+      distance,
+      step,
+      manual: manualScrolling,
+      active: active,
+    );
+    final double targetBlur = look.blur(
+      distance,
+      step,
+      manual: manualScrolling,
+      active: active,
+      visible: blurVisible,
+    );
+    final double fontSize = baseSize * look.sizeScale(distance, step);
+    final LyricsAnimationProfile profile = look.profile;
+    // Стиль «Нет» не должен оставлять даже размытие: оно тоже движение.
+    final Duration blurDuration = profile.enter.duration == Duration.zero
+        ? Duration.zero
+        : AppMotion.lyricsLineBlur.duration;
+
+    Widget buildContent(double alpha, double blur) {
+      Widget content = active && words.isNotEmpty && !search.isActive
+          ? _karaoke(scheme)
+          : _staticText(scheme, alpha, fontSize);
+      if (blur > 0.1) {
+        content = ImageFiltered(
+          imageFilter: ui.ImageFilter.blur(sigmaX: blur, sigmaY: blur),
+          child: content,
+        );
+      }
+      return content;
+    }
 
     final Widget body = Padding(
       padding: padding,
-      child: TweenAnimationBuilder<double>(
-        // Прозрачность: активная строка загорается за 330 мс, гаснет за 500 мс
-        // (`LyricsV2.kt:609-617`).
-        tween: Tween<double>(begin: targetAlpha, end: targetAlpha),
-        duration: lineFade.duration,
-        curve: lineFade.curve,
-        builder: (BuildContext context, double alpha, Widget? _) {
-          return TweenAnimationBuilder<double>(
-            // Размытие: 300 мс (`LyricsV2.kt:591-599`).
-            tween: Tween<double>(begin: targetBlur, end: targetBlur),
-            duration: AppMotion.lyricsLineBlur.duration,
-            curve: AppMotion.lyricsLineBlur.curve,
-            builder: (BuildContext context, double blur, Widget? _) {
-              return TweenAnimationBuilder<double>(
-                // Масштаб: 166 мс, 1.0 у активной и 0.95 у остальных
-                // (`LyricsV2.kt:600-608`).
-                tween: Tween<double>(begin: targetScale, end: targetScale),
-                duration: AppMotion.lyricsLineScale.duration,
-                curve: AppMotion.lyricsLineScale.curve,
-                builder: (BuildContext context, double scaleValue, Widget? _) {
-                  Widget content = active && words.isNotEmpty && !search.isActive
-                      ? _karaoke(scheme)
-                      : _staticText(scheme, alpha);
-                  if (blur > 0.1) {
-                    content = ImageFiltered(
-                      imageFilter:
-                          ui.ImageFilter.blur(sigmaX: blur, sigmaY: blur),
-                      child: content,
+      // Строка перерисовывается отдельно от соседей: при появлении активной
+      // строки и подсветке слов перерисовывается только её слой.
+      child: RepaintBoundary(
+        child: TweenAnimationBuilder<double>(
+          // Прозрачность: активная строка загорается быстрее, чем гаснет
+          // (`LyricsV2.kt:609-617`). Стиль задаёт только длительность и кривую.
+          tween: Tween<double>(begin: targetAlpha, end: targetAlpha),
+          duration: active ? profile.enter.duration : profile.exit.duration,
+          curve: active ? profile.enter.curve : profile.exit.curve,
+          builder: (BuildContext context, double alpha, Widget? _) {
+            return TweenAnimationBuilder<double>(
+              // Размытие: 300 мс (`LyricsV2.kt:591-599`).
+              tween: Tween<double>(begin: targetBlur, end: targetBlur),
+              duration: blurDuration,
+              curve: AppMotion.lyricsLineBlur.curve,
+              builder: (BuildContext context, double blur, Widget? _) {
+                // Масштаб нужен только в момент появления: ключ по `active`
+                // перезапускает твин при входе в активное состояние, а при
+                // уходе строка не «сжимается» обратно.
+                return TweenAnimationBuilder<double>(
+                  key: ValueKey<bool>(active),
+                  tween: Tween<double>(
+                    begin: active ? profile.fromScale : look.restingScale,
+                    end: active ? 1 : look.restingScale,
+                  ),
+                  duration: profile.enter.duration,
+                  curve: profile.enter.curve,
+                  child: buildContent(alpha, blur),
+                  builder: (
+                    BuildContext context,
+                    double scaleValue,
+                    Widget? child,
+                  ) {
+                    final Widget scaled = Transform.scale(
+                      scale: scaleValue,
+                      alignment: Alignment.centerLeft,
+                      child: child,
                     );
-                  }
-                  final Widget scaled = Transform.scale(
-                    scale: scaleValue,
-                    alignment: Alignment.centerLeft,
-                    child: content,
-                  );
-                  if (romanized == null) return scaled;
-                  // Романизация идёт отдельной строкой под оригиналом: мельче
-                  // и приглушённее, чтобы латиница оставалась подсказкой, а не
-                  // заменяла текст песни.
-                  return Column(
-                    crossAxisAlignment: CrossAxisAlignment.start,
-                    children: <Widget>[
-                      scaled,
-                      Text(
-                        romanized!,
-                        style: TextStyle(
-                          height: 1.35,
-                          fontSize: baseSize * 0.7,
-                          fontWeight: FontWeight.w500,
-                          color: scheme.onSurface.withValues(alpha: alpha * 0.7),
+                    if (romanized == null) return scaled;
+                    // Романизация идёт отдельной строкой под оригиналом: мельче
+                    // и приглушённее, чтобы латиница оставалась подсказкой, а не
+                    // заменяла текст песни.
+                    return Column(
+                      crossAxisAlignment: CrossAxisAlignment.start,
+                      children: <Widget>[
+                        scaled,
+                        Text(
+                          romanized!,
+                          style: TextStyle(
+                            height: look.lineSpacing,
+                            fontSize: fontSize * 0.7,
+                            fontWeight: FontWeight.w500,
+                            color: scheme.onSurface
+                                .withValues(alpha: alpha * 0.7),
+                          ),
                         ),
-                      ),
-                    ],
-                  );
-                },
-              );
-            },
-          );
-        },
+                      ],
+                    );
+                  },
+                );
+              },
+            );
+          },
+        ),
       ),
     );
 
@@ -1723,11 +1970,11 @@ class _LyricLine extends StatelessWidget {
   }
 
   /// Обычная строка: цвет по прозрачности строки, запрос поиска подсвечен.
-  Widget _staticText(ColorScheme scheme, double alpha) {
+  Widget _staticText(ColorScheme scheme, double alpha, double fontSize) {
     final TextStyle baseStyle = TextStyle(
-      height: 1.35,
-      fontSize: baseSize,
-      fontWeight: active ? FontWeight.w800 : FontWeight.w600,
+      height: look.lineSpacing,
+      fontSize: fontSize,
+      fontWeight: look.weight(active),
       color: scheme.onSurface.withValues(alpha: alpha),
     );
     if (!search.isActive) return Text(line.text, style: baseStyle);
@@ -1761,18 +2008,23 @@ class _LyricLine extends StatelessWidget {
       builder: (BuildContext context, int pos, Widget? _) {
         final Color dim = scheme.onSurface.withValues(alpha: _inactiveAlpha);
         final Color full = scheme.onSurface;
-        return Wrap(
-          crossAxisAlignment: WrapCrossAlignment.center,
-          children: <Widget>[
-            for (final _WordTiming word in words)
-              _KaraokeWord(
-                word: word,
-                positionMs: pos,
-                dimColor: dim,
-                fullColor: full,
-                baseSize: baseSize,
-              ),
-          ],
+        return RepaintBoundary(
+          child: Wrap(
+            crossAxisAlignment: WrapCrossAlignment.center,
+            children: <Widget>[
+              for (final _WordTiming word in words)
+                _KaraokeWord(
+                  word: word,
+                  positionMs: pos,
+                  dimColor: dim,
+                  fullColor: full,
+                  baseSize: baseSize * look.activeSizeScale,
+                  bounceFactor: look.profile.wordBounce,
+                  glowFactor: look.profile.wordGlow,
+                  lineSpacing: look.lineSpacing,
+                ),
+            ],
+          ),
         );
       },
     );
@@ -1798,6 +2050,7 @@ class _InterludeLine extends StatelessWidget {
     required this.blurVisible,
     required this.step,
     required this.positionMs,
+    required this.look,
     required this.onSeek,
   });
 
@@ -1821,23 +2074,27 @@ class _InterludeLine extends StatelessWidget {
   final double step;
   final ValueNotifier<int> positionMs;
 
+  /// Режим и стиль анимации — те же, что у строк текста.
+  final _LyricsLook look;
+
   /// Клик по ноте — перемотка на начало паузы.
   final VoidCallback onSeek;
 
   /// Прозрачность ноты по расстоянию: как у строк, но с таблицей вставки.
   double get _alpha {
     if (active) return 1;
-    return tableValue(
-      manualScrolling ? _manualAlphaTable : _interludeAlphaTable,
-      distance / step,
+    if (look.isClassic) {
+      return tableValue(
+        manualScrolling ? _manualAlphaTable : _interludeAlphaTable,
+        distance / step,
+      );
+    }
+    // В новых режимах нота гаснет вместе со строками, но не ниже порога:
+    // совсем погасшая нота теряла бы смысл — по ней видно, что здесь пауза.
+    return math.max(
+      _inactiveAlpha,
+      look.alpha(distance, step, manual: manualScrolling, active: false),
     );
-  }
-
-  /// Размытие по расстоянию — то же, что у строк; в ручной прокрутке снимаем,
-  /// иначе размывалось бы именно то, за чем человек листал.
-  double get _blur {
-    if (active || !blurVisible || manualScrolling) return 0;
-    return tableValue(_blurTable, distance / step);
   }
 
   /// Доля заливки: до паузы 0, после 1. Считаем по позиции, а не по таймеру,
@@ -1856,63 +2113,342 @@ class _InterludeLine extends StatelessWidget {
       bottom: 10,
     );
     final double targetAlpha = _alpha;
-    final double targetBlur = _blur;
-    final double targetScale = active ? 1 : 0.95;
-    final MotionTransition lineFade = active
-        ? AppMotion.lyricsLineFadeIn
-        : AppMotion.lyricsLineFadeOut;
+    final double targetBlur = look.blur(
+      distance,
+      step,
+      manual: manualScrolling,
+      active: active,
+      visible: blurVisible,
+    );
+    final LyricsAnimationProfile profile = look.profile;
+    final Duration blurDuration = profile.enter.duration == Duration.zero
+        ? Duration.zero
+        : AppMotion.lyricsLineBlur.duration;
 
     return Padding(
       padding: padding,
-      child: TweenAnimationBuilder<double>(
-        // Прозрачность: активная строка загорается за 330 мс, гаснет за 500 мс
-        // (`LyricsV2.kt:609-617`).
-        tween: Tween<double>(begin: targetAlpha, end: targetAlpha),
-        duration: lineFade.duration,
-        curve: lineFade.curve,
-        builder: (BuildContext context, double alpha, Widget? _) {
-          return TweenAnimationBuilder<double>(
-            // Размытие: 300 мс (`LyricsV2.kt:591-599`).
-            tween: Tween<double>(begin: targetBlur, end: targetBlur),
-            duration: AppMotion.lyricsLineBlur.duration,
-            curve: AppMotion.lyricsLineBlur.curve,
-            builder: (BuildContext context, double blur, Widget? _) {
-              return TweenAnimationBuilder<double>(
-                // Масштаб: 166 мс, 1.0 у активной и 0.95 у остальных
-                // (`LyricsV2.kt:600-608`).
-                tween: Tween<double>(begin: targetScale, end: targetScale),
-                duration: AppMotion.lyricsLineScale.duration,
-                curve: AppMotion.lyricsLineScale.curve,
-                builder: (BuildContext context, double scaleValue, Widget? _) {
-                  Widget note = ValueListenableBuilder<int>(
-                    valueListenable: positionMs,
-                    builder: (BuildContext context, int pos, Widget? _) =>
-                        _FillNote(
-                      fraction: _fillFraction(pos),
-                      dimColor:
-                          scheme.onSurface.withValues(alpha: _inactiveAlpha),
-                      fullColor: scheme.onSurface,
-                      onTap: onSeek,
-                    ),
-                  );
-                  if (blur > 0.1) {
-                    note = ImageFiltered(
-                      imageFilter:
-                          ui.ImageFilter.blur(sigmaX: blur, sigmaY: blur),
-                      child: note,
+      child: RepaintBoundary(
+        child: TweenAnimationBuilder<double>(
+          // Прозрачность: активная строка загорается быстрее, чем гаснет
+          // (`LyricsV2.kt:609-617`). Стиль задаёт длительность и кривую.
+          tween: Tween<double>(begin: targetAlpha, end: targetAlpha),
+          duration: active ? profile.enter.duration : profile.exit.duration,
+          curve: active ? profile.enter.curve : profile.exit.curve,
+          builder: (BuildContext context, double alpha, Widget? _) {
+            return TweenAnimationBuilder<double>(
+              // Размытие: 300 мс (`LyricsV2.kt:591-599`).
+              tween: Tween<double>(begin: targetBlur, end: targetBlur),
+              duration: blurDuration,
+              curve: AppMotion.lyricsLineBlur.curve,
+              builder: (BuildContext context, double blur, Widget? _) {
+                final Widget note = ValueListenableBuilder<int>(
+                  valueListenable: positionMs,
+                  builder: (BuildContext context, int pos, Widget? _) =>
+                      _FillNote(
+                    fraction: _fillFraction(pos),
+                    dimColor:
+                        scheme.onSurface.withValues(alpha: _inactiveAlpha),
+                    fullColor: scheme.onSurface,
+                    onTap: onSeek,
+                  ),
+                );
+                final Widget filtered = blur > 0.1
+                    ? ImageFiltered(
+                        imageFilter:
+                            ui.ImageFilter.blur(sigmaX: blur, sigmaY: blur),
+                        child: note,
+                      )
+                    : note;
+                return TweenAnimationBuilder<double>(
+                  key: ValueKey<bool>(active),
+                  tween: Tween<double>(
+                    begin: active ? profile.fromScale : look.restingScale,
+                    end: active ? 1 : look.restingScale,
+                  ),
+                  duration: profile.enter.duration,
+                  curve: profile.enter.curve,
+                  builder: (
+                    BuildContext context,
+                    double scaleValue,
+                    Widget? child,
+                  ) {
+                    return Opacity(
+                      opacity: alpha.clamp(0.0, 1.0),
+                      child: Transform.scale(
+                        scale: scaleValue,
+                        alignment: Alignment.centerLeft,
+                        child: child,
+                      ),
                     );
-                  }
-                  return Opacity(
-                    opacity: alpha.clamp(0.0, 1.0),
-                    child: Transform.scale(
-                      scale: scaleValue,
-                      alignment: Alignment.centerLeft,
-                      child: note,
+                  },
+                  child: filtered,
+                );
+              },
+            );
+          },
+        ),
+      ),
+    );
+  }
+}
+
+/// Панель активной строки для режима Enhanced.
+///
+/// На широком экране текст песни делится на две части: слева — то, что поётся
+/// сейчас, крупно и с прогрессом строки, справа — весь список для контекста и
+/// поиска. Панель не прокручивается и живёт вне списка, поэтому автопрокрутка,
+/// клик по строке и оффсет продолжают работать как раньше.
+class _EnhancedFocus extends StatelessWidget {
+  const _EnhancedFocus({
+    required this.lines,
+    required this.display,
+    required this.activeIndex,
+    required this.positionMs,
+    required this.romanized,
+    required this.baseSize,
+    required this.look,
+    required this.search,
+    required this.wordsFor,
+  });
+
+  final List<TimedLyric> lines;
+  final List<_DisplayLine> display;
+  final ValueNotifier<int> activeIndex;
+  final ValueNotifier<int> positionMs;
+  final Map<int, String> romanized;
+  final double baseSize;
+  final _LyricsLook look;
+  final _LyricsSearch search;
+  final List<_WordTiming> Function(int lineIndex) wordsFor;
+
+  @override
+  Widget build(BuildContext context) {
+    final ColorScheme scheme = Theme.of(context).colorScheme;
+    final LyricsAnimationProfile profile = look.profile;
+    final double fontSize = baseSize * 1.85;
+
+    return ValueListenableBuilder<int>(
+      valueListenable: activeIndex,
+      builder: (BuildContext context, int active, Widget? _) {
+        final bool valid = active >= 0 && active < display.length;
+        final _DisplayLine? current = valid ? display[active] : null;
+        final TimedLyric? line = current != null && !current.isInstrumental
+            ? lines[current.lineIndex]
+            : null;
+        final String? latin =
+            current != null && !current.isInstrumental
+                ? romanized[current.lineIndex]
+                : null;
+        final _DisplayLine? next =
+            valid && active + 1 < display.length ? display[active + 1] : null;
+        final String? nextText = next != null && !next.isInstrumental
+            ? lines[next.lineIndex].text
+            : null;
+
+        final Widget activePart;
+        if (current != null && current.isInstrumental) {
+          activePart = Row(
+            children: <Widget>[
+              Icon(Icons.music_note, size: fontSize, color: scheme.onSurface),
+              const SizedBox(width: 12),
+              Text(
+                'Проигрыш',
+                style: TextStyle(
+                  height: look.lineSpacing,
+                  fontSize: fontSize * 0.6,
+                  fontWeight: FontWeight.w600,
+                  color: scheme.onSurface.withValues(alpha: 0.7),
+                ),
+              ),
+            ],
+          );
+        } else if (line != null) {
+          activePart = _text(scheme, line, current!.lineIndex, fontSize);
+        } else {
+          // До первой строки панель не пустует: она показывает, что текст
+          // начнётся, а не что он сломался.
+          activePart = Text(
+            'Текст начнётся с первым куплетом',
+            style: TextStyle(
+              height: look.lineSpacing,
+              fontSize: fontSize * 0.45,
+              color: scheme.onSurfaceVariant,
+            ),
+          );
+        }
+
+        final Widget animated = TweenAnimationBuilder<double>(
+          // Ключ по номеру строки: панель «въезжает» один раз на строку и
+          // дальше стоит неподвижно — вечной анимации здесь нет.
+          key: ValueKey<int>(active),
+          tween: Tween<double>(begin: profile.fromScale, end: 1),
+          duration: profile.enter.duration,
+          curve: profile.enter.curve,
+          builder: (BuildContext context, double value, Widget? child) {
+            return Opacity(
+              opacity: (0.5 + 0.5 * value).clamp(0.0, 1.0),
+              child: Transform.scale(
+                scale: value,
+                alignment: Alignment.centerLeft,
+                child: child,
+              ),
+            );
+          },
+          child: activePart,
+        );
+
+        return RepaintBoundary(
+          child: Padding(
+            padding: const EdgeInsets.fromLTRB(32, 40, 32, 32),
+            child: Column(
+              mainAxisAlignment: MainAxisAlignment.center,
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: <Widget>[
+                if (current != null) ...<Widget>[
+                  Text(
+                    'СЕЙЧАС',
+                    style: Theme.of(context).textTheme.labelSmall?.copyWith(
+                          letterSpacing: 1.4,
+                          color: scheme.onSurfaceVariant,
+                        ),
+                  ),
+                  const SizedBox(height: 12),
+                ],
+                animated,
+                if (latin != null) ...<Widget>[
+                  const SizedBox(height: 8),
+                  Text(
+                    latin,
+                    style: TextStyle(
+                      height: look.lineSpacing,
+                      fontSize: fontSize * 0.42,
+                      fontWeight: FontWeight.w500,
+                      color: scheme.onSurfaceVariant,
                     ),
-                  );
-                },
-              );
-            },
+                  ),
+                ],
+                if (current != null) ...<Widget>[
+                  const SizedBox(height: 20),
+                  _FocusProgress(
+                    startMs: current.startMs,
+                    endMs: current.endMs,
+                    positionMs: positionMs,
+                    color: scheme.primary,
+                  ),
+                  if (nextText != null) ...<Widget>[
+                    const SizedBox(height: 20),
+                    Text(
+                      nextText,
+                      maxLines: 2,
+                      overflow: TextOverflow.ellipsis,
+                      style: TextStyle(
+                        height: look.lineSpacing,
+                        fontSize: fontSize * 0.34,
+                        fontWeight: FontWeight.w500,
+                        color: scheme.onSurface.withValues(alpha: 0.45),
+                      ),
+                    ),
+                  ],
+                ],
+              ],
+            ),
+          ),
+        );
+      },
+    );
+  }
+
+  /// Крупная активная строка: караоке, если есть пословные времена, иначе —
+  /// обычный текст с подсветкой поиска.
+  Widget _text(
+    ColorScheme scheme,
+    TimedLyric line,
+    int lineIndex,
+    double fontSize,
+  ) {
+    final List<_WordTiming> words = wordsFor(lineIndex);
+    if (words.isNotEmpty && !search.isActive) {
+      return RepaintBoundary(
+        child: ValueListenableBuilder<int>(
+          valueListenable: positionMs,
+          builder: (BuildContext context, int pos, Widget? _) {
+            return Wrap(
+              crossAxisAlignment: WrapCrossAlignment.center,
+              children: <Widget>[
+                for (final _WordTiming word in words)
+                  _KaraokeWord(
+                    word: word,
+                    positionMs: pos,
+                    dimColor:
+                        scheme.onSurface.withValues(alpha: _inactiveAlpha),
+                    fullColor: scheme.onSurface,
+                    baseSize: fontSize,
+                    bounceFactor: look.profile.wordBounce,
+                    glowFactor: look.profile.wordGlow,
+                    lineSpacing: look.lineSpacing,
+                  ),
+              ],
+            );
+          },
+        ),
+      );
+    }
+
+    final TextStyle baseStyle = TextStyle(
+      height: look.lineSpacing,
+      fontSize: fontSize,
+      fontWeight: FontWeight.w800,
+      color: scheme.onSurface,
+    );
+    if (!search.isActive) return Text(line.text, style: baseStyle);
+    final TextStyle matchStyle = baseStyle.copyWith(
+      backgroundColor: scheme.primary.withValues(alpha: 0.28),
+      color: scheme.onSurface,
+    );
+    return Text.rich(
+      TextSpan(
+        children: _highlightSpans(
+          line.text,
+          search.query,
+          matchStyle: matchStyle,
+        ),
+      ),
+      style: baseStyle,
+    );
+  }
+}
+
+/// Тонкая полоса прогресса текущей строки: заполняется от её начала до конца.
+class _FocusProgress extends StatelessWidget {
+  const _FocusProgress({
+    required this.startMs,
+    required this.endMs,
+    required this.positionMs,
+    required this.color,
+  });
+
+  final int startMs;
+  final int endMs;
+  final ValueNotifier<int> positionMs;
+  final Color color;
+
+  @override
+  Widget build(BuildContext context) {
+    return RepaintBoundary(
+      child: ValueListenableBuilder<int>(
+        valueListenable: positionMs,
+        builder: (BuildContext context, int pos, Widget? _) {
+          final double value = endMs <= startMs
+              ? (pos >= endMs ? 1 : 0)
+              : ((pos - startMs) / (endMs - startMs)).clamp(0.0, 1.0);
+          return ClipRRect(
+            borderRadius: BorderRadius.circular(2),
+            child: LinearProgressIndicator(
+              value: value,
+              minHeight: 3,
+              color: color,
+              backgroundColor: color.withValues(alpha: 0.16),
+            ),
           );
         },
       ),
@@ -2064,6 +2600,9 @@ class _KaraokeWord extends StatelessWidget {
     required this.dimColor,
     required this.fullColor,
     required this.baseSize,
+    required this.bounceFactor,
+    required this.glowFactor,
+    required this.lineSpacing,
   });
 
   final _WordTiming word;
@@ -2071,6 +2610,14 @@ class _KaraokeWord extends StatelessWidget {
   final Color dimColor;
   final Color fullColor;
   final double baseSize;
+
+  /// Множители движения из выбранного стиля анимации (задача 3.2).
+  final double bounceFactor;
+  final double glowFactor;
+
+  /// Межстрочный интервал — общий со строкой, чтобы слова не «прыгали»
+  /// относительно оригинала.
+  final double lineSpacing;
 
   @override
   Widget build(BuildContext context) {
@@ -2083,20 +2630,20 @@ class _KaraokeWord extends StatelessWidget {
             ? 0
             : ((positionMs - word.startMs) / duration).clamp(0.0, 1.0));
 
-    // Подскок: масштаб +1.5% и подъём до -4 px на пике слова
-    // (`LyricsV2.kt:1206-1212`).
+    // Подскок: базовый масштаб +1.5% и подъём до -4 px на пике слова
+    // (`LyricsV2.kt:1206-1212`). Стиль меняет только амплитуду.
     final double sinProgress = math.sin(progress * math.pi);
-    final double wordScale = 1 + 0.015 * _wordBounceFactor * sinProgress;
-    final double floatY = singing ? -4 * _wordBounceFactor * sinProgress : 0;
+    final double wordScale = 1 + 0.015 * bounceFactor * sinProgress;
+    final double floatY = singing ? -4 * bounceFactor * sinProgress : 0;
 
     // Свечение только у поющегося слова, максимум к половине слова
     // (`LyricsV2.kt:1223-1228`).
     final double glowProgress = math.min(1, progress * 2);
-    final double glowAlpha = singing ? glowProgress * 0.45 * _wordGlowFactor : 0;
-    final double glowRadius = singing ? glowProgress * 12 * _wordGlowFactor : 0;
+    final double glowAlpha = singing ? glowProgress * 0.45 * glowFactor : 0;
+    final double glowRadius = singing ? glowProgress * 12 * glowFactor : 0;
 
     final TextStyle baseStyle = TextStyle(
-      height: 1.35,
+      height: lineSpacing,
       fontSize: baseSize,
       fontWeight: FontWeight.w800,
       color: dimColor,
