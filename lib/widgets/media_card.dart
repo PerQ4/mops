@@ -1,9 +1,13 @@
+import 'dart:async';
+
 import 'package:flutter/material.dart';
+import 'package:flutter_riverpod/flutter_riverpod.dart';
 
 import '../core/theme/layout.dart';
 import '../data/models/models.dart';
 import 'artist_line.dart';
 import 'artwork.dart';
+import 'entity_menu.dart';
 import 'track_menu.dart';
 
 /// videoId, спрятанный в адресе обложки (`i.ytimg.com/vi/<id>/…`).
@@ -86,8 +90,9 @@ class MediaCard extends StatelessWidget {
   ///
   /// Сама карточка не знает, что за сущность показывает; действие задаёт
   /// [BrowseItemCard]. Нажатия и свайпы не затрагиваются: жест только
-  /// вторичный.
-  final VoidCallback? onSecondaryTap;
+  /// вторичный. Позиция нужна для [showMenu]: меню открывается у курсора, а не
+  /// шторкой снизу.
+  final void Function(Offset globalPosition)? onSecondaryTap;
 
   @override
   Widget build(BuildContext context) {
@@ -175,7 +180,10 @@ class MediaCard extends StatelessWidget {
     if (onSecondaryTap == null) return card;
     return GestureDetector(
       behavior: HitTestBehavior.opaque,
-      onSecondaryTap: onSecondaryTap,
+      // `onSecondaryTapUp`, а не `onSecondaryTap`: нужна точка нажатия,
+      // чтобы поставить меню у курсора.
+      onSecondaryTapUp: (TapUpDetails details) =>
+          onSecondaryTap!(details.globalPosition),
       child: card,
     );
   }
@@ -211,7 +219,7 @@ class _PlayBadge extends StatelessWidget {
 }
 
 /// Карточка из [BrowseItem] — сама понимает, что за сущность внутри.
-class BrowseItemCard extends StatelessWidget {
+class BrowseItemCard extends ConsumerWidget {
   const BrowseItemCard({
     super.key,
     required this.item,
@@ -231,7 +239,7 @@ class BrowseItemCard extends StatelessWidget {
   final void Function(BrowseItem item)? onPlay;
 
   @override
-  Widget build(BuildContext context) {
+  Widget build(BuildContext context, WidgetRef ref) {
     // Вместе с подписью достаём и исполнителей: у трека подпись собирается
     // из них, чтобы каждое имя вело на свою страницу.
     final (String? subtitle, bool circular, IconData icon, List<ArtistRef>?)
@@ -279,13 +287,53 @@ class BrowseItemCard extends StatelessWidget {
       subtitleArtists: subtitleArtists,
       onTap: () => onTap(item),
       onPlay: onPlay == null ? null : () => onPlay!(item),
-      // Меню по правой кнопке есть только у трека: оно уже собрано и общее
-      // для списков. У альбома, исполнителя и плейлиста своего меню нет —
-      // их действия живут кнопками на странице, а не в карточке.
-      onSecondaryTap: switch (item) {
-        TrackItem(:final Track track) => () => showTrackMenu(context, track),
-        _ => null,
-      },
+      // Меню по правой кнопке — у каждой сущности своё: у трека уже есть
+      // готовая шторка с обложкой, у остальных действия живут кнопками в
+      // шапках страниц, и карточка повторяет их у курсора.
+      onSecondaryTap: _secondaryTap(context, ref),
     );
+  }
+
+  /// Обработчик правого клика для текущего элемента.
+  ///
+  /// Возвращает `null`, если показывать нечего: так карточка не перехватывает
+  /// вторичный жест впустую.
+  void Function(Offset globalPosition)? _secondaryTap(
+    BuildContext context,
+    WidgetRef ref,
+  ) {
+    switch (item) {
+      case TrackItem(:final Track track):
+        return (Offset _) => unawaited(showTrackMenu(context, track));
+      case AlbumItem(:final Album album):
+        return (Offset position) =>
+            unawaited(showAlbumMenu(context, ref, album, position: position));
+      case ArtistItem(:final Artist artist):
+        return (Offset position) =>
+            unawaited(showArtistMenu(context, ref, artist, position: position));
+      case PlaylistItem(:final Playlist playlist):
+        // Клип YouTube Music приходит плейлистом без id: страницы и очереди у
+        // него нет, а играется он как трек (см. `playBrowseItem`). Для такого
+        // элемента честнее меню трека, чем пустое меню плейлиста.
+        final String? videoId = playlist.id.isEmpty
+            ? videoIdFromThumbnails(playlist.thumbnails)
+            : null;
+        if (videoId != null) {
+          return (Offset _) => unawaited(
+                showTrackMenu(
+                  context,
+                  Track(
+                    id: videoId,
+                    title: playlist.title,
+                    thumbnails: playlist.thumbnails,
+                  ),
+                ),
+              );
+        }
+        if (playlist.id.isEmpty) return null;
+        return (Offset position) => unawaited(
+              showPlaylistMenu(context, ref, playlist, position: position),
+            );
+    }
   }
 }

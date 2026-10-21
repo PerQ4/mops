@@ -4,7 +4,6 @@ import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 
 import '../../core/theme/layout.dart';
-import '../../core/theme/motion.dart';
 import '../../data/local/playlist_tags.dart';
 import '../../data/models/models.dart';
 import '../../state/auth_controller.dart';
@@ -24,9 +23,10 @@ import 'local_files_section.dart';
 
 /// Личная коллекция: чипы-фильтры и содержимое выбранного раздела.
 ///
-/// Форма из ArchiveTune: сверху ряд капсул-фильтров, ниже — содержимое. Вместо
-/// `TabBar`, как было раньше, потому что на широком экране капсулы читаются
-/// лучше и не растягиваются на всю ширину.
+/// Форма из ArchiveTune: сверху капсулы-фильтры, ниже — содержимое. Вместо
+/// `TabBar`, как было раньше, потому что капсулы читаются лучше и не
+/// растягиваются на всю ширину. Капсулы переносятся по строкам: все разделы
+/// видны сразу, без горизонтальной прокрутки.
 class LibraryScreen extends ConsumerStatefulWidget {
   const LibraryScreen({super.key});
 
@@ -140,11 +140,12 @@ enum LibraryFilter {
   final IconData icon;
 }
 
-/// Ряд капсул-фильтров.
+/// Ряд капсул-фильтров, который переносится по строкам.
 ///
-/// В ArchiveTune это `LazyRow` с отступом 24 по краям, шагом 12 между чипами и
-/// вертикальным отступом 8 (LibraryScreen.kt:332-341). Высота чипа — 40
-/// (иконка 20 + отступ 10×2), поэтому ряд занимает 56.
+/// В ArchiveTune это `LazyRow` с горизонтальной прокруткой
+/// (LibraryScreen.kt:332-341). На десктопе у ряда не было полосы прокрутки, и
+/// на узком окне половина разделов просто пряталась за краем. `Wrap` держит
+/// весь набор на виду: число строк меняется, состав — нет.
 class _FilterChips extends StatelessWidget {
   const _FilterChips({required this.selected, required this.onSelected});
 
@@ -153,18 +154,26 @@ class _FilterChips extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
-    return HorizontalList(
-      height: 56,
-      padding: const EdgeInsets.symmetric(horizontal: 24, vertical: 8),
-      showScrollbar: false,
-      separator: 12,
-      itemCount: LibraryFilter.values.length,
-      itemBuilder: (BuildContext context, int index) {
-        final LibraryFilter filter = LibraryFilter.values[index];
-        return _FilterCapsule(
-          filter: filter,
-          selected: filter == selected,
-          onTap: () => onSelected(filter),
+    return LayoutBuilder(
+      builder: (BuildContext context, BoxConstraints constraints) {
+        // На узком окне значки отнимают у подписей больше места, чем дают
+        // подсказки: без них тот же набор укладывается в меньшее число строк.
+        final bool showIcons = constraints.maxWidth >= AppLayout.compactMax;
+        return Padding(
+          padding: const EdgeInsets.fromLTRB(24, 12, 24, 4),
+          child: Wrap(
+            spacing: 8,
+            runSpacing: 8,
+            children: <Widget>[
+              for (final LibraryFilter filter in LibraryFilter.values)
+                _FilterCapsule(
+                  filter: filter,
+                  selected: filter == selected,
+                  showIcon: showIcons,
+                  onTap: () => onSelected(filter),
+                ),
+            ],
+          ),
         );
       },
     );
@@ -174,66 +183,59 @@ class _FilterChips extends StatelessWidget {
 /// Капсула-фильтр в стиле `ExpressiveTabChip` (LibraryScreen.kt:540-617):
 /// выбранная — заливка `primary` с текстом `onPrimary`, невыбранная —
 /// `surfaceContainerHighest` α0.5 (роль `surfaceVariant` устарела во Flutter)
-/// с текстом `onSurfaceVariant`. Выбранная слегка увеличена (1.05), при нажатии
-/// сжимается (0.92).
-class _FilterCapsule extends StatefulWidget {
+/// с текстом `onSurfaceVariant`.
+class _FilterCapsule extends StatelessWidget {
   const _FilterCapsule({
     required this.filter,
     required this.selected,
     required this.onTap,
+    this.showIcon = true,
   });
 
   final LibraryFilter filter;
   final bool selected;
   final VoidCallback onTap;
 
-  @override
-  State<_FilterCapsule> createState() => _FilterCapsuleState();
-}
-
-class _FilterCapsuleState extends State<_FilterCapsule> {
-  bool _pressed = false;
+  /// Значок можно скрыть: на узком окне подпись важнее картинки.
+  final bool showIcon;
 
   @override
   Widget build(BuildContext context) {
     final ColorScheme scheme = Theme.of(context).colorScheme;
-    final Color background = widget.selected
+    final Color background = selected
         ? scheme.primary
         : scheme.surfaceContainerHighest.withValues(alpha: 0.5);
-    final Color foreground = widget.selected
+    final Color foreground = selected
         ? scheme.onPrimary
         : scheme.onSurfaceVariant;
-    final double scale = _pressed ? 0.92 : (widget.selected ? 1.05 : 1.0);
 
-    return AnimatedScale(
-      scale: scale,
-      duration: AppMotion.chipPress.duration,
-      curve: AppMotion.chipPress.curve,
-      child: Material(
-        color: background,
-        shape: const StadiumBorder(),
-        clipBehavior: Clip.antiAlias,
-        child: InkWell(
-          onTap: widget.onTap,
-          onHighlightChanged: (bool value) => setState(() => _pressed = value),
-          child: Padding(
-            // Отступы капсулы: 18 по горизонтали, 10 по вертикали.
-            padding: const EdgeInsets.symmetric(horizontal: 18, vertical: 10),
-            child: Row(
-              mainAxisSize: MainAxisSize.min,
-              children: <Widget>[
-                Icon(widget.filter.icon, size: 20, color: foreground),
-                const SizedBox(width: 8),
-                Text(
-                  widget.filter.label,
-                  style: Theme.of(context).textTheme.labelLarge?.copyWith(
-                    fontWeight: FontWeight.w600,
-                    fontSize: 15,
-                    color: foreground,
-                  ),
-                ),
+    return Material(
+      color: background,
+      shape: const StadiumBorder(),
+      clipBehavior: Clip.antiAlias,
+      child: InkWell(
+        onTap: onTap,
+        child: Padding(
+          padding: EdgeInsets.symmetric(
+            horizontal: showIcon ? 12 : 14,
+            vertical: 8,
+          ),
+          child: Row(
+            mainAxisSize: MainAxisSize.min,
+            children: <Widget>[
+              if (showIcon) ...<Widget>[
+                Icon(filter.icon, size: 18, color: foreground),
+                const SizedBox(width: 6),
               ],
-            ),
+              Text(
+                filter.label,
+                style: Theme.of(context).textTheme.labelLarge?.copyWith(
+                  fontWeight: FontWeight.w600,
+                  fontSize: 13,
+                  color: foreground,
+                ),
+              ),
+            ],
           ),
         ),
       ),

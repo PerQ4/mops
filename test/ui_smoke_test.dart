@@ -425,10 +425,12 @@ void main() {
   });
 
   const AppSettings settings = AppSettings(
-    themeMode: ThemeModePreference.dark,
-    colorSource: ColorSource.seed,
-    seedColorIndex: 1,
-    useMaterialExpressive: true,
+    appearance: AppearanceSettings(
+      themeMode: ThemeModePreference.dark,
+      colorSource: ColorSource.seed,
+      seedColorIndex: 1,
+      useMaterialExpressive: true,
+    ),
   );
 
   /// Собирает приложение с подставными данными и указанным размером окна.
@@ -832,7 +834,7 @@ void main() {
     expect(find.text(_lyricsLines.first), findsWidgets);
   });
 
-  testWidgets('Поиск: настроения и жанры не обрезают подписи',
+  testWidgets('Поиск без запроса: подсказки, а не сетка настроений',
       (WidgetTester tester) async {
     await pump(
       tester,
@@ -841,14 +843,16 @@ void main() {
     );
 
     expect(tester.takeException(), isNull);
-    // Подписи в плитках видны целиком, а не «Хоро…»: сетка на десктопе шире,
-    // чем мобильные 180 пикселей.
-    expect(find.text('Хорошее настроение'), findsOneWidget);
-    expect(find.text('Для тренировки'), findsOneWidget);
+    // «Обзор» из поиска убран: настроения и жанры живут в своём разделе и на
+    // главной, а поиск без запроса показывает подсказки — тренды и своё из
+    // библиотеки. Проверяем именно это, а не отсутствие конкретных слов:
+    // часть названий вроде «Для тренировки» осталась как запрос-тренд.
+    expect(find.text('Тренды'), findsOneWidget);
+    expect(find.text('Хорошее настроение'), findsNothing);
 
     await expectLater(
       find.byType(MaterialApp),
-      matchesGoldenFile('goldens/12_search_moods.png'),
+      matchesGoldenFile('goldens/12_search_suggestions.png'),
     );
   });
 

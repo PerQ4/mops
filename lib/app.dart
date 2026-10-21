@@ -208,19 +208,27 @@ class _MopsAppState extends ConsumerState<MopsApp> {
         // Заодно она не попадает под масштабирование интерфейса: у нативной
         // шапки размер всегда один.
         if (!hasCustomTitleBar) return app;
-        return Column(
-          children: <Widget>[
-            // Шапка может быть погашена из экрана клипа в полном экране
-            // (см. `title_bar_visibility.dart`): она висит выше навигатора,
-            // поэтому сам экран её не видит и убрать иначе не может.
-            ValueListenableBuilder<bool>(
-              valueListenable: titleBarVisible,
-              child: const WindowTitleBar(),
-              builder: (BuildContext context, bool visible, Widget? child) =>
-                  visible ? child! : const SizedBox.shrink(),
-            ),
-            Expanded(child: app),
-          ],
+        // `Tooltip` на кнопках шапки требует предка `Overlay`, а колонка живёт
+        // выше навигатора — собственный оверлей навигатора ей не виден. Даём
+        // оверлей только шапке; `app` внутри колонки сохраняет свой: диалоги,
+        // меню и снэкбары остаются на оверлее навигатора и, как и раньше,
+        // рисуются ниже шапки. Обрезку не включаем — до этого её здесь не было.
+        return Overlay.wrap(
+          clipBehavior: Clip.none,
+          child: Column(
+            children: <Widget>[
+              // Шапка может быть погашена из экрана клипа в полном экране
+              // (см. `title_bar_visibility.dart`): она висит выше навигатора,
+              // поэтому сам экран её не видит и убрать иначе не может.
+              ValueListenableBuilder<bool>(
+                valueListenable: titleBarVisible,
+                child: const WindowTitleBar(),
+                builder: (BuildContext context, bool visible, Widget? child) =>
+                    visible ? child! : const SizedBox.shrink(),
+              ),
+              Expanded(child: app),
+            ],
+          ),
         );
       },
     );

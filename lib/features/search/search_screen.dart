@@ -21,9 +21,10 @@ import 'search_states.dart';
 
 /// Поиск по YouTube Music.
 ///
-/// Пока запрос не введён, показываются вкладки «Обзор» (настроения и жанры) и
-/// «Подсказки» (тренды и содержимое своей библиотеки). Как только запрос есть —
-/// выдача с фильтрами, как и раньше.
+/// Пока запрос не введён, показываются «Подсказки» (тренды и содержимое своей
+/// библиотеки): обзор из поиска убран — он живёт в одноимённом разделе, и
+/// третий экземпляр тех же настроений и жанров здесь только дублировал его.
+/// Как только запрос есть — выдача с фильтрами.
 class SearchScreen extends ConsumerStatefulWidget {
   const SearchScreen({super.key});
 
@@ -122,7 +123,7 @@ class _SearchScreenState extends ConsumerState<SearchScreen> {
         ),
       ),
       body: _query.isEmpty
-          ? _DiscoverTabs(onPick: _pickSuggestion)
+          ? _Suggestions(onPick: _pickSuggestion)
           : Column(
               children: <Widget>[
                 _FilterBar(
@@ -163,200 +164,6 @@ class _SearchScreenState extends ConsumerState<SearchScreen> {
   void _pickSuggestion(String value) {
     _controller.text = value;
     _submit(value);
-  }
-}
-
-/// Вкладки пустого поиска: «Обзор» и «Подсказки».
-class _DiscoverTabs extends StatelessWidget {
-  const _DiscoverTabs({required this.onPick});
-
-  final ValueChanged<String> onPick;
-
-  @override
-  Widget build(BuildContext context) {
-    return DefaultTabController(
-      length: 2,
-      child: Column(
-        children: <Widget>[
-          // Вкладки с иконками, как в `SearchDiscoveryTabs`
-          // (ui/screens/search/SearchScreen.kt:342-387).
-          const TabBar(
-            tabs: <Widget>[
-              Tab(icon: Icon(Icons.explore_outlined), text: 'Обзор'),
-              Tab(icon: Icon(Icons.auto_awesome), text: 'Подсказки'),
-            ],
-          ),
-          Expanded(
-            child: TabBarView(
-              children: <Widget>[
-                // В оригинале над сеткой «настроений и жанров» стоит заголовок
-                // `NavigationTitle` — в mOps это `_SearchSectionTitle`.
-                Column(
-                  children: const <Widget>[
-                    _SearchSectionTitle('Настроения и жанры'),
-                    Expanded(child: _MoodsGrid()),
-                  ],
-                ),
-                _Suggestions(onPick: onPick),
-              ],
-            ),
-          ),
-        ],
-      ),
-    );
-  }
-}
-
-/// Сетка «Настроения и жанры». Обзор по строкам-запросам к YouTube Music.
-class _MoodsGrid extends StatelessWidget {
-  const _MoodsGrid();
-
-  /// Настроения и жанры. Отдельного источника у InnerTube нет — как и на
-  /// главной, это подписи для поиска, а не выдуманные сущности.
-  static const List<(String, IconData)> _moods = <(String, IconData)>[
-    ('Хорошее настроение', Icons.sentiment_satisfied_outlined),
-    ('Спокойное', Icons.self_improvement_outlined),
-    ('Энергичное', Icons.bolt_outlined),
-    ('Романтика', Icons.favorite_border),
-    ('Для работы', Icons.work_outline),
-    ('Для тренировки', Icons.fitness_center),
-    ('Поп', Icons.music_note_outlined),
-    ('Рок', Icons.electric_bolt),
-    ('Хип-хоп', Icons.mic_external_on_outlined),
-    ('Электроника', Icons.graphic_eq),
-    ('Классика', Icons.piano_outlined),
-    ('Джаз', Icons.music_video_outlined),
-  ];
-
-  @override
-  Widget build(BuildContext context) {
-    // Сетка «настроения и жанры» как в ArchiveTune: ячейки не уже 180, высота
-    // 100, отступы по 12 вокруг (MoodAndGenresScreen.kt:91-142,
-    // `MoodAndGenresButtonHeight = 100.dp`).
-    //
-    // Ширину берём не 180, а 340: в оригинале подписи приходят из API YouTube
-    // Music и короткие, а у нас они длиннее — при 180 на подпись остаётся 72
-    // пикселя (из ширины вычитается обложка 80 и отступы), и «Хорошее
-    // настроение» обрезалось многоточием. 340 даёт подписи ~215 пикселей и
-    // выглядит уместно на десктопе; на узком окне колонок просто меньше.
-    return GridView.builder(
-      padding: const EdgeInsets.fromLTRB(
-        12,
-        12,
-        12,
-        AppLayout.floatingDockClearance,
-      ),
-      gridDelegate: const SliverGridDelegateWithMaxCrossAxisExtent(
-        maxCrossAxisExtent: 340,
-        mainAxisExtent: 100,
-        crossAxisSpacing: 12,
-        mainAxisSpacing: 12,
-      ),
-      itemCount: _moods.length,
-      itemBuilder: (BuildContext context, int index) {
-        final (String label, IconData icon) = _moods[index];
-        return _MoodTile(
-          label: label,
-          icon: icon,
-          onTap: () => AppRoutes.searchWithQuery(context, label),
-        );
-      },
-    );
-  }
-}
-
-class _MoodTile extends StatelessWidget {
-  const _MoodTile({
-    required this.label,
-    required this.icon,
-    required this.onTap,
-  });
-
-  final String label;
-  final IconData icon;
-  final VoidCallback onTap;
-
-  @override
-  Widget build(BuildContext context) {
-    final ColorScheme scheme = Theme.of(context).colorScheme;
-
-    // Плитка из `MoodAndGenresButton` (MoodAndGenresScreen.kt:147-255):
-    // скругление 24, диагональный градиент, обложка 80×80 в правом верхнем углу
-    // со скруглением 16, горизонтальный скрим и название снизу слева.
-    return Material(
-      borderRadius: BorderRadius.circular(24),
-      clipBehavior: Clip.antiAlias,
-      color: Colors.transparent,
-      child: InkWell(
-        onTap: onTap,
-        child: Stack(
-          fit: StackFit.expand,
-          children: <Widget>[
-            DecoratedBox(
-              decoration: BoxDecoration(
-                gradient: LinearGradient(
-                  begin: Alignment.topLeft,
-                  end: Alignment.bottomRight,
-                  colors: <Color>[
-                    scheme.primaryContainer,
-                    scheme.surfaceContainerHighest,
-                  ],
-                ),
-              ),
-            ),
-            Positioned(
-              // Обложка как в оригинале: 80 со скруглением 16. На широкой
-              // плитке она занимает треть ширины — это уже не половина, как на
-              // мобильной 180-пиксельной, и места подписи хватает.
-              top: 10,
-              right: 12,
-              child: Container(
-                width: 80,
-                height: 80,
-                decoration: BoxDecoration(
-                  borderRadius: BorderRadius.circular(16),
-                  gradient: LinearGradient(
-                    begin: Alignment.topLeft,
-                    end: Alignment.bottomRight,
-                    colors: <Color>[scheme.surface, scheme.scrim],
-                  ),
-                ),
-                child: Icon(icon, color: scheme.onSurfaceVariant),
-              ),
-            ),
-            DecoratedBox(
-              decoration: BoxDecoration(
-                gradient: LinearGradient(
-                  begin: Alignment.centerLeft,
-                  end: Alignment.centerRight,
-                  colors: <Color>[
-                    scheme.scrim.withValues(alpha: 0.38),
-                    scheme.scrim.withValues(alpha: 0.18),
-                    Colors.transparent,
-                  ],
-                ),
-              ),
-            ),
-            Positioned(
-              left: 16,
-              // Справа оставляем место под обложку 80 и её отступ 12.
-              right: 92,
-              bottom: 16,
-              child: Text(
-                label,
-                maxLines: 1,
-                overflow: TextOverflow.ellipsis,
-                // Как в оригинале: текст поверх цветной подложки всегда белый.
-                style: Theme.of(context).textTheme.titleMedium?.copyWith(
-                  fontWeight: FontWeight.w900,
-                  color: Colors.white,
-                ),
-              ),
-            ),
-          ],
-        ),
-      ),
-    );
   }
 }
 

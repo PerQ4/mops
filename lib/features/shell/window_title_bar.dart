@@ -222,10 +222,9 @@ class _CircleButtonState extends State<_CircleButton> {
         widget.danger ? const Color(0xFFA81F14) : AppStateLayers.pressed(scheme);
     final bool filled = _hover || _pressed;
 
-    // `Tooltip` требует предка `Overlay`. Шапка висит в `MaterialApp.builder`
-    // выше навигатора, и оверлея приложения над ней нет: без проверки
-    // `Tooltip` падает с «No Overlay widget found». Если обернуть шапку (или
-    // всю колонку builder'а) в `Overlay`, подсказки включатся сами.
+    // `Tooltip` требует предка `Overlay`, а шапка висит в `MaterialApp.builder`
+    // выше навигатора. Свой оверлей ей даёт `app.dart`; проверка оставлена
+    // страховкой: без оверлея `Tooltip` падает с «No Overlay widget found».
     final bool canShowHint = Overlay.maybeOf(context) != null;
 
     final Widget button = Semantics(
