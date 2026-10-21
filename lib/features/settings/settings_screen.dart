@@ -8,6 +8,7 @@ import '../../core/theme/custom_font.dart';
 import '../../core/theme/seed_colors.dart';
 import '../../core/theme/ui_scaler.dart';
 import '../../core/updates/update_check.dart';
+import '../../core/utils/format.dart';
 import '../../data/local/app_settings.dart';
 import '../../data/local/blocked_artists.dart';
 import '../../data/sources/paxsenix_source.dart';
@@ -465,6 +466,18 @@ class SettingsScreen extends ConsumerWidget {
                       value: settings.restoreQueue,
                       onChanged: controller.setRestoreQueue,
                     ),
+                    // Предзагрузка экономит секунду на переходе, но тратит
+                    // немного трафика, поэтому её можно выключить.
+                    SettingsSwitchRow(
+                      icon: Icons.download_for_offline_outlined,
+                      title: 'Предзагружать следующий трек',
+                      subtitle: 'Заранее получать ссылку и открывать соединение '
+                          '— переход начнётся быстрее. Не работает при '
+                          'перемешивании',
+                      subtitleMaxLines: 3,
+                      value: settings.preloadNextTrack,
+                      onChanged: controller.setPreloadNextTrack,
+                    ),
                     // Таймер сна: та же точка входа, что и кнопка в плеере, —
                     // общий выбор вариантов (`showSleepTimerMenu`).
                     SettingsRow(
@@ -493,6 +506,33 @@ class SettingsScreen extends ConsumerWidget {
                   ],
                 );
               },
+            ),
+            const SizedBox(height: SettingsDims.sectionSpacing),
+
+            // Локальная музыка живёт вне аккаунта YouTube: путь и повторное
+            // сканирование — единственное, что ей нужно от настроек.
+            SettingsGroup(
+              title: 'Локальные файлы',
+              accent: scheme.tertiary,
+              children: <Widget>[
+                SettingsRow(
+                  icon: Icons.folder_open_outlined,
+                  title: 'Папка с музыкой',
+                  subtitle: settings.localMediaFolder.trim().isEmpty
+                      ? 'Не выбрана'
+                      : settings.localMediaFolder,
+                  subtitleMaxLines: 2,
+                  onTap: () =>
+                      _editLocalMediaFolder(context, controller, settings),
+                ),
+                if (settings.localMediaFolder.trim().isNotEmpty)
+                  SettingsRow(
+                    icon: Icons.refresh,
+                    title: 'Пересканировать',
+                    subtitle: 'Найти новые файлы и убрать удалённые',
+                    onTap: () => _rescanLocalMedia(context, ref),
+                  ),
+              ],
             ),
             const SizedBox(height: SettingsDims.sectionSpacing),
 
@@ -883,6 +923,75 @@ class SettingsScreen extends ConsumerWidget {
             ? 'Свой — $fileName · кириллица из Montserrat'
             : 'Свой — $fileName';
     }
+  }
+
+  /// Диалог пути к папке с локальной музыкой.
+  ///
+  /// Выбор папки системным проводником потребовал бы новой зависимости, а
+  /// `pubspec.yaml` менять нельзя. Поэтому путь вводится текстом: приложение
+  /// проверяет его при сканировании и честно сообщает, если папки нет.
+  Future<void> _editLocalMediaFolder(
+    BuildContext context,
+    SettingsController controller,
+    AppSettings settings,
+  ) async {
+    final TextEditingController field =
+        TextEditingController(text: settings.localMediaFolder);
+    final String? result = await showDialog<String>(
+      context: context,
+      builder: (BuildContext dialogContext) => AlertDialog(
+        title: const Text('Папка с музыкой'),
+        content: Column(
+          mainAxisSize: MainAxisSize.min,
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: <Widget>[
+            TextField(
+              controller: field,
+              autofocus: true,
+              decoration: const InputDecoration(
+                labelText: 'Путь к папке',
+                hintText: r'C:\Music или /home/user/Music',
+              ),
+            ),
+            const SizedBox(height: 12),
+            const Text(
+              'Подпапки тоже проверяются. Пустое поле убирает папку из '
+              'библиотеки.',
+              style: TextStyle(fontSize: 12),
+            ),
+          ],
+        ),
+        actions: <Widget>[
+          TextButton(
+            onPressed: () => Navigator.pop(dialogContext),
+            child: const Text('Отмена'),
+          ),
+          TextButton(
+            onPressed: () => Navigator.pop(dialogContext, ''),
+            child: const Text('Очистить'),
+          ),
+          FilledButton(
+            onPressed: () => Navigator.pop(dialogContext, field.text),
+            child: const Text('Сохранить'),
+          ),
+        ],
+      ),
+    );
+    field.dispose();
+    if (result == null) return;
+    await controller.setLocalMediaFolder(result);
+  }
+
+  /// Перечитывает папку и говорит, сколько нашлось.
+  Future<void> _rescanLocalMedia(BuildContext context, WidgetRef ref) async {
+    await ref.read(localMediaControllerProvider.notifier).rescan();
+    if (!context.mounted) return;
+    final LocalMediaState state = ref.read(localMediaControllerProvider);
+    final String message = state.error ??
+        (state.files.isEmpty
+            ? 'В папке нет музыки'
+            : 'Найдено: ${trackCountLabel(state.files.length)}');
+    ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text(message)));
   }
 
   Future<void> _pickThemeMode(

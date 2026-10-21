@@ -19,6 +19,7 @@ import '../common/navigation.dart';
 import '../playlist/playlist_screen.dart';
 import 'library_empty_state.dart';
 import 'library_spotlight_tile.dart';
+import 'local_files_section.dart';
 
 /// Личная коллекция: чипы-фильтры и содержимое выбранного раздела.
 ///
@@ -62,7 +63,7 @@ class _LibraryScreenState extends ConsumerState<LibraryScreen> {
           const SizedBox(width: 4),
         ],
       ),
-      body: auth.isSignedIn
+      body: auth.isSignedIn || _filter == LibraryFilter.localFiles
           ? Column(
               children: <Widget>[
                 _FilterChips(
@@ -73,7 +74,19 @@ class _LibraryScreenState extends ConsumerState<LibraryScreen> {
                 Expanded(child: _body()),
               ],
             )
-          : _SignInPrompt(),
+          : Column(
+              children: <Widget>[
+                // Чипы видны и без входа: «Локальные файлы» — единственный
+                // раздел коллекции, который работает без аккаунта. Прятать
+                // весь ряд значило бы сделать локальную музыку недоступной.
+                _FilterChips(
+                  selected: _filter,
+                  onSelected: (LibraryFilter filter) =>
+                      setState(() => _filter = filter),
+                ),
+                Expanded(child: _SignInPrompt()),
+              ],
+            ),
     );
   }
 
@@ -86,6 +99,7 @@ class _LibraryScreenState extends ConsumerState<LibraryScreen> {
       LibraryFilter.artists => const _ArtistsGrid(),
       LibraryFilter.albums => const _AlbumsGrid(),
       LibraryFilter.subscriptions => const _SubscriptionsGrid(),
+      LibraryFilter.localFiles => const LocalFilesSection(),
     };
   }
 }
@@ -110,7 +124,8 @@ enum LibraryFilter {
   songs('Треки', Icons.music_note),
   artists('Исполнители', Icons.person),
   albums('Альбомы', Icons.album),
-  subscriptions('Подписки', Icons.subscriptions);
+  subscriptions('Подписки', Icons.subscriptions),
+  localFiles('Локальные файлы', Icons.folder_outlined);
 
   const LibraryFilter(this.label, this.icon);
 

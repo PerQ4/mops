@@ -1,4 +1,5 @@
 import 'dart:async';
+import 'dart:io';
 import 'dart:math';
 
 import 'package:flutter/foundation.dart';
@@ -9,11 +10,11 @@ import '../core/audio/audio_engine.dart';
 import '../core/audio/media_kit_engine.dart';
 import '../core/scrobbling/scrobbler.dart';
 import '../data/local/listening_stats.dart';
+import '../data/local/local_media.dart';
 import '../data/local/queue_snapshot.dart';
 import '../data/models/models.dart';
 import '../data/sources/sponsorblock.dart';
 import '../data/sources/stream_downloader.dart';
-import '../data/sources/stream_proxy.dart';
 import '../data/sources/stream_resolver.dart';
 import 'catalog_providers.dart';
 import 'providers.dart';
@@ -352,6 +353,18 @@ class PlayerController extends Notifier<PlayerUiState> {
       _syncSponsorBlock(state.playback);
     });
 
+    // Выключили предзагрузку — обрываем и уже начатую проверку ссылки:
+    // настройка должна действовать сразу, а не со следующего трека.
+    ref.listen<bool>(
+      settingsControllerProvider.select((s) => s.preloadNextTrack),
+      (bool? _, bool enabled) {
+        if (enabled) return;
+        _preloadGeneration++;
+        _preloadClient?.close(force: true);
+        _preloadClient = null;
+      },
+    );
+
     // Очередь прошлой сессии читаем до возврата состояния: она должна быть на
     // экране с первого кадра, а не появиться через мгновение. Восстанавливаем
     // без автозапуска — звук пойдёт только после нажатия «играть».
@@ -402,6 +415,11 @@ class PlayerController extends Notifier<PlayerUiState> {
       _snapshotTimer?.cancel();
       _snapshotTimer = null;
       _cancelSleepTimer();
+      // Предзагрузка держит собственный HTTP-клиент: закрываем его, чтобы
+      // после удаления контроллера не осталось открытых соединений.
+      _preloadGeneration++;
+      _preloadClient?.close(force: true);
+      _preloadClient = null;
     });
 
     return PlayerUiState(
@@ -540,7 +558,6 @@ class PlayerController extends Notifier<PlayerUiState> {
       // Очереди нет — таймеру нечего останавливать: без снятия он «выстрелил»
       // бы позже по пустому плееру.
       clearSleepTimer();
-      _releaseStreams();
       unawaited(_engine.stop());
       return;
     }
@@ -629,7 +646,6 @@ class PlayerController extends Notifier<PlayerUiState> {
     // И снимок: при следующем запуске восстанавливать нечего.
     _clearSnapshot();
     state = const PlayerUiState();
-    _releaseStreams();
     await _engine.stop();
   }
 
@@ -735,6 +751,12 @@ class PlayerController extends Notifier<PlayerUiState> {
   void _syncSponsorBlock(PlaybackState playback) {
     final Track? track = state.current;
     if (track == null) return;
+    // У локального файла нет видео на YouTube, а значит и разметки
+    // SponsorBlock: запрос с путём в качестве id был бы бессмысленным.
+    if (isLocalTrackId(track.id)) {
+      _clearSponsorState();
+      return;
+    }
 
     final settings = ref.read(settingsControllerProvider);
     final Set<SponsorBlockCategory> categories =
@@ -985,29 +1007,19 @@ class PlayerController extends Notifier<PlayerUiState> {
     }
   }
 
-  /// Включена ли предзагрузка следующего трека через посредника.
+  /// Номер актуальной предзагрузки.
   ///
-  /// Сейчас выключена: ссылку играет libmpv напрямую, посредник не нужен.
-  /// Оставлена как выключатель, чтобы код предзагрузки не пришлось удалять:
-  /// он понадобится, если мы вернёмся к gapless через локальный поток.
-  static const bool _preloadEnabled = false;
+  /// Любая новая загрузка трека, выключение настройки или удаление
+  /// контроллера увеличивает счётчик: всё, что резолвилось для прошлого
+  /// трека, после проверки номера молча прекращается. Так предзагрузка не
+  /// может «догнать» уже играющий трек и потратить трафик на неактуальный.
+  int _preloadGeneration = 0;
 
-  /// Локальный адрес текущего потока — чтобы освободить прошлый.
-  Uri? _localStream;
-
-  /// Локальный адрес предзагруженного следующего трека.
-  Uri? _warmedStream;
-
-  /// Освобождает оба опубликованных потока (текущий и прогретый).
-  void _releaseStreams() {
-    final Uri? current = _localStream;
-    final Uri? warmed = _warmedStream;
-    _localStream = null;
-    _warmedStream = null;
-    final StreamProxy proxy = ref.read(streamProxyProvider);
-    if (current != null) proxy.release(current);
-    if (warmed != null && warmed != current) proxy.release(warmed);
-  }
+  /// Отдельный HTTP-клиент для проверки ссылки.
+  ///
+  /// Не общий клиент резолвера: предзагрузка не должна влиять на его пул
+  /// соединений, а закрывается она вместе с контроллером.
+  HttpClient? _preloadClient;
 
   // -------------------------------------------------------------- private
 
@@ -1019,6 +1031,9 @@ class PlayerController extends Notifier<PlayerUiState> {
 
     final Track? track = state.current;
     if (track == null) return;
+
+    // Всё, что предзагружалось для прошлого трека, больше не нужно.
+    _preloadGeneration++;
 
     // Трек мог начать скачиваться раньше: подпись прогресса должна быть
     // сразу, не дожидаясь следующей порции байт.
@@ -1035,17 +1050,37 @@ class PlayerController extends Notifier<PlayerUiState> {
     await _engine.stop();
 
     try {
-      final quality = ref.read(settingsControllerProvider).audioQuality;
-      final ResolvedStream resolved = await ref
-          .read(streamResolverProvider)
-          .resolve(track.id, quality: quality);
+      final String? localPath = localPathFromId(track.id);
+      final ResolvedStream resolved;
+      if (localPath != null) {
+        // Локальный файл не резолвится через сеть: путь из идентификатора и
+        // есть источник. Проверяем только, что файл ещё на месте, — его могли
+        // удалить или переименовать после сканирования.
+        if (!await File(localPath).exists()) {
+          throw StreamResolutionException('Файл не найден: $localPath');
+        }
+        resolved = ResolvedStream(
+          url: Uri.file(localPath),
+          // Срок жизни у файла не истекает; поле обязательно в модели.
+          expiresAt: DateTime.now().add(const Duration(days: 3650)),
+          localPath: localPath,
+          container: _localContainer(localPath),
+        );
+      } else {
+        final quality = ref.read(settingsControllerProvider).audioQuality;
+        resolved = await ref
+            .read(streamResolverProvider)
+            .resolve(track.id, quality: quality);
+      }
 
       // Пока получали ссылку, пользователь мог переключить трек — тогда
       // загрузку надо отменить, иначе заиграет «не тот».
       if (state.current?.id != track.id) return;
 
       state = state.copyWith(
-        streamNote: resolved.isLocal ? 'ОФЛАЙН' : _noteFor(resolved),
+        streamNote: localPath != null
+            ? 'ФАЙЛ'
+            : (resolved.isLocal ? 'ОФЛАЙН' : _noteFor(resolved)),
       );
 
       // Ссылку отдаём плееру напрямую. media_kit (libmpv) запрашивает поток
@@ -1068,10 +1103,9 @@ class PlayerController extends Notifier<PlayerUiState> {
         unavailableIds: <String>{...state.unavailableIds}..remove(track.id),
       );
 
-      // Предзагрузку следующего трека через посредника не используем: она была
-      // нужна только GStreamer. Код оставлен под флагом — пригодится, если
-      // понадобится бесшовный переход (gapless).
-      if (_preloadEnabled) unawaited(_warmNext());
+      // Следующий трек готовим только после того, как текущий зазвучал:
+      // иначе предзагрузка конкурировала бы с ним за канал на старте.
+      if (autoplay) unawaited(_preloadNext());
       return;
     } on StreamResolutionException catch (error) {
       // Резолвер отличает «недоступно» (удалено, скрыто, регион) от сетевого
@@ -1117,43 +1151,154 @@ class PlayerController extends Notifier<PlayerUiState> {
     ].join(' ');
   }
 
-  /// Заранее качает следующий трек через посредника.
-  ///
-  /// Вызывается после запуска текущего. Ссылку резолвим сразу: у резолвера
-  /// кэш, поэтому при переключении `serve` вернёт уже прогретый поток —
-  /// и следующий трек начнётся без паузы.
-  Future<void> _warmNext() async {
-    // При перемешивании следующий трек случаен — предугадать нельзя.
-    if (state.shuffle) return;
-    final int nextIndex = state.index + 1;
-    if (nextIndex < 0 || nextIndex >= state.queue.length) return;
+  /// Расширение локального файла заглавными — для подписи контейнера.
+  String? _localContainer(String path) {
+    final int dot = path.lastIndexOf('.');
+    if (dot < 0 || dot == path.length - 1) return null;
+    final String extension = path.substring(dot + 1).toUpperCase();
+    return extension.isEmpty ? null : extension;
+  }
 
-    final Track next = state.queue[nextIndex];
-    final int fromIndex = state.index;
+  /// Заранее резолвит следующий трек и проверяет ссылку одним байтом.
+  ///
+  /// Полноценно качать следующий трек нельзя: libmpv играет ссылку напрямую,
+  /// а прогретый через посредника поток он всё равно не использует — трафик
+  /// ушёл бы впустую. Что действительно ускоряет переход: резолвер получает
+  /// ссылку заранее (при переключении она берётся из его кэша), а короткий
+  /// запрос `Range: bytes=0-0` открывает DNS/TLS/соединение к медиасерверу.
+  ///
+  /// Предзагрузка не запускается при перемешивании (следующий трек случаен),
+  /// на повторе одного трека, для локальных файлов и для уже скачанных
+  /// треков: в этих случаях либо нечего предугадывать, либо качать нечего.
+  Future<void> _preloadNext() async {
+    final int generation = ++_preloadGeneration;
+    if (!ref.read(settingsControllerProvider).preloadNextTrack) return;
+
+    final PlayerUiState current = state;
+    if (current.shuffle || current.repeat == PlayerRepeatMode.one) return;
+    final Track? playing = current.current;
+    // Идёт скачивание текущего трека — сеть занята им, предзагрузка подождёт
+    // до следующего запуска (он же и начнёт её заново).
+    if (playing == null || current.downloading) return;
+    if (isLocalTrackId(playing.id)) return;
+
+    final Track? next = _nextForPreload(current);
+    if (next == null || isLocalTrackId(next.id)) return;
+
+    final int fromIndex = current.index;
+    final String playingId = playing.id;
     try {
       final quality = ref.read(settingsControllerProvider).audioQuality;
       final ResolvedStream resolved = await ref
           .read(streamResolverProvider)
           .resolve(next.id, quality: quality);
 
-      // Пока резолвили, очередь могла уйти вперёд — тогда прогрев не нужен.
-      if (state.index != fromIndex) return;
+      if (!_preloadStillRelevant(generation, fromIndex, playingId)) return;
+      // Скачанный трек (2.1) уже лежит файлом: сеть ему не нужна.
+      if (resolved.isLocal) return;
 
-      final Uri warmed = await ref.read(streamProxyProvider).warm(
-            resolved.url,
-            userAgent: resolved.userAgent,
-            mimeType: resolved.mimeType,
-          );
-      if (state.index != fromIndex) return;
+      // Пауза после старта: одно короткое соединение не должно отбирать
+      // полосу у трека, который ещё наполняет буфер.
+      await Future<void>.delayed(const Duration(seconds: 2));
+      if (!_preloadStillRelevant(generation, fromIndex, playingId)) return;
+      if (!_bufferIsHealthy()) return;
 
-      final Uri? old = _warmedStream;
-      _warmedStream = warmed;
-      // Прошлый прогретый поток больше не актуален.
-      if (old != null && old != warmed && old != _localStream) {
-        ref.read(streamProxyProvider).release(old);
-      }
-    } on Object {
+      await _probeStream(resolved);
+    } on Object catch (error) {
       // Предзагрузка не критична: трек просто начнётся как обычно.
+      debugPrint('[Предзагрузка] ${next.id}: $error');
+    }
+  }
+
+  /// Какой трек действительно заиграет следующим, по правилам [_advance].
+  Track? _nextForPreload(PlayerUiState current) {
+    if (current.index + 1 < current.queue.length) {
+      return current.queue[current.index + 1];
+    }
+    if (current.repeat == PlayerRepeatMode.all && current.queue.isNotEmpty) {
+      return current.queue.first;
+    }
+    // Конец очереди без повтора: следующий трек придёт из «радио», его id
+    // ещё неизвестен.
+    return null;
+  }
+
+  /// Предзагрузка всё ещё относится к играющему треку.
+  bool _preloadStillRelevant(int generation, int index, String playingId) {
+    return generation == _preloadGeneration &&
+        state.index == index &&
+        state.current?.id == playingId &&
+        !state.shuffle &&
+        ref.read(settingsControllerProvider).preloadNextTrack;
+  }
+
+  /// У текущего трека достаточно запаса, чтобы отдать сети лишний запрос.
+  ///
+  /// Если движок сообщает буфер и впереди меньше четырёх секунд, сеть и так
+  /// еле успевает — предзагрузка откладывается. Нулевой буфер считаем
+  /// неизвестным: не все движки его отдают, и запрещать предзагрузку из-за
+  /// этого было бы неправильно.
+  bool _bufferIsHealthy() {
+    final Duration buffered = state.playback.buffered;
+    if (buffered <= Duration.zero) return true;
+    return buffered - state.playback.position >= const Duration(seconds: 4);
+  }
+
+  /// Открывает соединение и читает ровно первый кусок ответа.
+  ///
+  /// Ответ обрывается сразу после первого пакета: если сервер проигнорирует
+  /// `Range` и начнёт отдавать файл целиком, весь трек всё равно не скачается.
+  Future<void> _probeStream(ResolvedStream resolved) async {
+    final HttpClient client = _preloadClient ??= HttpClient()
+      ..connectionTimeout = const Duration(seconds: 8);
+    final HttpClientRequest request = await client
+        .getUrl(resolved.url)
+        .timeout(const Duration(seconds: 8));
+    request.headers.set(HttpHeaders.rangeHeader, 'bytes=0-0');
+    final String? userAgent = resolved.userAgent;
+    if (userAgent != null && userAgent.isNotEmpty) {
+      request.headers.set(HttpHeaders.userAgentHeader, userAgent);
+    }
+
+    final HttpClientResponse response =
+        await request.close().timeout(const Duration(seconds: 8));
+    await _discardResponse(response);
+  }
+
+  /// Забирает тело ответа, не вытягивая его целиком.
+  ///
+  /// Маленькое тело (обычный ответ на `bytes=0-0` — один байт) дочитывается
+  /// до конца: соединение остаётся в пуле клиента, и следующий запрос по этой
+  /// же ссылке уже не тратит время на TCP/TLS. Большое или неизвестное тело
+  /// обрывается после первого куска.
+  Future<void> _discardResponse(HttpClientResponse response) async {
+    final int length = response.contentLength;
+    if (length >= 0 && length <= 64 * 1024) {
+      await response.drain<void>().timeout(const Duration(seconds: 5));
+      return;
+    }
+
+    final Completer<void> firstChunk = Completer<void>();
+    late final StreamSubscription<List<int>> subscription;
+    subscription = response.listen(
+      (List<int> _) {
+        if (!firstChunk.isCompleted) firstChunk.complete();
+      },
+      onError: (Object error) {
+        if (!firstChunk.isCompleted) firstChunk.completeError(error);
+      },
+      onDone: () {
+        if (!firstChunk.isCompleted) firstChunk.complete();
+      },
+      cancelOnError: true,
+    );
+    try {
+      await firstChunk.future.timeout(
+        const Duration(seconds: 5),
+        onTimeout: () {},
+      );
+    } finally {
+      await subscription.cancel();
     }
   }
 
@@ -1318,6 +1463,14 @@ class PlayerController extends Notifier<PlayerUiState> {
     final Track? seed =
         state.current ?? (state.queue.isEmpty ? null : state.queue.last);
     if (seed == null) return;
+    // Локального трека нет на YouTube: «радио по треку» для него невозможно,
+    // а запрос с путём вместо videoId только тратил бы сеть.
+    if (isLocalTrackId(seed.id)) {
+      state = state.copyWith(
+        playback: state.playback.copyWith(status: PlaybackStatus.paused),
+      );
+      return;
+    }
 
     try {
       final List<Track> radio =

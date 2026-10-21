@@ -565,6 +565,12 @@ class AppSettings {
     this.romanizeOther = true,
     this.autoPlayNext = true,
     this.restoreQueue = true,
+    // Предзагрузка следующего трека стоит копейки (один запрос за ссылкой),
+    // а переключение начинает звучать заметно раньше, поэтому включена.
+    this.preloadNextTrack = true,
+    // Папка с локальной музыкой. Пусто — раздел «Локальные файлы» просит
+    // указать путь и ничего не сканирует.
+    this.localMediaFolder = '',
     this.searchSource = SearchSource.online,
     // Что прятать в выдаче каталога и поиска, как `HideExplicitKey` и
     // `HideVideoKey` в ArchiveTune. По умолчанию ничего не прячем.
@@ -737,6 +743,18 @@ class AppSettings {
   final bool romanizeOther;
 
   final bool autoPlayNext;
+
+  /// Предзагружать следующий трек: получить ссылку заранее, чтобы
+  /// переключение не ждало сетевого запроса (задача 2.4).
+  ///
+  /// Скачанный трек и треки на диске не предзагружаются: у них нет сети,
+  /// которую можно сэкономить. При перемешивании следующий трек неизвестен,
+  /// и предзагрузка тоже не запускается.
+  final bool preloadNextTrack;
+
+  /// Папка с локальными аудиофайлами (задача 8.3). Путь вводится текстом —
+  /// системного диалога выбора папки в приложении нет.
+  final String localMediaFolder;
 
   /// Восстанавливать очередь и позицию прошлой сессии при запуске.
   ///
@@ -965,6 +983,8 @@ class AppSettings {
     bool? romanizeOther,
     bool? autoPlayNext,
     bool? restoreQueue,
+    bool? preloadNextTrack,
+    String? localMediaFolder,
     SearchSource? searchSource,
     bool? hideExplicit,
     bool? hideVideo,
@@ -1048,6 +1068,8 @@ class AppSettings {
       romanizeOther: romanizeOther ?? this.romanizeOther,
       autoPlayNext: autoPlayNext ?? this.autoPlayNext,
       restoreQueue: restoreQueue ?? this.restoreQueue,
+      preloadNextTrack: preloadNextTrack ?? this.preloadNextTrack,
+      localMediaFolder: localMediaFolder ?? this.localMediaFolder,
       searchSource: searchSource ?? this.searchSource,
       hideExplicit: hideExplicit ?? this.hideExplicit,
       hideVideo: hideVideo ?? this.hideVideo,
@@ -1138,6 +1160,8 @@ class AppSettings {
         'romanizeOther': romanizeOther,
         'autoPlayNext': autoPlayNext,
         'restoreQueue': restoreQueue,
+        'preloadNextTrack': preloadNextTrack,
+        'localMediaFolder': localMediaFolder,
         'searchSource': searchSource.name,
         'hideExplicit': hideExplicit,
         'hideVideo': hideVideo,
@@ -1235,6 +1259,8 @@ class AppSettings {
       romanizeOther: json['romanizeOther'] as bool? ?? true,
       autoPlayNext: json['autoPlayNext'] as bool? ?? true,
       restoreQueue: json['restoreQueue'] as bool? ?? true,
+      preloadNextTrack: json['preloadNextTrack'] as bool? ?? true,
+      localMediaFolder: json['localMediaFolder'] as String? ?? '',
       searchSource: SearchSource.fromName(json['searchSource'] as String?),
       hideExplicit: json['hideExplicit'] as bool? ?? false,
       hideVideo: json['hideVideo'] as bool? ?? false,

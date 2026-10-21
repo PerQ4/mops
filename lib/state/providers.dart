@@ -21,6 +21,7 @@ import '../core/utils/artwork_urls.dart';
 import '../data/local/app_settings.dart';
 import '../data/local/downloads.dart';
 import '../data/local/listening_stats.dart';
+import '../data/local/local_media.dart';
 import '../data/models/models.dart';
 import '../data/sources/catalog_source.dart';
 import '../data/sources/paxsenix_source.dart';
@@ -376,6 +377,15 @@ class SettingsController extends Notifier<AppSettings> {
 
   Future<void> setAutoPlayNext(bool value) =>
       update((AppSettings s) => s.copyWith(autoPlayNext: value));
+
+  /// Предзагрузка следующего трека (задача 2.4).
+  Future<void> setPreloadNextTrack(bool value) =>
+      update((AppSettings s) => s.copyWith(preloadNextTrack: value));
+
+  /// Папка с локальной музыкой. Путь нормализуется только по краям: менять
+  /// разделители на Windows нельзя — путь может быть сетевым (`\\server\…`).
+  Future<void> setLocalMediaFolder(String path) =>
+      update((AppSettings s) => s.copyWith(localMediaFolder: path.trim()));
 
   /// Восстанавливать очередь и позицию прошлой сессии при запуске.
   Future<void> setRestoreQueue(bool value) =>
@@ -1247,4 +1257,119 @@ final NotifierProvider<DownloadsController, DownloadsState>
     downloadsControllerProvider =
     NotifierProvider<DownloadsController, DownloadsState>(
   DownloadsController.new,
+);
+
+// ---------------------------------------------------------------------------
+// Локальная музыка (задача 8.3)
+// ---------------------------------------------------------------------------
+
+/// Состояние раздела «Локальные файлы».
+@immutable
+class LocalMediaState {
+  const LocalMediaState({
+    this.folder = '',
+    this.scanning = false,
+    this.files = const <LocalMediaFile>[],
+    this.error,
+  });
+
+  /// Папка, выбранная в настройках.
+  final String folder;
+
+  /// Сканирование идёт прямо сейчас.
+  final bool scanning;
+
+  /// Найденные файлы — в порядке путей.
+  final List<LocalMediaFile> files;
+
+  /// Текст ошибки чтения папки.
+  final String? error;
+
+  bool get hasFolder => folder.trim().isNotEmpty;
+  bool get hasFiles => files.isNotEmpty;
+
+  LocalMediaState copyWith({
+    String? folder,
+    bool? scanning,
+    List<LocalMediaFile>? files,
+    String? error,
+    bool clearError = false,
+  }) =>
+      LocalMediaState(
+        folder: folder ?? this.folder,
+        scanning: scanning ?? this.scanning,
+        files: files ?? this.files,
+        error: clearError ? null : (error ?? this.error),
+      );
+}
+
+/// Сканирует выбранную папку и отдаёт список локальных файлов.
+///
+/// Провайдер создаётся лениво — когда раздел открыли или нажали
+/// «Пересканировать». Сканирование на старте приложения было бы лишней
+/// работой для тех, кто локальными файлами не пользуется.
+class LocalMediaController extends Notifier<LocalMediaState> {
+  final LocalMediaScanner _scanner = const LocalMediaScanner();
+
+  /// Номер текущего сканирования: результат устаревшего запуска (папку
+  /// успели сменить) отбрасывается.
+  int _generation = 0;
+
+  @override
+  LocalMediaState build() {
+    final String folder = ref.watch(
+      settingsControllerProvider.select((AppSettings s) => s.localMediaFolder),
+    );
+    // Смена или очистка папки отменяет результат прошлого сканирования:
+    // иначе оно могло бы записать файлы уже невыбранной папки.
+    _generation++;
+    final LocalMediaState initial = LocalMediaState(folder: folder);
+    if (folder.trim().isNotEmpty) {
+      // Сканирование не может начаться внутри build: state ещё не готов.
+      Future<void>.microtask(() => _scan(folder));
+    }
+    return initial;
+  }
+
+  /// Перечитывает папку заново.
+  Future<int> rescan() async {
+    final String folder = state.folder.trim();
+    if (folder.isEmpty) return 0;
+    await _scan(folder);
+    return state.files.length;
+  }
+
+  Future<void> _scan(String folder) async {
+    final int generation = ++_generation;
+    if (!ref.mounted) return;
+    state = state.copyWith(scanning: true, clearError: true, folder: folder);
+    try {
+      final List<LocalMediaFile> files = await _scanner.scan(
+        folder,
+        cancelled: () => generation != _generation,
+      );
+      if (!ref.mounted || generation != _generation) return;
+      state = state.copyWith(scanning: false, files: files);
+    } on LocalMediaException catch (error) {
+      if (!ref.mounted || generation != _generation) return;
+      state = state.copyWith(
+        scanning: false,
+        files: const <LocalMediaFile>[],
+        error: error.message,
+      );
+    } on Object catch (error) {
+      if (!ref.mounted || generation != _generation) return;
+      state = state.copyWith(
+        scanning: false,
+        files: const <LocalMediaFile>[],
+        error: 'Не удалось прочитать папку: $error',
+      );
+    }
+  }
+}
+
+final NotifierProvider<LocalMediaController, LocalMediaState>
+    localMediaControllerProvider =
+    NotifierProvider<LocalMediaController, LocalMediaState>(
+  LocalMediaController.new,
 );
