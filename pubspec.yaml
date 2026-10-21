@@ -71,6 +71,10 @@ dependencies:
   flutter_localizations:
     sdk: flutter
   meta: ^1.19.0
+  # Форк с заплаткой на cp1251 в ID3v1 и «грязные» числа: см.
+  # third_party/audio_metadata_reader/FORK.md
+  audio_metadata_reader:
+    path: third_party/audio_metadata_reader
 
 dev_dependencies:
   flutter_test:
