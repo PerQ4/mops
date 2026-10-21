@@ -101,10 +101,13 @@ class TrackTile extends ConsumerWidget {
         ? AppLayout.trackTextInsetCompact
         : AppLayout.trackTextInset;
 
-    // Одна точка входа в меню: и кнопка «…», и долгое нажатие открывают одно
-    // и то же, поэтому действие не приходится искать по интерфейсу.
-    final VoidCallback openMenu =
-        onMenu ?? () => showTrackMenu(context, track);
+    // Одна точка входа в меню: и кнопка «…», и долгое нажатие, и правый клик
+    // открывают одно и то же, поэтому действие не приходится искать по
+    // интерфейсу. Точка нажатия необязательна: на телефоне меню — шторка,
+    // и координаты ей не нужны.
+    void openMenu({Offset? position}) => onMenu != null
+        ? onMenu!()
+        : showTrackMenu(context, track, position: position);
 
     final Widget tile = SizedBox(
       height: compactRows
@@ -127,7 +130,9 @@ class TrackTile extends ConsumerWidget {
             onLongPress: openMenu,
             // Правый клик — то же меню, что «…» и долгое нажатие: на десктопе
             // это привычный способ до него добраться, а не искать кнопку.
-            onSecondaryTap: openMenu,
+            // Точку нажатия передаём, чтобы меню встало у курсора.
+            onSecondaryTapUp: (TapUpDetails details) =>
+                openMenu(position: details.globalPosition),
             child: Row(
               children: <Widget>[
                 // Внутренний отступ обложки 8 — это `Box(padding(8.dp))`,
@@ -233,21 +238,27 @@ class TrackTile extends ConsumerWidget {
                         )
                       : trailing!
                 else
-                  IconButton(
-                    tooltip: 'Действия',
-                    iconSize: compactRows ? 18 : 20,
-                    // В плотной строке после отступов остаётся 40 пикселей:
-                    // стандартная кнопка на 48 не помещается и ломала строку.
-                    padding: compactRows ? EdgeInsets.zero : null,
-                    constraints: compactRows
-                        ? const BoxConstraints.tightFor(
-                            width: AppLayout.trackActionSizeCompact,
-                            height: AppLayout.trackActionSizeCompact,
-                          )
-                        : null,
-                    color: scheme.onSurfaceVariant,
-                    icon: const Icon(Icons.more_vert),
-                    onPressed: openMenu,
+                  // `Builder` — ради контекста самой кнопки: `IconButton`
+                  // своего `RenderBox` в `onPressed` не отдаёт, а меню на
+                  // десктопе должно встать у кнопки, а не в углу окна.
+                  Builder(
+                    builder: (BuildContext buttonContext) => IconButton(
+                      tooltip: 'Действия',
+                      iconSize: compactRows ? 18 : 20,
+                      // В плотной строке после отступов остаётся 40 пикселей:
+                      // стандартная кнопка на 48 не помещается и ломала строку.
+                      padding: compactRows ? EdgeInsets.zero : null,
+                      constraints: compactRows
+                          ? const BoxConstraints.tightFor(
+                              width: AppLayout.trackActionSizeCompact,
+                              height: AppLayout.trackActionSizeCompact,
+                            )
+                          : null,
+                      color: scheme.onSurfaceVariant,
+                      icon: const Icon(Icons.more_vert),
+                      onPressed: () =>
+                          openMenu(position: _widgetAnchor(buttonContext)),
+                    ),
                   ),
               ],
             ),
@@ -262,6 +273,16 @@ class TrackTile extends ConsumerWidget {
     return SwipeToSongBox(track: track, child: tile);
   }
 
+}
+
+/// Точка привязки меню по виджету: низ его левого края в глобальных
+/// координатах. `showMenu` сам сдвинет меню, если справа не хватает места.
+Offset? _widgetAnchor(BuildContext context) {
+  final RenderObject? box = context.findRenderObject();
+  if (box is RenderBox && box.hasSize) {
+    return box.localToGlobal(box.size.bottomLeft(Offset.zero));
+  }
+  return null;
 }
 
 /// Дописывает длительность к готовой подписи через « • ».

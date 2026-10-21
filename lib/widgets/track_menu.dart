@@ -19,22 +19,82 @@ import '../state/providers.dart';
 import 'artwork.dart';
 import 'async_views.dart';
 
-/// Контекстное меню трека: обложка, подписи и действия над треком.
+/// Действия контекстного меню трека.
+///
+/// Список один на всё приложение: меню вызывается из списков, очереди и
+/// плеера, и копии действий в каждом экране гарантированно разошлись бы
+/// (где-то переход к исполнителю есть, где-то нет).
+enum _TrackAction {
+  findReplacement,
+  openArtist,
+  blockArtist,
+  chooseArtist,
+  openAlbum,
+  removeFromQueue,
+  playNext,
+  enqueue,
+  download,
+  removeDownload,
+  radio,
+  clip,
+  copyLink,
+  openInYouTubeMusic,
+  addToPlaylist,
+  mediaInfo,
+  like,
+}
+
+/// Ширина меню. Умолчание Material 3 (280) тесно для длинных подписей:
+/// «Заблокировать исполнителя» и «Открыть в YouTube Music» в него не влезают.
+const BoxConstraints _menuConstraints = BoxConstraints(
+  minWidth: 200,
+  maxWidth: 320,
+);
+
+/// Контекстное меню трека.
 ///
 /// Один лист на всё приложение. Действия вызываются из списков, очереди и
 /// плеера; держать их копии в каждом экране — значит гарантированно получить
 /// расхождения (где-то переход к исполнителю есть, где-то нет).
 ///
+/// На десктопе меню открывается у курсора (`showMenu`): шторка снизу — это
+/// мобильный паттерн, в широком окне она выезжает далеко от нажатия. На
+/// телефоне и в узком окне остаётся шторка: там она ближе к пальцу и не
+/// спорит с системными жестами.
+///
 /// [rootNavigator] ставит полноэкранный плеер: он сам открыт в корневом
-/// навигаторе, и лист из него должен лежать там же, поверх плеера. Переходы
+/// навигаторе, и меню из него должно лежать там же, поверх плеера. Переходы
 /// к исполнителю и альбому при этом сначала сворачивают плеер — см. [AppRoutes].
+///
+/// [position] — точка нажатия в глобальных координатах (правый клик по строке).
+/// Кнопка «…» передаёт свои координаты, остальные вызывающие — ничего, и меню
+/// привязывается к низу их виджета (см. [_TrackMenu.anchor]).
 Future<void> showTrackMenu(
   BuildContext context,
   Track track, {
   bool rootNavigator = false,
   VoidCallback? onMediaInfo,
   Future<void> Function(Track replacement)? replaceInPlaylist,
+  Offset? position,
 }) {
+  final _TrackMenu menu = _TrackMenu(
+    track: track,
+    hostContext: context,
+    // Контейнер, а не `ref`: всплывающее меню живёт отдельным маршрутом и
+    // widget-ссылки на него не имеет, а действиям нужны те же провайдеры.
+    container: ProviderScope.containerOf(context, listen: false),
+    onMediaInfo: onMediaInfo,
+    replaceInPlaylist: replaceInPlaylist,
+  );
+
+  if (!context.isCompactLayout) {
+    return menu.showPopup(
+      context,
+      rootNavigator: rootNavigator,
+      position: position,
+    );
+  }
+
   return showModalBottomSheet<void>(
     context: context,
     showDragHandle: true,
@@ -46,19 +106,105 @@ Future<void> showTrackMenu(
     // Лист появляется и уходит тем же переходом, что и элементы интерфейса:
     // появление — 400 мс с торможением, закрытие — 200 мс на разгон.
     sheetAnimationStyle: AppMotion.elementMoveEnter.style,
-    builder: (BuildContext sheetContext) => _TrackMenuSheet(
-      track: track,
-      hostContext: context,
-      onMediaInfo: onMediaInfo,
-      replaceInPlaylist: replaceInPlaylist,
-    ),
+    builder: (BuildContext sheetContext) => _TrackMenuSheet(menu: menu),
   );
 }
 
-class _TrackMenuSheet extends ConsumerWidget {
-  const _TrackMenuSheet({
+/// Снимок состояния, из которого собирается список действий.
+///
+/// Собирается и из `ref.watch` (шторка показывает живые подписи: прогресс
+/// загрузки, лайк), и из контейнера (всплывающее меню открывается один раз),
+/// поэтому производные поля считаются здесь — иначе две ветки могли бы
+/// разойтись в мелочах вроде «убирать из очереди» у играющего трека.
+class _MenuState {
+  _MenuState({
+    required this.track,
+    required this.signedIn,
+    required this.liked,
+    required this.currentId,
+    required this.currentIndex,
+    required this.queue,
+    required this.unavailable,
+    required this.download,
+    required this.downloaded,
+    required this.blockedArtists,
+  }) {
+    isCurrent = currentId != null && currentId == track.id;
+    // Есть ли трек в очереди вообще: для играющего это всегда так, но пункт
+    // убираем только когда убирать действительно есть что.
+    queueIndex = queue.indexWhere((Track t) => t.id == track.id);
+    inQueue = queueIndex >= 0;
+
+    // Перейти можно только туда, где есть id. Если YouTube его не отдал,
+    // пункт не показываем вовсе — «мёртвая» кнопка путает сильнее, чем её
+    // отсутствие.
+    navigableArtists = track.artists
+        .where((ArtistRef a) => a.isNavigable)
+        .toList(growable: false);
+    artist = navigableArtists.isEmpty ? null : navigableArtists.first;
+    album = (track.album?.isNavigable ?? false) ? track.album : null;
+    singleBlocked = navigableArtists.length == 1 &&
+        blockedArtists
+            .any((BlockedArtist b) => b.id == navigableArtists.first.id);
+  }
+
+  final Track track;
+  final bool signedIn;
+  final bool liked;
+  final String? currentId;
+  final int currentIndex;
+  final List<Track> queue;
+  final bool unavailable;
+  final DownloadTask? download;
+  final bool downloaded;
+  final List<BlockedArtist> blockedArtists;
+
+  late final bool isCurrent;
+  late final int queueIndex;
+  late final bool inQueue;
+  late final List<ArtistRef> navigableArtists;
+  late final ArtistRef? artist;
+  late final AlbumRef? album;
+  late final bool singleBlocked;
+}
+
+/// Элемент списка действий: либо пункт, либо разделитель группы.
+sealed class _MenuEntry {
+  const _MenuEntry();
+}
+
+final class _MenuDivider extends _MenuEntry {
+  const _MenuDivider();
+}
+
+final class _MenuActionEntry extends _MenuEntry {
+  const _MenuActionEntry({
+    required this.action,
+    required this.icon,
+    required this.title,
+    this.subtitle,
+    this.subtitleIsError = false,
+    this.enabled = true,
+  });
+
+  final _TrackAction action;
+  final IconData icon;
+  final String title;
+
+  /// Пояснение под пунктом: причина ошибки загрузки или что даёт действие.
+  final String? subtitle;
+  final bool subtitleIsError;
+
+  /// Ложное значение — пункт виден, но недоступен (нет входа, идёт загрузка).
+  final bool enabled;
+}
+
+/// Логика меню трека, общая для шторки и всплывающего меню.
+class _TrackMenu {
+  _TrackMenu({
     required this.track,
     required this.hostContext,
+    required this.container,
     this.onMediaInfo,
     this.replaceInPlaylist,
   });
@@ -66,8 +212,11 @@ class _TrackMenuSheet extends ConsumerWidget {
   final Track track;
 
   /// Контекст, из которого меню открыли. Нужен, чтобы навигацию выполнять
-  /// после закрытия листа: контекст листа к этому моменту уже недействителен.
+  /// после закрытия меню: контекст самого меню к этому моменту уже
+  /// недействителен.
   final BuildContext hostContext;
+
+  final ProviderContainer container;
 
   /// Показ параметров играющего потока. Задаёт только плеер: у трека из списка
   /// никакого потока ещё нет, и пункт там был бы враньём.
@@ -78,288 +227,297 @@ class _TrackMenuSheet extends ConsumerWidget {
   /// всё равно происходит в очереди.
   final Future<void> Function(Track replacement)? replaceInPlaylist;
 
-  @override
-  Widget build(BuildContext context, WidgetRef ref) {
-    final bool signedIn = ref.watch(
-      authControllerProvider.select((AuthState s) => s.isSignedIn),
-    );
-    // Лайк — из общего источника правды (см. [likedIdsProvider]): меню,
-    // строки треков и плеер всегда показывают одно и то же.
-    final bool liked = ref.watch(
-      likedIdsProvider.select((Set<String> ids) => ids.contains(track.id)),
-    );
-
-    // Состояние очереди берём через `select`: позиция воспроизведения
-    // меняется несколько раз в секунду, и без этого лист перестраивался бы на
-    // каждом тике. Нам нужны только текущий трек, его индекс и сама очередь —
-    // по ним решаем, чем заменить «играть следующим» и «в очередь».
-    final (String? currentId, int currentIndex, List<Track> queue) = ref.watch(
-      playerControllerProvider.select(
-        (PlayerUiState s) => (s.current?.id, s.index, s.queue),
+  /// Меню на месте — у курсора или у виджета, который его открыл.
+  Future<void> showPopup(
+    BuildContext context, {
+    required bool rootNavigator,
+    Offset? position,
+  }) async {
+    final _MenuState state = readState();
+    final _TrackAction? action = await showMenu<_TrackAction>(
+      context: context,
+      useRootNavigator: rootNavigator,
+      position: _menuPosition(
+        context,
+        position ?? anchor,
+        rootNavigator: rootNavigator,
       ),
-    );
-    final bool isCurrent = currentId != null && currentId == track.id;
-    // Есть ли трек в очереди вообще: для играющего это всегда так, но пункт
-    // убираем только когда убирать действительно есть что.
-    final int queueIndex = queue.indexWhere((Track t) => t.id == track.id);
-    final bool inQueue = queueIndex >= 0;
-
-    // Недоступность — отдельным `select`: отметка меняется редко, и без него
-    // список перестраивался бы на каждый тик позиции.
-    final bool unavailable = ref.watch(
-      playerControllerProvider.select(
-        (PlayerUiState s) => s.unavailableIds.contains(track.id),
-      ),
-    );
-
-    // Загрузка трека: пункт меню и прогресс берутся из одного контроллера,
-    // поэтому скачивание, начатое на экране «Загрузки», видно и здесь.
-    final DownloadTask? download = ref.watch(
-      downloadsControllerProvider.select(
-        (DownloadsState s) => s.taskFor(track.id),
-      ),
-    );
-    final bool downloaded = ref.watch(
-      downloadsControllerProvider.select(
-        (DownloadsState s) => s.isDownloaded(track.id),
-      ),
-    );
-
-    // Перейти можно только туда, где есть id. Если YouTube его не отдал,
-    // пункт не показываем вовсе — «мёртвая» кнопка путает сильнее, чем её
-    // отсутствие.
-    final List<ArtistRef> navigableArtists = track.artists
-        .where((ArtistRef a) => a.isNavigable)
-        .toList(growable: false);
-    final ArtistRef? artist =
-        navigableArtists.isEmpty ? null : navigableArtists.first;
-    final AlbumRef? album = (track.album?.isNavigable ?? false)
-        ? track.album
-        : null;
-
-    // Блокировки — отдельным `watch`: список меняется редко, а меню должно
-    // показывать актуальное действие (заблокировать или разблокировать).
-    final List<BlockedArtist> blockedArtists =
-        ref.watch(blockedArtistsProvider);
-    final bool singleBlocked = navigableArtists.length == 1 &&
-        blockedArtists
-            .any((BlockedArtist b) => b.id == navigableArtists.first.id);
-
-    return SafeArea(
-      child: SingleChildScrollView(
-        child: Column(
-          mainAxisSize: MainAxisSize.min,
-          crossAxisAlignment: CrossAxisAlignment.stretch,
-          children: <Widget>[
-            _MenuHeader(track: track),
-            const Divider(height: 1),
-            // Пункт только у действительно недоступного трека: для
-            // рабочего он был бы предложением искать замену исправной песне.
-            if (unavailable) ...<Widget>[
-              _MenuAction(
-                icon: Icons.find_replace,
-                title: 'Найти замену',
-                onTap: () => _findReplacement(context, ref),
-              ),
-              const Divider(height: 1),
-            ],
-            if (artist != null)
-              _MenuAction(
-                icon: Icons.person_outline,
-                title: 'Перейти к исполнителю',
-                onTap: () => _openArtist(context, artist),
-              ),
-            // Блокировка — только когда исполнителя можно опознать по id:
-            // блокировать «по имени» нельзя, имена у YouTube не уникальны.
-            if (navigableArtists.length == 1)
-              _MenuAction(
-                icon: singleBlocked
-                    ? Icons.person_add_alt_1_outlined
-                    : Icons.person_off_outlined,
-                title: singleBlocked
-                    ? 'Разблокировать исполнителя'
-                    : 'Заблокировать исполнителя',
-                onTap: () => _toggleArtist(context, ref, navigableArtists.first),
-              )
-            else if (navigableArtists.length > 1)
-              _MenuAction(
-                icon: Icons.person_off_outlined,
-                title: 'Заблокировать исполнителя',
-                // У трека с несколькими авторами непонятно, кого именно
-                // прятать, поэтому спрашиваем: молча выбрать первого значило
-                // бы спрятать не того.
-                onTap: () => _chooseArtist(context, ref, navigableArtists),
-              ),
-            if (album != null)
-              _MenuAction(
-                icon: Icons.album_outlined,
-                title: 'Перейти к альбому',
-                onTap: () => _openAlbum(context, album),
-              ),
-            if (artist != null || album != null) const Divider(height: 1),
-            // Для играющего трека «играть следующим» и «в очередь»
-            // бессмысленны: он уже звучит. Вместо них — убрать из очереди.
-            // Для остальных действия прежние.
-            if (isCurrent && inQueue)
-              _MenuAction(
-                icon: Icons.remove_circle_outline,
-                title: 'Убрать из очереди',
-                onTap: () {
-                  Navigator.pop(context);
-                  // У играющего берём его настоящий индекс: при дублях
-                  // `indexWhere` вернул бы первое вхождение, а не то, что
-                  // звучит сейчас.
-                  ref.read(playerControllerProvider.notifier).removeFromQueue(
-                        currentIndex >= 0 ? currentIndex : queueIndex,
-                      );
-                },
-              )
-            else ...<Widget>[
-              _MenuAction(
-                icon: Icons.queue_play_next,
-                title: 'Играть следующим',
-                onTap: () {
-                  Navigator.pop(context);
-                  ref.read(playerControllerProvider.notifier).playNext(track);
-                },
-              ),
-              _MenuAction(
-                icon: Icons.playlist_add,
-                title: 'В очередь',
-                onTap: () {
-                  Navigator.pop(context);
-                  ref.read(playerControllerProvider.notifier).enqueue(track);
-                },
-              ),
-            ],
-            // Загрузка рядом с очередью: это действие над самим треком, а не
-            // над тем, где он играет. Прогресс показывается и в островке —
-            // им управляет контроллер плеера по тому же состоянию.
-            if (download != null && !download.failed)
-              _MenuAction(
-                icon: Icons.downloading,
-                title: 'Скачивается ${(download.progress * 100).round()}%',
-                subtitle: 'Подождите — файл допишется сам',
-                onTap: null,
-              )
-            else if (downloaded)
-              _MenuAction(
-                icon: Icons.download_done,
-                title: 'Удалить загрузку',
-                subtitle: 'Трек останется в списках, но играть будет из сети',
-                onTap: () => _removeDownload(context, ref),
-              )
-            else
-              _MenuAction(
-                icon: Icons.download_outlined,
-                title: download?.failed == true
-                    ? 'Повторить скачивание'
-                    : 'Скачать',
-                subtitle: download?.failed == true
-                    ? download!.error
-                    : 'Слушать без интернета',
-                subtitleColor: download?.failed == true
-                    ? Theme.of(context).colorScheme.error
-                    : null,
-                onTap: () => _download(context, ref),
-              ),
-            // Радио доступно у любого трека — и у играющего, и у того, что
-            // просто лежит в списке: YouTube Music строит рекомендации по
-            // любому видео.
-            _MenuAction(
-              icon: Icons.radio,
-              title: 'Начать радио',
-              onTap: () {
-                Navigator.pop(context);
-                ref.read(playerControllerProvider.notifier).startRadio(track);
-              },
+      constraints: _menuConstraints,
+      items: <PopupMenuEntry<_TrackAction>>[
+        for (final _MenuEntry entry in entries(state))
+          if (entry is _MenuDivider)
+            const PopupMenuDivider()
+          else
+            _popupItem(
+              entry as _MenuActionEntry,
+              Theme.of(context).colorScheme,
             ),
-            // Клип есть только у самого видео: у обычной песни YouTube отдал
-            // бы звуковую дорожку, и пункт был бы обманом.
-            if (track.isVideo)
-              _MenuAction(
-                icon: Icons.play_circle_outline,
-                title: 'Смотреть клип',
-                onTap: () => _openClip(context),
-              ),
-            // Ссылка — тот же id: на YouTube Music он открывает именно этот
-            // трек. Скопировать и открыть — два разных намерения (отправить
-            // другу и послушать самому), поэтому пункта два.
-            _MenuAction(
-              icon: Icons.link,
-              title: 'Копировать ссылку',
-              onTap: () => _copyLink(context),
-            ),
-            _MenuAction(
-              icon: Icons.open_in_new,
-              title: 'Открыть в YouTube Music',
-              onTap: () => _openInYouTubeMusic(context),
-            ),
-            _MenuAction(
-              icon: Icons.playlist_add,
-              title: 'Добавить в плейлист',
-              // Без входа YouTube не примет правку плейлиста — как и лайк.
-              onTap: signedIn ? () => _openAddToPlaylist(context) : null,
-            ),
-            // Параметры потока — только там, где поток уже играет: пункт
-            // приходит из плеера вместе с колбэком.
-            if (onMediaInfo != null)
-              _MenuAction(
-                icon: Icons.info_outline,
-                title: 'Детали потока',
-                onTap: () {
-                  Navigator.pop(context);
-                  onMediaInfo!();
-                },
-              ),
-            _MenuAction(
-              icon: liked ? Icons.favorite : Icons.favorite_border,
-              title: liked ? 'Убрать из «Мне нравится»' : 'Мне нравится',
-              // Без входа действие недоступно — как и кнопка лайка в плеере.
-              onTap: signedIn ? () => _toggleLike(ref) : null,
-            ),
-            const SizedBox(height: 8),
-          ],
-        ),
-      ),
+      ],
     );
+    if (action == null || !hostContext.mounted) return;
+    await run(action, ScaffoldMessenger.of(hostContext));
   }
 
-  void _openArtist(BuildContext sheetContext, ArtistRef artist) {
-    Navigator.pop(sheetContext);
-    // Переход делает [AppRoutes]: из полноэкранного плеера он сначала
-    // сворачивает его, иначе страница осталась бы под плеером.
-    unawaited(AppRoutes.artistFromMenu(hostContext, artist.id!));
-  }
-
-  void _openAlbum(BuildContext sheetContext, AlbumRef album) {
-    Navigator.pop(sheetContext);
-    unawaited(AppRoutes.albumFromMenu(hostContext, album.id!));
-  }
-
-  void _openClip(BuildContext sheetContext) {
-    Navigator.pop(sheetContext);
-    // Клип, как и плеер, живёт в корневом навигаторе — иначе при открытии из
-    // полноэкранного плеера он остался бы под его экраном.
-    AppRoutes.clip(hostContext, track);
-  }
-
-  /// Закрывает меню и ставит трек в загрузку.
+  /// Точка привязки, когда нажатие её не передало.
   ///
-  /// Контроллер и мессенджер берём до `Navigator.pop`: после закрытия листа
-  /// его `ref` уже недействителен, а сообщение нужно показать на экране хоста.
-  void _download(BuildContext sheetContext, WidgetRef ref) {
-    final DownloadsController controller =
-        ref.read(downloadsControllerProvider.notifier);
+  /// Кнопки «…» в чужих виджетах (панель плеера, очередь, загрузки) своего
+  /// `RenderBox` наружу не отдают, поэтому берём низ центра виджета, из
+  /// которого меню открыли: у панели плеера и островка это как раз строка с
+  /// действиями. Точка нажатия важнее — она приходит из строки трека.
+  Offset get anchor {
+    final RenderObject? box = hostContext.findRenderObject();
+    if (box is RenderBox && box.hasSize) {
+      return box.localToGlobal(Offset(box.size.width / 2, box.size.height));
+    }
+    final Size size = MediaQuery.sizeOf(hostContext);
+    return Offset(size.width / 2, size.height / 2);
+  }
+
+  /// Состояние на момент вызова: всплывающее меню собирается один раз, а
+  /// подписи должны совпадать с тем, что видит пользователь сейчас.
+  _MenuState readState() {
+    final PlayerUiState player = container.read(playerControllerProvider);
+    final DownloadsState downloads = container.read(downloadsControllerProvider);
+    return _MenuState(
+      track: track,
+      signedIn: container.read(authControllerProvider).isSignedIn,
+      liked: container.read(likedIdsProvider).contains(track.id),
+      currentId: player.current?.id,
+      currentIndex: player.index,
+      queue: player.queue,
+      unavailable: player.unavailableIds.contains(track.id),
+      download: downloads.taskFor(track.id),
+      downloaded: downloads.isDownloaded(track.id),
+      blockedArtists: container.read(blockedArtistsProvider),
+    );
+  }
+
+  /// Пункты в порядке показа. Один и тот же список рисуют обе поверхности.
+  List<_MenuEntry> entries(_MenuState state) {
+    final DownloadTask? download = state.download;
+    return <_MenuEntry>[
+      // Пункт только у действительно недоступного трека: для рабочего он был
+      // бы предложением искать замену исправной песне.
+      if (state.unavailable) ...<_MenuEntry>[
+        const _MenuActionEntry(
+          action: _TrackAction.findReplacement,
+          icon: Icons.find_replace,
+          title: 'Найти замену',
+        ),
+        const _MenuDivider(),
+      ],
+      if (state.artist != null)
+        const _MenuActionEntry(
+          action: _TrackAction.openArtist,
+          icon: Icons.person_outline,
+          title: 'Перейти к исполнителю',
+        ),
+      // Блокировка — только когда исполнителя можно опознать по id:
+      // блокировать «по имени» нельзя, имена у YouTube не уникальны.
+      if (state.navigableArtists.length == 1)
+        _MenuActionEntry(
+          action: _TrackAction.blockArtist,
+          icon: state.singleBlocked
+              ? Icons.person_add_alt_1_outlined
+              : Icons.person_off_outlined,
+          title: state.singleBlocked
+              ? 'Разблокировать исполнителя'
+              : 'Заблокировать исполнителя',
+        )
+      else if (state.navigableArtists.length > 1)
+        // У трека с несколькими авторами непонятно, кого именно прятать,
+        // поэтому спрашиваем: молча выбрать первого значило бы спрятать не
+        // того.
+        const _MenuActionEntry(
+          action: _TrackAction.chooseArtist,
+          icon: Icons.person_off_outlined,
+          title: 'Заблокировать исполнителя',
+        ),
+      if (state.album != null)
+        const _MenuActionEntry(
+          action: _TrackAction.openAlbum,
+          icon: Icons.album_outlined,
+          title: 'Перейти к альбому',
+        ),
+      if (state.artist != null || state.album != null) const _MenuDivider(),
+      // Для играющего трека «играть следующим» и «в очередь» бессмысленны:
+      // он уже звучит. Вместо них — убрать из очереди.
+      if (state.isCurrent && state.inQueue)
+        const _MenuActionEntry(
+          action: _TrackAction.removeFromQueue,
+          icon: Icons.remove_circle_outline,
+          title: 'Убрать из очереди',
+        )
+      else ...<_MenuEntry>[
+        const _MenuActionEntry(
+          action: _TrackAction.playNext,
+          icon: Icons.queue_play_next,
+          title: 'Играть следующим',
+        ),
+        const _MenuActionEntry(
+          action: _TrackAction.enqueue,
+          icon: Icons.playlist_add,
+          title: 'В очередь',
+        ),
+      ],
+      // Загрузка рядом с очередью: это действие над самим треком, а не над
+      // тем, где он играет. Прогресс показывается и в островке — им управляет
+      // контроллер плеера по тому же состоянию.
+      if (download != null && !download.failed)
+        _MenuActionEntry(
+          action: _TrackAction.download,
+          icon: Icons.downloading,
+          title: 'Скачивается ${(download.progress * 100).round()}%',
+          subtitle: 'Подождите — файл допишется сам',
+          enabled: false,
+        )
+      else if (state.downloaded)
+        const _MenuActionEntry(
+          action: _TrackAction.removeDownload,
+          icon: Icons.download_done,
+          title: 'Удалить загрузку',
+          subtitle: 'Трек останется в списках, но играть будет из сети',
+        )
+      else
+        _MenuActionEntry(
+          action: _TrackAction.download,
+          icon: Icons.download_outlined,
+          title: download?.failed == true ? 'Повторить скачивание' : 'Скачать',
+          subtitle: download?.failed == true
+              ? download!.error
+              : 'Слушать без интернета',
+          subtitleIsError: download?.failed == true,
+        ),
+      // Радио доступно у любого трека — и у играющего, и у того, что просто
+      // лежит в списке: YouTube Music строит рекомендации по любому видео.
+      const _MenuActionEntry(
+        action: _TrackAction.radio,
+        icon: Icons.radio,
+        title: 'Начать радио',
+      ),
+      // Клип есть только у самого видео: у обычной песни YouTube отдал бы
+      // звуковую дорожку, и пункт был бы обманом.
+      if (track.isVideo)
+        const _MenuActionEntry(
+          action: _TrackAction.clip,
+          icon: Icons.play_circle_outline,
+          title: 'Смотреть клип',
+        ),
+      // Ссылка — тот же id: на YouTube Music он открывает именно этот трек.
+      // Скопировать и открыть — два разных намерения (отправить другу и
+      // послушать самому), поэтому пункта два.
+      const _MenuActionEntry(
+        action: _TrackAction.copyLink,
+        icon: Icons.link,
+        title: 'Копировать ссылку',
+      ),
+      const _MenuActionEntry(
+        action: _TrackAction.openInYouTubeMusic,
+        icon: Icons.open_in_new,
+        title: 'Открыть в YouTube Music',
+      ),
+      _MenuActionEntry(
+        action: _TrackAction.addToPlaylist,
+        icon: Icons.playlist_add,
+        title: 'Добавить в плейлист',
+        // Без входа YouTube не примет правку плейлиста — как и лайк.
+        enabled: state.signedIn,
+      ),
+      // Параметры потока — только там, где поток уже играет: пункт приходит
+      // из плеера вместе с колбэком.
+      if (onMediaInfo != null)
+        const _MenuActionEntry(
+          action: _TrackAction.mediaInfo,
+          icon: Icons.info_outline,
+          title: 'Детали потока',
+        ),
+      _MenuActionEntry(
+        action: _TrackAction.like,
+        icon: state.liked ? Icons.favorite : Icons.favorite_border,
+        title: state.liked ? 'Убрать из «Мне нравится»' : 'Мне нравится',
+        // Без входа действие недоступно — как и кнопка лайка в плеере.
+        enabled: state.signedIn,
+      ),
+    ];
+  }
+
+  /// Закрывает шторку и выполняет действие.
+  ///
+  /// Мессенджер берём до `Navigator.pop`: после закрытия листа его контекст
+  /// уже снят, а сообщение нужно показать на экране хоста.
+  void runFromSheet(BuildContext sheetContext, _TrackAction action) {
     final ScaffoldMessengerState messenger = ScaffoldMessenger.of(hostContext);
     Navigator.pop(sheetContext);
-    unawaited(_runDownload(controller, messenger));
+    unawaited(run(action, messenger));
   }
 
-  Future<void> _runDownload(
-    DownloadsController controller,
+  /// Выполняет выбранное действие. Данные читаются заново: меню могло
+  /// провисеть открытым, пока очередь или загрузка успели измениться.
+  Future<void> run(
+    _TrackAction action,
     ScaffoldMessengerState messenger,
   ) async {
+    final _MenuState state = readState();
+    switch (action) {
+      case _TrackAction.findReplacement:
+        await _replaceTrack(messenger);
+      case _TrackAction.openArtist:
+        // Переход делает [AppRoutes]: из полноэкранного плеера он сначала
+        // сворачивает его, иначе страница осталась бы под плеером.
+        unawaited(AppRoutes.artistFromMenu(hostContext, state.artist!.id!));
+      case _TrackAction.openAlbum:
+        unawaited(AppRoutes.albumFromMenu(hostContext, state.album!.id!));
+      case _TrackAction.blockArtist:
+        await _applyArtistBlock(
+          state.navigableArtists.first,
+          state.singleBlocked,
+          messenger,
+        );
+      case _TrackAction.chooseArtist:
+        await _askAndToggle(
+          state.navigableArtists,
+          state.blockedArtists,
+          messenger,
+        );
+      case _TrackAction.removeFromQueue:
+        // У играющего берём его настоящий индекс: при дублях `indexWhere`
+        // вернул бы первое вхождение, а не то, что звучит сейчас.
+        container.read(playerControllerProvider.notifier).removeFromQueue(
+              state.currentIndex >= 0 ? state.currentIndex : state.queueIndex,
+            );
+      case _TrackAction.playNext:
+        container.read(playerControllerProvider.notifier).playNext(track);
+      case _TrackAction.enqueue:
+        container.read(playerControllerProvider.notifier).enqueue(track);
+      case _TrackAction.download:
+        await _download(messenger);
+      case _TrackAction.removeDownload:
+        await _removeDownload(messenger);
+      case _TrackAction.radio:
+        container.read(playerControllerProvider.notifier).startRadio(track);
+      case _TrackAction.clip:
+        // Клип, как и плеер, живёт в корневом навигаторе — иначе при открытии
+        // из полноэкранного плеера он остался бы под его экраном.
+        AppRoutes.clip(hostContext, track);
+      case _TrackAction.copyLink:
+        await _copyLink(messenger);
+      case _TrackAction.openInYouTubeMusic:
+        await _openInYouTubeMusic(messenger);
+      case _TrackAction.addToPlaylist:
+        // Диалог показываем уже после закрытия меню: два модальных слоя друг
+        // над другом на одном контексте конфликтуют.
+        showAddToPlaylistDialog(hostContext, track);
+      case _TrackAction.mediaInfo:
+        onMediaInfo?.call();
+      case _TrackAction.like:
+        await _toggleLike(messenger);
+    }
+  }
+
+  /// Ставит трек в загрузку и сообщает о результате.
+  Future<void> _download(ScaffoldMessengerState messenger) async {
+    final DownloadsController controller =
+        container.read(downloadsControllerProvider.notifier);
     final String? error = await controller.download(track);
     if (!hostContext.mounted) return;
     messenger.showSnackBar(
@@ -374,18 +532,9 @@ class _TrackMenuSheet extends ConsumerWidget {
   }
 
   /// Удаляет скачанный файл трека.
-  void _removeDownload(BuildContext sheetContext, WidgetRef ref) {
+  Future<void> _removeDownload(ScaffoldMessengerState messenger) async {
     final DownloadsController controller =
-        ref.read(downloadsControllerProvider.notifier);
-    final ScaffoldMessengerState messenger = ScaffoldMessenger.of(hostContext);
-    Navigator.pop(sheetContext);
-    unawaited(_runRemoveDownload(controller, messenger));
-  }
-
-  Future<void> _runRemoveDownload(
-    DownloadsController controller,
-    ScaffoldMessengerState messenger,
-  ) async {
+        container.read(downloadsControllerProvider.notifier);
     final String? error = await controller.remove(track.id);
     if (!hostContext.mounted) return;
     messenger.showSnackBar(
@@ -405,12 +554,9 @@ class _TrackMenuSheet extends ConsumerWidget {
 
   /// Кладёт ссылку в буфер обмена и подтверждает это.
   ///
-  /// Лист закрываем сразу: держать его открытым, пока пользователь идёт
-  /// вставлять ссылку, незачем. Сообщение показываем на контексте хоста —
-  /// контекст листа к этому моменту уже снят.
-  Future<void> _copyLink(BuildContext sheetContext) async {
-    Navigator.pop(sheetContext);
-    final ScaffoldMessengerState messenger = ScaffoldMessenger.of(hostContext);
+  /// Меню закрываем сразу: держать его открытым, пока пользователь идёт
+  /// вставлять ссылку, незачем.
+  Future<void> _copyLink(ScaffoldMessengerState messenger) async {
     try {
       await Clipboard.setData(ClipboardData(text: _watchUri.toString()));
       messenger.showSnackBar(
@@ -430,9 +576,7 @@ class _TrackMenuSheet extends ConsumerWidget {
   /// `externalApplication` — именно внешний браузер, а не встроенный WebView:
   /// цель пункта — послушать трек на YouTube Music, где играет полноценный
   /// веб-плеер, а не наш.
-  Future<void> _openInYouTubeMusic(BuildContext sheetContext) async {
-    Navigator.pop(sheetContext);
-    final ScaffoldMessengerState messenger = ScaffoldMessenger.of(hostContext);
+  Future<void> _openInYouTubeMusic(ScaffoldMessengerState messenger) async {
     bool ok = false;
     try {
       ok = await launchUrl(_watchUri, mode: LaunchMode.externalApplication);
@@ -446,39 +590,18 @@ class _TrackMenuSheet extends ConsumerWidget {
     }
   }
 
-  /// Закрывает меню и открывает выбор плейлиста для этого трека.
-  ///
-  /// Диалог показываем уже после закрытия листа: два модальных слоя друг над
-  /// другом на одном контексте конфликтуют, а лист после нажатия всё равно
-  /// должен уйти.
-  void _openAddToPlaylist(BuildContext sheetContext) {
-    Navigator.pop(sheetContext);
-    showAddToPlaylistDialog(hostContext, track);
-  }
-
   /// Открывает выбор замены и применяет его.
-  ///
-  /// Контроллер и колбэк плейлиста берём до закрытия листа: после
-  /// `Navigator.pop` виджет листа уничтожается, и обращаться к его `ref` уже
-  /// нельзя.
-  void _findReplacement(BuildContext sheetContext, WidgetRef ref) {
-    final PlayerController player = ref.read(playerControllerProvider.notifier);
+  Future<void> _replaceTrack(ScaffoldMessengerState messenger) async {
+    final PlayerController player =
+        container.read(playerControllerProvider.notifier);
     final Future<void> Function(Track)? replaceInPlaylist =
         this.replaceInPlaylist;
-    Navigator.pop(sheetContext);
-    unawaited(_replaceTrack(player, replaceInPlaylist));
-  }
 
-  Future<void> _replaceTrack(
-    PlayerController player,
-    Future<void> Function(Track)? replaceInPlaylist,
-  ) async {
     final Track? replacement =
         await showSongReplacementDialog(hostContext, track);
     if (replacement == null) return;
     if (!hostContext.mounted) return;
 
-    final ScaffoldMessengerState messenger = ScaffoldMessenger.of(hostContext);
     try {
       // Сначала плейлист: если сервер откажет, очередь останется прежней.
       if (replaceInPlaylist != null) {
@@ -499,41 +622,11 @@ class _TrackMenuSheet extends ConsumerWidget {
     }
   }
 
-  /// Блокирует или разблокирует единственного исполнителя трека.
-  ///
-  /// Контроллер блокировок берём до `Navigator.pop`: после закрытия листа его
-  /// `ref` уже недействителен.
-  void _toggleArtist(
-    BuildContext sheetContext,
-    WidgetRef ref,
-    ArtistRef artist,
-  ) {
-    final BlockedArtists notifier =
-        ref.read(blockedArtistsProvider.notifier);
-    final bool blocked = ref
-        .read(blockedArtistsProvider)
-        .any((BlockedArtist item) => item.id == artist.id);
-    Navigator.pop(sheetContext);
-    unawaited(_applyArtistBlock(notifier, artist, blocked));
-  }
-
   /// Спрашивает, кого из соавторов трека заблокировать.
-  void _chooseArtist(
-    BuildContext sheetContext,
-    WidgetRef ref,
-    List<ArtistRef> artists,
-  ) {
-    final BlockedArtists notifier =
-        ref.read(blockedArtistsProvider.notifier);
-    final List<BlockedArtist> blocked = ref.read(blockedArtistsProvider);
-    Navigator.pop(sheetContext);
-    unawaited(_askAndToggle(notifier, artists, blocked));
-  }
-
   Future<void> _askAndToggle(
-    BlockedArtists notifier,
     List<ArtistRef> artists,
     List<BlockedArtist> blocked,
+    ScaffoldMessengerState messenger,
   ) async {
     bool isBlocked(ArtistRef artist) =>
         blocked.any((BlockedArtist item) => item.id == artist.id);
@@ -558,17 +651,19 @@ class _TrackMenuSheet extends ConsumerWidget {
       ),
     );
     if (chosen == null) return;
-    await _applyArtistBlock(notifier, chosen, isBlocked(chosen));
+    await _applyArtistBlock(chosen, isBlocked(chosen), messenger);
   }
 
+  /// Блокирует или разблокирует исполнителя трека.
   Future<void> _applyArtistBlock(
-    BlockedArtists notifier,
     ArtistRef artist,
     bool blocked,
+    ScaffoldMessengerState messenger,
   ) async {
     final String id = artist.id ?? '';
     if (id.isEmpty) return;
-    final ScaffoldMessengerState messenger = ScaffoldMessenger.of(hostContext);
+    final BlockedArtists notifier =
+        container.read(blockedArtistsProvider.notifier);
     try {
       if (blocked) {
         await notifier.unblock(id);
@@ -591,11 +686,10 @@ class _TrackMenuSheet extends ConsumerWidget {
     }
   }
 
-  Future<void> _toggleLike(WidgetRef ref) async {
-    final ScaffoldMessengerState messenger = ScaffoldMessenger.of(hostContext);
-    final bool wasLiked = ref.read(likedIdsProvider).contains(track.id);
+  Future<void> _toggleLike(ScaffoldMessengerState messenger) async {
+    final bool wasLiked = container.read(likedIdsProvider).contains(track.id);
     try {
-      await ref.read(likedIdsProvider.notifier).toggle(track.id);
+      await container.read(likedIdsProvider.notifier).toggle(track.id);
       messenger.showSnackBar(
         SnackBar(
           content: Text(
@@ -613,6 +707,182 @@ class _TrackMenuSheet extends ConsumerWidget {
       );
     }
   }
+}
+
+/// Шторка меню — для телефона и узкого окна.
+class _TrackMenuSheet extends ConsumerWidget {
+  const _TrackMenuSheet({required this.menu});
+
+  final _TrackMenu menu;
+
+  @override
+  Widget build(BuildContext context, WidgetRef ref) {
+    final Track track = menu.track;
+    final bool signedIn = ref.watch(
+      authControllerProvider.select((AuthState s) => s.isSignedIn),
+    );
+    // Лайк — из общего источника правды (см. [likedIdsProvider]): меню,
+    // строки треков и плеер всегда показывают одно и то же.
+    final bool liked = ref.watch(
+      likedIdsProvider.select((Set<String> ids) => ids.contains(track.id)),
+    );
+
+    // Состояние очереди берём через `select`: позиция воспроизведения
+    // меняется несколько раз в секунду, и без этого лист перестраивался бы на
+    // каждом тике. Нам нужны только текущий трек, его индекс и сама очередь —
+    // по ним решаем, чем заменить «играть следующим» и «в очередь».
+    final (String? currentId, int currentIndex, List<Track> queue) = ref.watch(
+      playerControllerProvider.select(
+        (PlayerUiState s) => (s.current?.id, s.index, s.queue),
+      ),
+    );
+    // Недоступность — отдельным `select`: отметка меняется редко, и без него
+    // список перестраивался бы на каждый тик позиции.
+    final bool unavailable = ref.watch(
+      playerControllerProvider.select(
+        (PlayerUiState s) => s.unavailableIds.contains(track.id),
+      ),
+    );
+
+    // Загрузка трека: пункт меню и прогресс берутся из одного контроллера,
+    // поэтому скачивание, начатое на экране «Загрузки», видно и здесь.
+    final DownloadTask? download = ref.watch(
+      downloadsControllerProvider.select(
+        (DownloadsState s) => s.taskFor(track.id),
+      ),
+    );
+    final bool downloaded = ref.watch(
+      downloadsControllerProvider.select(
+        (DownloadsState s) => s.isDownloaded(track.id),
+      ),
+    );
+
+    // Блокировки — отдельным `watch`: список меняется редко, а меню должно
+    // показывать актуальное действие (заблокировать или разблокировать).
+    final List<BlockedArtist> blockedArtists =
+        ref.watch(blockedArtistsProvider);
+
+    final _MenuState state = _MenuState(
+      track: track,
+      signedIn: signedIn,
+      liked: liked,
+      currentId: currentId,
+      currentIndex: currentIndex,
+      queue: queue,
+      unavailable: unavailable,
+      download: download,
+      downloaded: downloaded,
+      blockedArtists: blockedArtists,
+    );
+
+    return SafeArea(
+      child: SingleChildScrollView(
+        child: Column(
+          mainAxisSize: MainAxisSize.min,
+          crossAxisAlignment: CrossAxisAlignment.stretch,
+          children: <Widget>[
+            _MenuHeader(track: track),
+            const Divider(height: 1),
+            for (final _MenuEntry entry in menu.entries(state))
+              _sheetEntry(context, entry),
+            const SizedBox(height: 8),
+          ],
+        ),
+      ),
+    );
+  }
+
+  /// Пункт шторки: та же запись, что и во всплывающем меню, но строкой.
+  Widget _sheetEntry(BuildContext context, _MenuEntry entry) {
+    if (entry is _MenuDivider) return const Divider(height: 1);
+    final _MenuActionEntry action = entry as _MenuActionEntry;
+    return _MenuAction(
+      icon: action.icon,
+      title: action.title,
+      subtitle: action.subtitle,
+      subtitleColor:
+          action.subtitleIsError ? Theme.of(context).colorScheme.error : null,
+      onTap: action.enabled
+          ? () => menu.runFromSheet(context, action.action)
+          : null,
+    );
+  }
+}
+
+/// Пункт всплывающего меню.
+///
+/// Подпись обрезается, а не вылезает за меню: ширина поповера ограничена
+/// [_menuConstraints], и длинная строка вроде «Заблокировать исполнителя»
+/// иначе ломала бы раскладку.
+PopupMenuItem<_TrackAction> _popupItem(
+  _MenuActionEntry entry,
+  ColorScheme scheme,
+) {
+  return PopupMenuItem<_TrackAction>(
+    value: entry.action,
+    enabled: entry.enabled,
+    child: Row(
+      mainAxisSize: MainAxisSize.min,
+      children: <Widget>[
+        Icon(entry.icon, size: 20),
+        const SizedBox(width: 12),
+        Flexible(
+          child: Column(
+            mainAxisSize: MainAxisSize.min,
+            crossAxisAlignment: CrossAxisAlignment.start,
+            children: <Widget>[
+              Text(entry.title, maxLines: 1, overflow: TextOverflow.ellipsis),
+              if (entry.subtitle != null)
+                Text(
+                  entry.subtitle!,
+                  maxLines: 2,
+                  overflow: TextOverflow.ellipsis,
+                  style: TextStyle(
+                    fontSize: 12,
+                    color: entry.subtitleIsError
+                        ? scheme.error
+                        : scheme.onSurfaceVariant,
+                  ),
+                ),
+            ],
+          ),
+        ),
+      ],
+    ),
+  );
+}
+
+/// Положение меню у точки нажатия.
+///
+/// `showMenu` ждёт координаты в системе наложения того навигатора, в котором
+/// открывается меню, а нажатие приходит в глобальных. Без пересчёта меню
+/// уезжало бы на ширину боковой панели — подэкраны живут во вложенном
+/// навигаторе.
+RelativeRect _menuPosition(
+  BuildContext context,
+  Offset globalPosition, {
+  required bool rootNavigator,
+}) {
+  final RenderObject? overlay = Navigator.of(
+    context,
+    rootNavigator: rootNavigator,
+  ).overlay?.context.findRenderObject();
+  if (overlay is RenderBox && overlay.hasSize) {
+    final Offset local = overlay.globalToLocal(globalPosition);
+    return RelativeRect.fromLTRB(
+      local.dx,
+      local.dy,
+      overlay.size.width - local.dx,
+      overlay.size.height - local.dy,
+    );
+  }
+  final Size size = MediaQuery.sizeOf(context);
+  return RelativeRect.fromLTRB(
+    globalPosition.dx,
+    globalPosition.dy,
+    size.width - globalPosition.dx,
+    size.height - globalPosition.dy,
+  );
 }
 
 /// Шапка меню: обложка и подписи — чтобы было понятно, к какому треку меню.
