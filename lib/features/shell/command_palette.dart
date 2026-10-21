@@ -1,6 +1,7 @@
 import 'dart:async';
 
 import 'package:flutter/material.dart';
+import 'package:flutter/rendering.dart';
 import 'package:flutter/services.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:material_3_expressive/material_3_expressive.dart' as m3e;
@@ -105,6 +106,12 @@ class _CommandPalette extends ConsumerStatefulWidget {
 class _CommandPaletteState extends ConsumerState<_CommandPalette> {
   final TextEditingController _controller = TextEditingController();
 
+  /// Прокрутка списка: при новом запросе возвращаемся к началу выдачи.
+  final ScrollController _scroll = ScrollController();
+
+  /// Ключи строк по индексу — по ним список доводится до выделения.
+  final Map<int, GlobalKey> _itemKeys = <int, GlobalKey>{};
+
   /// Задержка перед запросом, чтобы не бить по сети на каждую букву —
   /// как в `search_screen.dart`.
   Timer? _debounce;
@@ -125,6 +132,7 @@ class _CommandPaletteState extends ConsumerState<_CommandPalette> {
   @override
   void dispose() {
     _debounce?.cancel();
+    _scroll.dispose();
     _controller.removeListener(_onTextChanged);
     _controller.dispose();
     commandPaletteOpen.value = false;
@@ -145,7 +153,10 @@ class _CommandPaletteState extends ConsumerState<_CommandPalette> {
         _query = next;
         // Новый запрос — выделение снова на первой строке.
         _selected = 0;
+        // Строки будут другие, а ключи привязаны к индексам прежней выдачи.
+        _itemKeys.clear();
       });
+      if (_scroll.hasClients) _scroll.jumpTo(0);
     });
   }
 
@@ -160,6 +171,49 @@ class _CommandPaletteState extends ConsumerState<_CommandPalette> {
     setState(() {
       _selected = (_selected + delta) % count;
       if (_selected < 0) _selected += count;
+    });
+    _revealSelection(_selected);
+  }
+
+  /// Доводит выделенную строку до края списка.
+  ///
+  /// Список не следит за выделением сам, поэтому без этого шага строка,
+  /// ушедшая за край, оставалась невидимой и клавиатура «не работала».
+  /// Прокручиваем после кадра: к этому моменту строка разложена, и её ключ
+  /// действителен.
+  void _revealSelection(int index) {
+    WidgetsBinding.instance.addPostFrameCallback((_) {
+      if (!mounted) return;
+      final BuildContext? itemContext = _itemKeys[index]?.currentContext;
+      if (itemContext == null) return;
+      final RenderObject? target = itemContext.findRenderObject();
+      final RenderAbstractViewport? viewport = target == null
+          ? null
+          : RenderAbstractViewport.maybeOf(target);
+      final ScrollableState? scrollable = Scrollable.maybeOf(itemContext);
+      if (target == null || viewport == null || scrollable == null) return;
+
+      final ScrollPosition position = scrollable.position;
+      // `top` — смещение, при котором строка встанет к верхнему краю,
+      // `bottom` — к нижнему. Строка целиком в кадре, если текущее смещение
+      // лежит между ними; тогда двигать нечего, иначе стрелка «на месте»
+      // прокручивала бы список на каждом нажатии.
+      final double top = viewport.getOffsetToReveal(target, 0).offset;
+      final double bottom = viewport.getOffsetToReveal(target, 1).offset;
+      if (position.pixels <= top && position.pixels >= bottom) return;
+
+      // Выравнивание выбираем по тому, где строка оказалась, а не по
+      // направлению движения: при переходе через край (с последней на первую)
+      // направление противоположно стороне, куда надо прокрутить.
+      unawaited(
+        Scrollable.ensureVisible(
+          itemContext,
+          duration: AppMotion.rowActions.duration,
+          curve: AppMotion.rowActions.curve,
+          alignment: position.pixels > top ? 0 : 1,
+          alignmentPolicy: ScrollPositionAlignmentPolicy.explicit,
+        ),
+      );
     });
   }
 
@@ -335,20 +389,32 @@ class _CommandPaletteState extends ConsumerState<_CommandPalette> {
     }
     if (items.isEmpty) return _hint(context, 'Ничего не найдено');
 
-    return ListView.builder(
+    return SingleChildScrollView(
+      controller: _scroll,
       padding: const EdgeInsets.symmetric(vertical: 4),
-      itemCount: items.length,
-      itemBuilder: (BuildContext context, int index) {
-        final BrowseItem item = items[index];
-        final (IconData icon, String subtitle) = _appearance(item);
-        return m3e.M3EListItem(
-          headline: item.title,
-          supportingText: subtitle,
-          leading: Icon(icon),
-          selected: index == selected,
-          onTap: () => _activate(items, index),
-        );
-      },
+      // Строк не больше [_maxResults], поэтому строим их разом: у каждой есть
+      // ключ, и `ensureVisible` находит её, даже если она за краем. В ленивом
+      // списке далёкая строка ещё не существует, и прокрутить к ней нечем.
+      child: Column(
+        children: <Widget>[
+          for (int index = 0; index < items.length; index++)
+            _resultRow(items, index, selected),
+        ],
+      ),
+    );
+  }
+
+  /// Одна строка выдачи: иконка, название и подпись по типу элемента.
+  Widget _resultRow(List<BrowseItem> items, int index, int selected) {
+    final BrowseItem item = items[index];
+    final (IconData icon, String subtitle) = _appearance(item);
+    return m3e.M3EListItem(
+      key: _itemKeys.putIfAbsent(index, () => GlobalKey()),
+      headline: item.title,
+      supportingText: subtitle,
+      leading: Icon(icon),
+      selected: index == selected,
+      onTap: () => _activate(items, index),
     );
   }
 

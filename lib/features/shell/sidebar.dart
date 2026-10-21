@@ -922,13 +922,17 @@ class _LibraryRow extends StatefulWidget {
 
 class _LibraryRowState extends State<_LibraryRow> {
   bool _hovered = false;
+  bool _focused = false;
   bool _busy = false;
 
   @override
   Widget build(BuildContext context) {
     final ColorScheme scheme = Theme.of(context).colorScheme;
     final TextTheme text = Theme.of(context).textTheme;
-    final bool showActions = _hovered || widget.active;
+    // Действия нужны и с клавиатуры: Tab доводит фокус до строки, и без этого
+    // кнопки «Играть» и «…» оставались недостижимыми — строились только под
+    // курсором. Фокус дочерней кнопки тоже держит их на месте.
+    final bool showActions = _hovered || _focused || widget.active;
 
     return SizedBox(
       height: 64,
@@ -937,6 +941,7 @@ class _LibraryRowState extends State<_LibraryRow> {
         onExit: (_) => setState(() => _hovered = false),
         child: InkWell(
           onTap: widget.onTap,
+          onFocusChange: (bool focused) => setState(() => _focused = focused),
           child: Container(
             decoration: widget.active
                 ? BoxDecoration(

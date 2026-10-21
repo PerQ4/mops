@@ -103,6 +103,9 @@ class TrackTile extends ConsumerWidget {
           child: InkWell(
             onTap: onTap,
             onLongPress: openMenu,
+            // Правый клик — то же меню, что «…» и долгое нажатие: на десктопе
+            // это привычный способ до него добраться, а не искать кнопку.
+            onSecondaryTap: openMenu,
             child: Row(
               children: <Widget>[
                 // Внутренний отступ обложки 8 — это `Box(padding(8.dp))`,
