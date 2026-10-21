@@ -10,9 +10,11 @@ import '../core/audio/audioplayers_engine.dart';
 import '../core/auth/token_store.dart';
 import '../core/innertube/innertube_client.dart';
 import '../core/net/anti_dpi.dart';
-import '../core/theme/motion.dart';
+import '../core/theme/app_theme.dart';
+import '../core/theme/custom_font.dart';
 import '../core/theme/seed_colors.dart';
 import '../core/theme/ui_scaler.dart';
+import '../core/updates/update_check.dart';
 import '../core/utils/artwork_urls.dart';
 import '../data/local/app_settings.dart';
 import '../data/sources/catalog_source.dart';
@@ -65,6 +67,7 @@ class SettingsController extends Notifier<AppSettings> {
     _publishContentFilter(settings);
     _publishLowDataMode(settings);
     _publishMotion(settings);
+    _publishFont(settings);
     return settings;
   }
 
@@ -73,6 +76,7 @@ class SettingsController extends Notifier<AppSettings> {
     _publishContentFilter(next);
     _publishLowDataMode(next);
     _publishMotion(next);
+    _publishFont(next);
     final SharedPreferences prefs = ref.read(sharedPreferencesProvider);
     await prefs.setString(kSettingsKey, next.encode());
   }
@@ -100,6 +104,19 @@ class SettingsController extends Notifier<AppSettings> {
   /// выполнить (на десктопе такой возможности нет, см. `AppSettings`).
   Future<void> setForceHighRefreshRate(bool value) =>
       update((AppSettings s) => s.copyWith(forceHighRefreshRate: value));
+
+  /// Шрифт интерфейса (задача 7.4): Poppins, системный или свой файл.
+  ///
+  /// Путь и выбор меняются вместе: сохранение диалога шрифта присылает оба
+  /// значения, и раздельные записи заставляли бы тему пересобираться дважды.
+  Future<void> setFont({
+    required FontPreference preference,
+    String? customPath,
+  }) =>
+      update((AppSettings s) => s.copyWith(
+            fontPreference: preference,
+            customFontPath: customPath?.trim() ?? s.customFontPath,
+          ));
 
   Future<void> setLyricsSource(LyricsSource source) =>
       update((AppSettings s) => s.copyWith(lyricsSource: source));
@@ -416,6 +433,50 @@ void _publishLowDataMode(AppSettings settings) {
 void _publishMotion(AppSettings settings) {
   AppMotion.animationsDisabled = settings.disableAnimations;
 }
+
+/// Передаёт выбор шрифта в тему и загружает свой шрифт с диска.
+///
+/// Тема собирается провайдером, у которого нет `ref` на настройки шрифта,
+/// поэтому выбор живёт рядом с темой — так же, как флаг движений. Тема
+/// пересобирается в `MopsApp`, когда выбор меняется.
+void _publishFont(AppSettings settings) {
+  AppTheme.font = AppFont.forPreference(settings.fontPreference);
+  if (settings.fontPreference != FontPreference.custom) return;
+
+  final String path = settings.customFontPath.trim();
+  if (path.isEmpty) return;
+  // Регистрация шрифта в движке асинхронна, ждать её в настройках нечего:
+  // до её окончания текст рисуется фоллбеком, а затем движок перерисовывает
+  // его сам, без пересборки темы.
+  unawaited(CustomFonts.load(path));
+}
+
+/// ---------------------------------------------------------------------------
+/// Обновления
+/// ---------------------------------------------------------------------------
+
+/// Проверка обновлений по GitHub Releases.
+///
+/// Один экземпляр на приложение: у него свой HTTP-клиент, и он же закрывается
+/// при выходе. Запрос делается один раз за сеанс — `updateCheckProvider` не
+/// `autoDispose`, поэтому повторное открытие настроек сеть не дёргает.
+final Provider<UpdateChecker> updateCheckerProvider = Provider<UpdateChecker>(
+  (ref) {
+    final UpdateChecker checker = UpdateChecker();
+    ref.onDispose(checker.dispose);
+    return checker;
+  },
+);
+
+/// Последний найденный релиз и то, новее ли он установленной версии.
+///
+/// `null` — проверить не удалось (нет сети, нет версии для сравнения). Это не
+/// ошибка интерфейса: бейдж просто не показывается, а экран обновлений
+/// говорит об этом одной спокойной строкой.
+final FutureProvider<UpdateCheck?> updateCheckProvider =
+    FutureProvider<UpdateCheck?>(
+  (ref) => ref.watch(updateCheckerProvider).check(),
+);
 
 /// ---------------------------------------------------------------------------
 /// Проверка ключа Paxsenix

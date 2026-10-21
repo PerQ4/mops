@@ -139,6 +139,18 @@ class _MopsAppState extends ConsumerState<MopsApp> {
       BypassManager.instance.apply(next);
     });
 
+    // Шрифт — часть темы, но `themeDataProvider` собирает её из палитры и
+    // шрифт не отслеживает (он живёт рядом с темой, как флаг движений).
+    // Пересобираем тему при смене выбора, иначе типографика осталась бы
+    // прежней до следующей смены темы или палитры.
+    ref.listen<(FontPreference, String)>(
+      settingsControllerProvider.select(
+        (AppSettings s) => (s.fontPreference, s.customFontPath),
+      ),
+      ((FontPreference, String)? previous, (FontPreference, String) next) =>
+          ref.invalidate(themeDataProvider),
+    );
+
     // Discord Rich Presence: держим сервис живым и шлём текущий трек при
     // смене трека или паузе.
     final DiscordPresenceService discord =

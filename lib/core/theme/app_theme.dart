@@ -1,11 +1,52 @@
 import 'package:flutter/material.dart';
 
 import '../../data/local/app_settings.dart';
+import 'custom_font.dart';
 
 // Кривые и длительности живут в `motion.dart` — там весь словарь движений,
 // а здесь только тема. Реэкспорт оставлен для тех, кто импортирует тему:
 // `import 'core/theme/app_theme.dart'` по-прежнему даёт [AppMotion].
 export 'motion.dart';
+
+/// Чем набирается интерфейс (задача 7.4).
+///
+/// Фоллбек у всех вариантов один — Montserrat: в Poppins нет кириллицы, а свой
+/// шрифт может быть латинским. Русские буквы в таком случае берутся из
+/// фоллбека, и текст остаётся текстом, а не квадратами.
+@immutable
+class AppFont {
+  const AppFont({required this.family, required this.fallback});
+
+  /// Poppins — как было до появления настройки.
+  const AppFont.poppins()
+      : family = 'Poppins',
+        fallback = const <String>['Montserrat'];
+
+  /// Системный шрифт платформы: `fontFamily` не задаём, Flutter берёт свой.
+  const AppFont.system()
+      : family = null,
+        fallback = const <String>['Montserrat'];
+
+  /// Шрифт пользователя, зарегистрированный под [kCustomFontFamily].
+  const AppFont.custom()
+      : family = kCustomFontFamily,
+        fallback = const <String>['Montserrat'];
+
+  /// `null` — семейство не навязывается (системный шрифт).
+  final String? family;
+  final List<String> fallback;
+
+  static AppFont forPreference(FontPreference preference) {
+    switch (preference) {
+      case FontPreference.poppins:
+        return const AppFont.poppins();
+      case FontPreference.system:
+        return const AppFont.system();
+      case FontPreference.custom:
+        return const AppFont.custom();
+    }
+  }
+}
 
 /// Сборка темы Material 3 / Material 3 Expressive.
 ///
@@ -14,6 +55,11 @@ export 'motion.dart';
 /// палитру «на лету» под текущий трек.
 class AppTheme {
   const AppTheme._();
+
+  /// Шрифт интерфейса. Ставится из настроек (`SettingsController`), потому что
+  /// тему собирает провайдер без `ref` на шрифт — так же, как флаг движений.
+  /// `MopsApp` пересобирает тему, когда выбор меняется.
+  static AppFont font = const AppFont.poppins();
 
   /// Вариант схемы, который даёт более сочные и контрастные роли —
   /// это и есть «expressive»-палитра Material 3.
@@ -312,18 +358,30 @@ class AppTheme {
 
   /// Типографика. Expressive-шкала — крупные заголовки и плотный основной текст.
   static TextTheme _textTheme(ColorScheme scheme) {
-    // Основной шрифт — Poppins, как в ArchiveTune. Кириллицы в нём нет
-    // (0 из 64 букв), поэтому русские буквы берутся из фоллбека — Montserrat,
-    // ближайшего по стилю геометрического шрифта с полной кириллицей. Так
-    // латиница выглядит как в оригинале, а русский текст — не «чужим»
-    // системным шрифтом.
-    final TextTheme base = Typography.material2021().black
-        .apply(
-          bodyColor: scheme.onSurface,
-          displayColor: scheme.onSurface,
-          fontFamily: 'Poppins',
-          fontFamilyFallback: const <String>['Montserrat'],
-        );
+    // Основной шрифт выбирается в настройках. По умолчанию — Poppins, как в
+    // ArchiveTune: кириллицы в нём нет (0 из 64 букв), поэтому русские буквы
+    // берутся из фоллбека — Montserrat, ближайшего по стилю геометрического
+    // шрифта с полной кириллицей. Так латиница выглядит как в оригинале, а
+    // русский текст — не «чужим» системным шрифтом.
+    //
+    // Фоллбек остаётся и для системного шрифта, и для своего: шрифт
+    // пользователя может быть латинским, и тогда без фоллбека русский текст
+    // превратился бы в квадраты. Предупреждение об этом показывает экран
+    // настроек (см. `CustomFonts`), а не молчание интерфейса.
+    final AppFont font = AppTheme.font;
+    TextTheme base = Typography.material2021().black;
+    base = base.apply(
+      bodyColor: scheme.onSurface,
+      displayColor: scheme.onSurface,
+    );
+    if (font.family != null) {
+      base = base.apply(
+        fontFamily: font.family,
+        fontFamilyFallback: font.fallback,
+      );
+    } else {
+      base = base.apply(fontFamilyFallback: font.fallback);
+    }
 
     // Веса по спецификации ArchiveTune: заголовки экранов и секций — semibold,
     // названия треков — semibold, подписи — обычные и приглушённые.

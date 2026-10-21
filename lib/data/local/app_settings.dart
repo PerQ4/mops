@@ -386,6 +386,28 @@ enum PaletteStylePreference {
       );
 }
 
+/// Чем набирается интерфейс (задача 7.4).
+///
+/// Варианта три: Poppins — как было; системный — шрифт платформы; свой — файл
+/// с диска. У всех трёх остаётся фоллбек Montserrat с полной кириллицей:
+/// латинский шрифт не должен превращать русский текст в квадраты.
+enum FontPreference {
+  poppins('Poppins (по умолчанию)', 'Шрифт интерфейса, как в ArchiveTune'),
+  system('Системный', 'Шрифт системы'),
+  custom('Свой', 'Файл шрифта с диска');
+
+  const FontPreference(this.label, this.description);
+
+  final String label;
+  final String description;
+
+  static FontPreference fromName(String? name) =>
+      FontPreference.values.firstWhere(
+        (FontPreference v) => v.name == name,
+        orElse: () => FontPreference.poppins,
+      );
+}
+
 /// Все настройки приложения. Сериализуется в JSON и хранится в
 /// shared_preferences одной строкой — так меньше кода и атомарная запись.
 class AppSettings {
@@ -396,6 +418,8 @@ class AppSettings {
     this.useMaterialExpressive = true,
     this.pureBlack = false,
     this.paletteStyle = PaletteStylePreference.tonal,
+    this.fontPreference = FontPreference.poppins,
+    this.customFontPath = '',
     this.disableAnimations = false,
     this.forceHighRefreshRate = false,
     this.playerPanelWidth = 280,
@@ -511,6 +535,13 @@ class AppSettings {
 
   /// Стиль палитры: тональная, нейтральная или монохромная.
   final PaletteStylePreference paletteStyle;
+
+  /// Чем набирается интерфейс (задача 7.4).
+  final FontPreference fontPreference;
+
+  /// Путь к файлу своего шрифта. Хранится всегда, даже когда выбран другой
+  /// вариант: вернувшись к «Своему», пользователь не ищет файл заново.
+  final String customFontPath;
 
   /// Чистый чёрный фон в тёмной теме — как отдельный переключатель в
   /// ArchiveTune: фон и поверхности становятся #000000.
@@ -746,6 +777,8 @@ class AppSettings {
     bool? useMaterialExpressive,
     bool? pureBlack,
     PaletteStylePreference? paletteStyle,
+    FontPreference? fontPreference,
+    String? customFontPath,
     bool? disableAnimations,
     bool? forceHighRefreshRate,
     double? playerPanelWidth,
@@ -817,6 +850,8 @@ class AppSettings {
       useMaterialExpressive: useMaterialExpressive ?? this.useMaterialExpressive,
       pureBlack: pureBlack ?? this.pureBlack,
       paletteStyle: paletteStyle ?? this.paletteStyle,
+      fontPreference: fontPreference ?? this.fontPreference,
+      customFontPath: customFontPath ?? this.customFontPath,
       disableAnimations: disableAnimations ?? this.disableAnimations,
       forceHighRefreshRate: forceHighRefreshRate ?? this.forceHighRefreshRate,
       playerPanelWidth: playerPanelWidth ?? this.playerPanelWidth,
@@ -893,6 +928,8 @@ class AppSettings {
         'useMaterialExpressive': useMaterialExpressive,
         'pureBlack': pureBlack,
         'paletteStyle': paletteStyle.name,
+        'fontPreference': fontPreference.name,
+        'customFontPath': customFontPath,
         'disableAnimations': disableAnimations,
         'forceHighRefreshRate': forceHighRefreshRate,
         'playerPanelWidth': playerPanelWidth,
@@ -971,6 +1008,10 @@ class AppSettings {
       pureBlack: json['pureBlack'] as bool? ?? false,
       paletteStyle:
           PaletteStylePreference.fromName(json['paletteStyle'] as String?),
+      fontPreference: FontPreference.fromName(
+        json['fontPreference'] as String?,
+      ),
+      customFontPath: json['customFontPath'] as String? ?? '',
       disableAnimations: json['disableAnimations'] as bool? ?? false,
       forceHighRefreshRate: json['forceHighRefreshRate'] as bool? ?? false,
       playerPanelWidth: (json['playerPanelWidth'] as num?)?.toDouble() ?? 280,

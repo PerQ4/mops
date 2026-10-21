@@ -4,8 +4,10 @@ import 'package:url_launcher/url_launcher.dart';
 
 import '../../core/net/anti_dpi.dart';
 import '../../core/theme/app_theme.dart';
+import '../../core/theme/custom_font.dart';
 import '../../core/theme/seed_colors.dart';
 import '../../core/theme/ui_scaler.dart';
+import '../../core/updates/update_check.dart';
 import '../../data/local/app_settings.dart';
 import '../../data/sources/paxsenix_source.dart';
 import '../../state/auth_controller.dart';
@@ -19,7 +21,9 @@ import '../player/sleep_timer.dart';
 import '../../state/ui_scale.dart';
 import '../../widgets/liquid_backdrop.dart';
 import '../common/navigation.dart';
+import 'font_settings.dart';
 import 'settings_components.dart';
+import 'updates_screen.dart';
 
 /// Настройки: внешний вид, воспроизведение, регион и аккаунт.
 ///
@@ -40,6 +44,11 @@ class SettingsScreen extends ConsumerWidget {
     final int sleepTimer = ref.watch(
       playerControllerProvider.select((PlayerUiState s) => s.sleepTimer),
     );
+    // Бейдж «есть обновление»: проверка одна на сеанс, поэтому открытие
+    // настроек второй раз в сеть не ходит (`updateCheckProvider` не
+    // `autoDispose`).
+    final UpdateCheck? update = ref.watch(updateCheckProvider).value;
+    final bool hasUpdate = update?.updateAvailable ?? false;
     final ColorScheme scheme = Theme.of(context).colorScheme;
 
     return Scaffold(
@@ -109,6 +118,14 @@ class SettingsScreen extends ConsumerWidget {
                   title: 'Масштаб интерфейса',
                   subtitle: _uiScaleLabel(context, ref, settings),
                   onTap: () => _pickUiScale(context, controller, settings),
+                ),
+                // Шрифт — рядом с масштабом: обе настройки про то, как читается
+                // текст, и обе меняют вид всего интерфейса сразу.
+                SettingsRow(
+                  icon: Icons.font_download_outlined,
+                  title: 'Шрифт',
+                  subtitle: _fontLabel(settings),
+                  onTap: () => showFontDialog(context),
                 ),
                 // Навигация переезжает в левую панель — как боковая панель
                 // swiftify. На компактном окне панели нет, поэтому там
@@ -552,6 +569,19 @@ class SettingsScreen extends ConsumerWidget {
               title: 'О приложении',
               accent: scheme.secondary,
               children: <Widget>[
+                // Обновления — первой строкой группы: это единственное, что
+                // здесь требует действия, остальное — справка.
+                SettingsRow(
+                  icon: Icons.system_update_alt,
+                  title: 'Обновления',
+                  subtitle: hasUpdate
+                      ? 'Доступна версия ${update!.latest!.tagName}'
+                      : 'Проверить обновления на GitHub',
+                  trailing: hasUpdate
+                      ? const Badge(label: Text('Есть обновление'))
+                      : null,
+                  onTap: () => _openUpdates(context),
+                ),
                 // Строка открывает отдельный экран: версия, ссылки, лицензии и
                 // проекты не помещаются в подпись и не относятся к настройкам.
                 SettingsRow(
@@ -569,6 +599,58 @@ class SettingsScreen extends ConsumerWidget {
   }
 
   // -------------------------------------------------------------- диалоги
+
+  /// «Обновления» открываются прямо отсюда, а не через `AppRoutes`: экран
+  /// относится только к настройкам, а общий словарь переходов расширять ради
+  /// одной строки незачем. Переход — из словаря движений, как и везде.
+  void _openUpdates(BuildContext context) {
+    final MotionTransition motion = AppMotion.pageEnter;
+    Navigator.of(context).push<void>(
+      PageRouteBuilder<void>(
+        transitionDuration: motion.duration,
+        reverseTransitionDuration: motion.reverseDuration ?? motion.duration,
+        pageBuilder: (
+          BuildContext context,
+          Animation<double> animation,
+          Animation<double> secondaryAnimation,
+        ) =>
+            const UpdatesScreen(),
+        transitionsBuilder: (
+          BuildContext context,
+          Animation<double> animation,
+          Animation<double> secondaryAnimation,
+          Widget child,
+        ) =>
+            motion.routeTransition(
+          animation: animation,
+          begin: const Offset(0, 0.02),
+          child: child,
+        ),
+      ),
+    );
+  }
+
+  /// Подпись строки «Шрифт»: выбранный вариант, а у своего — имя файла и
+  /// напоминание, что кириллица идёт из фоллбека.
+  String _fontLabel(AppSettings settings) {
+    switch (settings.fontPreference) {
+      case FontPreference.poppins:
+        return FontPreference.poppins.label;
+      case FontPreference.system:
+        return FontPreference.system.label;
+      case FontPreference.custom:
+        final String path = settings.customFontPath.trim();
+        if (path.isEmpty) return 'Свой — файл не выбран';
+        final String fileName = path.split(RegExp(r'[\\/]')).last;
+        final CustomFontStatus? status = CustomFonts.lastStatus;
+        final bool noCyrillic = status != null &&
+            status.path == path &&
+            status.hasCyrillic == false;
+        return noCyrillic
+            ? 'Свой — $fileName · кириллица из Montserrat'
+            : 'Свой — $fileName';
+    }
+  }
 
   Future<void> _pickThemeMode(
     BuildContext context,

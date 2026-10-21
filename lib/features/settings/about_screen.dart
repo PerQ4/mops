@@ -1,18 +1,13 @@
-import 'dart:io';
-
 import 'package:flutter/material.dart';
 import 'package:url_launcher/url_launcher.dart';
 
 import '../../core/theme/layout.dart';
 import '../../core/theme/motion.dart';
+import '../../core/updates/app_version.dart';
 import 'settings_components.dart';
 
 /// Адрес проекта: один и тот же в шапке и в строке «Репозиторий».
 const String _repositoryUrl = 'https://github.com/PerQ4/mops';
-
-/// Версия, переданная сборкой: CI обязан взять её из тега и передать
-/// `--dart-define=MOPS_VERSION=…`. Пустая строка — define не передан.
-const String _definedVersion = String.fromEnvironment('MOPS_VERSION');
 
 /// «О приложении»: версия, ссылки, лицензии и проекты, на которых построен mOps.
 ///
@@ -28,7 +23,7 @@ class AboutScreen extends StatefulWidget {
 class _AboutScreenState extends State<AboutScreen> {
   /// Версия ищется один раз: чтение `pubspec.yaml` синхронное, а в `build`
   /// оно повторялось бы на каждую перерисовку.
-  late final String? _version = _resolveVersion();
+  late final String? _version = resolveAppVersion();
 
   Future<void> _open(String url) async {
     final bool opened = await launchUrl(
@@ -279,36 +274,6 @@ class _ProjectRow extends StatelessWidget {
   }
 }
 
-/// Версия приложения из единственного честного источника.
-///
-/// Сначала — значение сборки (`MOPS_VERSION`): в релизе только оно и есть,
-/// потому что `pubspec.yaml` в пакет не попадает. Без define пробуем прочитать
-/// `pubspec.yaml` рядом с рабочим каталогом — это отладочный запуск из
-/// репозитория; так версия на экране совпадает с файлом, а не с отдельной
-/// константой, которую забывают обновить к тегу.
-String? _resolveVersion() {
-  if (_definedVersion.isNotEmpty) return _definedVersion;
-
-  try {
-    Directory dir = Directory.current;
-    for (int depth = 0; depth < 6; depth++) {
-      final File file = File(
-        '${dir.path}${Platform.pathSeparator}pubspec.yaml',
-      );
-      if (file.existsSync()) {
-        for (final String line in file.readAsLinesSync()) {
-          if (!line.startsWith('version:')) continue;
-          final String value = line.substring('version:'.length).trim();
-          return value.isEmpty ? null : value;
-        }
-        return null;
-      }
-      final Directory parent = dir.parent;
-      if (parent.path == dir.path) break;
-      dir = parent;
-    }
-  } on FileSystemException {
-    return null;
-  }
-  return null;
-}
+/// Версия приложения из единственного честного источника — см.
+/// `resolveAppVersion()` в `core/updates/app_version.dart`. Разбор живёт там,
+/// потому что его читает ещё и проверка обновлений.

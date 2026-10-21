@@ -180,6 +180,7 @@ class SettingsRow extends StatelessWidget {
     this.onTap,
     this.accent,
     this.subtitleMaxLines = 1,
+    this.trailing,
   });
 
   final IconData icon;
@@ -191,6 +192,10 @@ class SettingsRow extends StatelessWidget {
   /// Сколько строк отводить подписи. В ArchiveTune — одна; для длинных
   /// пояснений можно снять ограничение, передав `null`.
   final int? subtitleMaxLines;
+
+  /// Что показать справа вместо шеврона: бейдж обновления, счётчик и подобное.
+  /// Шеврон при этом не рисуется — два значка в одной строке спорили бы.
+  final Widget? trailing;
 
   @override
   Widget build(BuildContext context) {
@@ -204,13 +209,14 @@ class SettingsRow extends StatelessWidget {
       onTap: onTap,
       // Шеврон показываем только у нажимаемых строк: у информационных он
       // вводил бы в заблуждение.
-      trailing: onTap == null
-          ? null
-          : Icon(
-              Icons.chevron_right,
-              size: SettingsDims.chevronSize,
-              color: scheme.onSurfaceVariant.withValues(alpha: 0.3),
-            ),
+      trailing: trailing ??
+          (onTap == null
+              ? null
+              : Icon(
+                  Icons.chevron_right,
+                  size: SettingsDims.chevronSize,
+                  color: scheme.onSurfaceVariant.withValues(alpha: 0.3),
+                )),
     );
   }
 }
