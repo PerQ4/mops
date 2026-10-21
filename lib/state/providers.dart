@@ -1,4 +1,5 @@
 import 'dart:async';
+import 'dart:convert';
 import 'dart:io';
 
 import 'package:flutter/foundation.dart';
@@ -45,6 +46,13 @@ import 'library_providers.dart';
 /// Ключ, под которым настройки лежат в `shared_preferences`.
 const String kSettingsKey = 'mops.settings.v1';
 
+/// Куда складывается исходная строка настроек, если разобрать её не удалось.
+///
+/// Отдельный ключ, а не файл: настройки и так живут в `shared_preferences`,
+/// и строка рядом переживёт перезапись настроек дефолтами. Она нужна, чтобы
+/// ручную правку или битый импорт можно было восстановить, а не потерять.
+const String kCorruptSettingsKey = 'mops.settings.corrupt';
+
 final Provider<SharedPreferences> sharedPreferencesProvider =
     Provider<SharedPreferences>(
   (ref) => throw UnimplementedError(
@@ -70,14 +78,72 @@ final Provider<AuthSession?> initialSessionProvider = Provider<AuthSession?>(
 ///
 /// Запись намеренно не блокирует UI: сначала меняем состояние, затем сохраняем.
 class SettingsController extends Notifier<AppSettings> {
+  /// Сохранение копии исходной строки настроек, если её не удалось разобрать.
+  /// Первая же запись должна дождаться её: иначе дефолты затрут файл раньше,
+  /// чем сохранится копия.
+  Future<void>? _archive;
+
+  /// Настройки прочитались не полностью: в файле было что-то нечитаемое.
+  bool get readFailed => _archive != null;
+
   @override
   AppSettings build() {
     final AppSettings settings = ref.watch(initialSettingsProvider);
+
+    // `main()` разбирает настройки до `runApp`; здесь проверяем ту же строку,
+    // потому что `AppSettings.decode` на ошибке молча отдаёт дефолты, а первая
+    // же запись (например, громкость) затёрла бы исходник.
+    //
+    // Провайдер preferences в тестах может быть не переопределён — тогда
+    // проверять нечего, и это не повод не собрать контроллер.
+    String? raw;
+    try {
+      raw = ref.read(sharedPreferencesProvider).getString(kSettingsKey);
+    } on Object catch (error) {
+      debugPrint('[Settings] хранилище настроек недоступно: $error');
+    }
+    if (_looksUnreadable(raw)) {
+      _archive = _saveCorrupt(raw!);
+    }
+
     _publishContentFilter(settings);
     _publishLowDataMode(settings);
     _publishMotion(settings);
     _publishFont(settings);
     return settings;
+  }
+
+  /// Копирует исходную строку в [kCorruptSettingsKey] и пишет об этом в лог.
+  ///
+  /// Ошибка копирования не должна запрещать сохранять настройки навсегда:
+  /// она только логируется. Но `_archive` завершается в любом случае, поэтому
+  /// запись не обгоняет попытку сохранения.
+  Future<void> _saveCorrupt(String raw) async {
+    try {
+      final SharedPreferences prefs = ref.read(sharedPreferencesProvider);
+      await prefs.setString(kCorruptSettingsKey, raw);
+      debugPrint(
+        '[Settings] настройки не разобраны; исходная строка сохранена в '
+        '$kCorruptSettingsKey (${raw.length} символов)',
+      );
+    } on Object catch (error) {
+      debugPrint('[Settings] не удалось сохранить копию настроек: $error');
+    }
+  }
+
+  /// Строка не пустая, но не даёт настроек: битый JSON, не объект или
+  /// значение неверного типа (последнее бросает `TypeError` из доменных
+  /// `fromJson`).
+  static bool _looksUnreadable(String? raw) {
+    if (raw == null || raw.isEmpty) return false;
+    try {
+      final dynamic decoded = jsonDecode(raw);
+      if (decoded is! Map<String, dynamic>) return true;
+      AppSettings.decode(raw);
+      return false;
+    } on Object {
+      return true;
+    }
   }
 
   Future<void> _persist(AppSettings next) async {
@@ -86,6 +152,9 @@ class SettingsController extends Notifier<AppSettings> {
     _publishLowDataMode(next);
     _publishMotion(next);
     _publishFont(next);
+    // Сначала копия нечитаемого исходника (если он был), только потом запись:
+    // так дефолты не успевают стереть то, что не удалось прочитать.
+    await _archive;
     final SharedPreferences prefs = ref.read(sharedPreferencesProvider);
     await prefs.setString(kSettingsKey, next.encode());
   }
@@ -983,16 +1052,43 @@ class DownloadsState {
 
 /// Скачивание треков и управление ими.
 ///
-/// Один трек качается за раз: загрузки идут через тот же резолвер, что и
+/// Загрузки идут строго по одной: они проходят через тот же резолвер, что и
 /// воспроизведение, и пачка параллельных запросов только мешала бы музыке.
+/// Ограничение живёт здесь, а не в вызывающих: меню трека и экран «Загрузки»
+/// зовут [download] независимо друг от друга.
+///
 /// Докачка продолжается с места обрыва — остаток лежит в `<id>.m4a.part`,
 /// а ожидаемый размер хранится в метаданных.
 class DownloadsController extends Notifier<DownloadsState> {
   Future<void>? _ready;
 
+  /// Хвост очереди: каждый вызов [download] дожидается предыдущего.
+  Future<void> _queue = Future<void>.value();
+
+  /// Отмена текущей попытки по id трека.
+  final Map<String, DownloadCancelToken> _cancel =
+      <String, DownloadCancelToken>{};
+
+  /// Выполняющиеся загрузки — чтобы [remove] дождался закрытия файла.
+  final Map<String, Future<String?>> _running = <String, Future<String?>>{};
+
+  /// Поставленные в очередь, но ещё не начатые треки.
+  final Set<String> _queued = <String>{};
+
+  /// Отменённые до старта: очередь должна молча пропустить их.
+  final Set<String> _cancelled = <String>{};
+
   @override
   DownloadsState build() {
     _ready = _load();
+    ref.onDispose(() {
+      // Закрытие экрана не должно оставлять задачи «в работе» навсегда:
+      // токены рвут начатые чтения, очередь пропускает неначатые.
+      for (final DownloadCancelToken token in _cancel.values) {
+        token.cancel();
+      }
+      _cancelled.addAll(_queued);
+    });
     return const DownloadsState();
   }
 
@@ -1008,14 +1104,74 @@ class DownloadsController extends Notifier<DownloadsState> {
   }
 
   /// Скачивает трек. Возвращает текст ошибки или `null`, если всё хорошо
-  /// (в том числе когда трек уже скачан).
+  /// (в том числе когда трек уже скачан или загрузку отменили).
+  ///
+  /// Вызовы складываются в очередь: параллельный вызов не начнёт вторую
+  /// загрузку, а дождётся своей очереди.
   Future<String?> download(Track track) async {
     await _ready;
     if (!ref.mounted) return null;
     if (state.isDownloaded(track.id)) return null;
     final DownloadTask? running = state.taskFor(track.id);
     if (running != null && !running.failed) return null;
+    // Повторный вызов, пока трек уже ждёт в очереди, — не вторая загрузка.
+    if (_queued.contains(track.id) || _running.containsKey(track.id)) {
+      return null;
+    }
 
+    final Completer<String?> done = Completer<String?>();
+    _queued.add(track.id);
+    _queue = _queue.then((_) async {
+      try {
+        _queued.remove(track.id);
+        if (_cancelled.remove(track.id)) {
+          done.complete(null);
+          return;
+        }
+        if (!ref.mounted || state.isDownloaded(track.id)) {
+          done.complete(null);
+          return;
+        }
+        final Future<String?> future = _downloadOne(track);
+        _running[track.id] = future;
+        try {
+          done.complete(await future);
+        } finally {
+          _running.remove(track.id);
+        }
+      } on Object catch (error) {
+        if (!done.isCompleted) {
+          done.complete('Не удалось скачать трек: $error');
+        }
+      }
+    });
+    return done.future;
+  }
+
+  /// Одна загрузка: здесь создаётся токен отмены.
+  Future<String?> _downloadOne(Track track) async {
+    if (_cancelled.remove(track.id)) {
+      _dropTask(track.id);
+      return null;
+    }
+    final DownloadCancelToken token = DownloadCancelToken();
+    _cancel[track.id] = token;
+    try {
+      return await _downloadTrack(track, token);
+    } on DownloadCancelledException {
+      // Отмена — не ошибка: пользователь сам этого хотел.
+      _dropTask(track.id);
+      return null;
+    } finally {
+      _cancel.remove(track.id);
+      _cancelled.remove(track.id);
+    }
+  }
+
+  Future<String?> _downloadTrack(
+    Track track,
+    DownloadCancelToken token,
+  ) async {
     final DownloadsStore store = ref.read(downloadsStoreProvider);
     File? part;
     int? expected;
@@ -1034,6 +1190,7 @@ class DownloadsController extends Notifier<DownloadsState> {
                 // отдаст любой: плеер играет по содержимому.
                 preferContainer: DownloadsStore.audioExtension,
               );
+      token.throwIfCancelled();
 
       // Прямой эфир не заканчивается — «скачать» его нельзя, и притворяться,
       // что файл полный, было бы обманом.
@@ -1064,57 +1221,47 @@ class DownloadsController extends Notifier<DownloadsState> {
         ));
       }
 
-      // Прошлая попытка успела скачать всё, но не записала метаданные.
-      if (already > 0 && expected != null && already >= expected) {
-        final String? problem =
-            await verifyDownloadedAudio(part, expectedBytes: expected);
-        if (problem == null) {
-          final DownloadedTrack item = await store.complete(
-            track: track,
-            bytes: already,
-            container: stream.container,
-          );
-          _finish(item);
-          return null;
-        }
-        // Файл не сошёлся — начинаем заново, а не дописываем мусор.
-        await store.discardPartial(track.id);
-        expected = null;
-        received = 0;
-      }
+      // Раньше файл с `already >= expected` считался готовым без сервера — так
+      // и появлялись обрезанные и склеенные файлы. Теперь решение принимает
+      // загрузчик: он сверяет `Content-Range` с сохранённым размером и при
+      // расхождении начинает файл заново.
+      int? serverTotal;
+      final DownloadResult result =
+          await ref.read(rangeDownloaderProvider).download(
+                stream.url,
+                part,
+                resume: true,
+                expectedBytes: expected,
+                cancel: token,
+                onBytes: (int got, int? total) {
+                  received = got;
+                  if (total != null && total != serverTotal) {
+                    serverTotal = total;
+                    // Запоминаем размер, чтобы после перезапуска не начинать
+                    // с нуля и не считать оборванный файл целым.
+                    unawaited(store.markPartial(track.id, total));
+                  }
+                  _progress(track, got, total);
+                },
+              );
+      token.throwIfCancelled();
 
-      int? persisted = expected;
-      final int written = await ref.read(rangeDownloaderProvider).downloadTo(
-        stream.url,
-        part,
-        resume: true,
-        expectedBytes: expected,
-        onBytes: (int got, int? total) {
-          received = got;
-          if (total != null && total != persisted) {
-            persisted = total;
-            // Запоминаем размер, чтобы после перезапуска не начинать с нуля
-            // и не считать оборванный файл целым.
-            unawaited(store.markPartial(track.id, total));
-          }
-          _progress(track, got, total);
-        },
-      );
-
-      // «Поток получен» — это не только код ответа 200: перед переименованием
-      // проверяем сигнатуру контейнера и полноту.
+      // «Поток получен» — это не только код ответа: сверяем размер, который
+      // назвал сервер, с тем, что лежит на диске, и смотрим сигнатуру
+      // контейнера. Сохранённому expected здесь верить нельзя.
       final String? problem = await verifyDownloadedAudio(
         part,
-        expectedBytes: expected,
+        expectedBytes: serverTotal ?? result.total,
       );
       if (problem != null) {
         await store.discardPartial(track.id);
         throw DownloadsException(problem);
       }
+      token.throwIfCancelled();
 
       final DownloadedTrack item = await store.complete(
         track: track,
-        bytes: written,
+        bytes: result.bytes,
         container: stream.container,
       );
       _finish(item);
@@ -1128,6 +1275,8 @@ class DownloadsController extends Notifier<DownloadsState> {
     } on StreamResolutionException catch (error) {
       _fail(track, error.message);
       return error.message;
+    } on DownloadCancelledException {
+      rethrow;
     } on FileSystemException catch (error) {
       final String message = _describeFileError(error, received);
       _fail(track, message);
@@ -1166,6 +1315,18 @@ class DownloadsController extends Notifier<DownloadsState> {
   Future<String?> remove(String videoId) async {
     await _ready;
     if (!ref.mounted) return null;
+    // Сначала останавливаем загрузку и ждём, пока она закроет файл: на Windows
+    // удаление открытого файла падает, а задача осталась бы «в работе».
+    cancel(videoId);
+    final Future<String?>? running = _running[videoId];
+    if (running != null) {
+      try {
+        await running;
+      } on Object {
+        // Ошибку загрузки уже показали; для удаления она не важна.
+      }
+    }
+    if (!ref.mounted) return null;
     try {
       await ref.read(downloadsStoreProvider).remove(videoId);
       if (!ref.mounted) return null;
@@ -1200,6 +1361,36 @@ class DownloadsController extends Notifier<DownloadsState> {
     state = state.copyWith(
       active: <String, DownloadTask>{...state.active}..remove(videoId),
     );
+  }
+
+  /// Отменяет загрузку трека: и начатую, и ещё стоящую в очереди.
+  ///
+  /// Начатая завершится молча (без ошибки), неначатая будет пропущена
+  /// очередью — задача не остаётся «в работе» навсегда.
+  void cancel(String videoId) {
+    if (videoId.isEmpty) return;
+    final bool queued = _queued.contains(videoId);
+    final DownloadTask? task = state.active[videoId];
+    final bool working = _running.containsKey(videoId) ||
+        _cancel.containsKey(videoId) ||
+        (task != null && !task.failed);
+    if (!queued && !working) return;
+    _cancelled.add(videoId);
+    _cancel[videoId]?.cancel();
+  }
+
+  /// Отменяет всё, что качается или ждёт очереди.
+  void cancelAll() {
+    final Set<String> ids = <String>{
+      ..._queued,
+      ..._cancel.keys,
+      ..._running.keys,
+      for (final MapEntry<String, DownloadTask> entry in state.active.entries)
+        if (!entry.value.failed) entry.key,
+    };
+    for (final String id in ids) {
+      cancel(id);
+    }
   }
 
   void _setTask(DownloadTask task) {

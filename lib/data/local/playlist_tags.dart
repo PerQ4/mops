@@ -3,6 +3,7 @@ import 'dart:io';
 
 import 'package:flutter/foundation.dart';
 
+import 'json_store.dart';
 import 'lyrics_cache.dart';
 
 /// Локальные теги плейлистов: «плейлист → набор тегов».
@@ -27,6 +28,13 @@ class PlaylistTagsStore {
 
   File? _file;
 
+  /// Общий файл: атомарная запись, копия повреждённого файла, запрет записи
+  /// до успешного чтения (см. [JsonStore]).
+  late final JsonStore _json = JsonStore(
+    resolve: _tagsFile,
+    label: 'PlaylistTagsStore',
+  );
+
   /// Теги в памяти: нужны, чтобы запись одного плейлиста не перечитывала файл
   /// целиком и чтобы повторные чтения не били по диску.
   Map<String, _StoredTags>? _memory;
@@ -34,14 +42,11 @@ class PlaylistTagsStore {
   /// Загрузка файла идёт один раз: параллельные чтения ждут её же.
   Future<void>? _loading;
 
-  /// Запись на диск выстроена в очередь: параллельные `write` иначе
-  /// перетирали бы снимки друг друга и часть тегов терялась бы.
-  Future<void> _writing = Future<void>.value();
-
   /// Все сохранённые наборы тегов: id плейлиста → теги.
   ///
   /// Ошибки файла и JSON наружу не пробрасываются: недоступное хранилище —
-  /// это отсутствие тегов, а не повод не показать библиотеку.
+  /// это отсутствие тегов, а не повод не показать библиотеку. Но ошибка
+  /// чтения видна в [readFailed], и тогда запись не выполняется.
   Future<Map<String, Set<String>>> readAll() async {
     final Map<String, _StoredTags> entries = await _entries();
     return <String, Set<String>>{
@@ -49,6 +54,9 @@ class PlaylistTagsStore {
         item.key: item.value.tags,
     };
   }
+
+  /// Файл не прочитался: тегов в памяти нет, писать в файл нельзя.
+  bool get readFailed => _json.readFailed;
 
   /// Сохраняет набор тегов плейлиста. Пустой набор не пишется: снятие всех
   /// тегов — это [remove], а не запись пустоты.
@@ -77,14 +85,7 @@ class PlaylistTagsStore {
   /// Полная очистка — и в памяти, и на диске.
   Future<void> clear() async {
     _memory = <String, _StoredTags>{};
-    try {
-      final File file = await _tagsFile();
-      if (file.existsSync()) await file.delete();
-    } on FileSystemException {
-      // Цель — отсутствие файла; если не вышло, это не критично.
-    } on Object catch (error) {
-      debugPrint('[PlaylistTagsStore] не удалось очистить теги: $error');
-    }
+    await _json.deleteFile();
   }
 
   /// Возвращает записи из памяти, загрузив файл при первом обращении.
@@ -97,21 +98,11 @@ class PlaylistTagsStore {
   }
 
   Future<void> _loadFromDisk() async {
+    final dynamic decoded = await _json.read();
     final Map<String, _StoredTags> parsed = <String, _StoredTags>{};
-    try {
-      final File file = await _tagsFile();
-      if (file.existsSync()) {
-        final String raw = await file.readAsString();
-        if (raw.trim().isNotEmpty) {
-          _readEntries(jsonDecode(raw), parsed);
-        }
-      }
-    } on FileSystemException {
-      // Нет доступа к файлу — работаем без сохранённых тегов.
-    } on FormatException {
-      // Повреждённый JSON — начнём файл заново при следующей записи.
-    } on Object catch (error) {
-      debugPrint('[PlaylistTagsStore] не удалось прочитать теги: $error');
+    if (decoded != null) _readEntries(decoded, parsed);
+    if (_json.readFailed) {
+      debugPrint('[PlaylistTagsStore] теги не прочитаны — запись отключена');
     }
     _memory = parsed;
   }
@@ -159,7 +150,7 @@ class PlaylistTagsStore {
 
   /// Пишет снимок в файл. Снимок кодируется сразу: пока ждём очередь, память
   /// могла измениться, а на диск должно попасть согласованное состояние.
-  Future<void> _persist(Map<String, _StoredTags> entries) {
+  Future<void> _persist(Map<String, _StoredTags> entries) async {
     final List<Map<String, dynamic>> flat = <Map<String, dynamic>>[];
     for (final MapEntry<String, _StoredTags> item in entries.entries) {
       flat.add(<String, dynamic>{
@@ -170,18 +161,8 @@ class PlaylistTagsStore {
     }
     final String payload =
         jsonEncode(<String, dynamic>{'version': 1, 'entries': flat});
-    _writing = _writing.then((_) => _writeFile(payload));
-    return _writing;
-  }
-
-  Future<void> _writeFile(String payload) async {
-    try {
-      final File file = await _tagsFile();
-      await file.writeAsString(payload, flush: true);
-    } on FileSystemException {
-      // Диск недоступен — теги остаются только в памяти.
-    } on Object catch (error) {
-      debugPrint('[PlaylistTagsStore] не удалось сохранить теги: $error');
+    if (!await _json.writeString(payload)) {
+      debugPrint('[PlaylistTagsStore] теги остались только в памяти');
     }
   }
 

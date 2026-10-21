@@ -6,6 +6,7 @@ import 'package:path_provider/path_provider.dart';
 
 import '../models/models.dart';
 import 'app_settings.dart';
+import 'json_store.dart';
 
 /// Дисковый кэш найденных текстов: «id трека + источник» → текст.
 ///
@@ -31,6 +32,13 @@ class LyricsCache {
 
   File? _file;
 
+  /// Общий файл: атомарная запись, копия повреждённого файла, запрет записи
+  /// до успешного чтения (см. [JsonStore]).
+  late final JsonStore _json = JsonStore(
+    resolve: _cacheFile,
+    label: 'LyricsCache',
+  );
+
   /// Записи в памяти: ключ — id трека, значение — источники этого трека.
   /// Нужны, чтобы повторные чтения не били по диску и чтобы запись одного
   /// источника не перечитывала файл целиком.
@@ -39,9 +47,8 @@ class LyricsCache {
   /// Загрузка файла идёт один раз: параллельные чтения ждут её же.
   Future<void>? _loading;
 
-  /// Запись на диск выстроена в очередь: параллельные `write` иначе
-  /// перетирали бы снимки друг друга и часть текстов терялась бы.
-  Future<void> _writing = Future<void>.value();
+  /// Кэш не прочитался: читаем из памяти, на диск не пишем.
+  bool get readFailed => _json.readFailed;
 
   /// Все сохранённые тексты трека — по одному на источник.
   ///
@@ -96,14 +103,7 @@ class LyricsCache {
   /// Полная очистка — и в памяти, и на диске.
   Future<void> clear() async {
     _memory = <String, Map<LyricsSource, _CachedLyrics>>{};
-    try {
-      final File file = await _cacheFile();
-      if (file.existsSync()) await file.delete();
-    } on FileSystemException {
-      // Цель — отсутствие файла; если не вышло, это не критично.
-    } on Object catch (error) {
-      debugPrint('[LyricsCache] не удалось очистить кэш: $error');
-    }
+    await _json.deleteFile();
   }
 
   /// Возвращает записи из памяти, загрузив файл при первом обращении.
@@ -116,22 +116,12 @@ class LyricsCache {
   }
 
   Future<void> _loadFromDisk() async {
+    final dynamic decoded = await _json.read();
     final Map<String, Map<LyricsSource, _CachedLyrics>> parsed =
         <String, Map<LyricsSource, _CachedLyrics>>{};
-    try {
-      final File file = await _cacheFile();
-      if (file.existsSync()) {
-        final String raw = await file.readAsString();
-        if (raw.trim().isNotEmpty) {
-          _readEntries(jsonDecode(raw), parsed);
-        }
-      }
-    } on FileSystemException {
-      // Нет доступа к файлу — работаем без кэша.
-    } on FormatException {
-      // Повреждённый JSON — начнём файл заново при следующей записи.
-    } on Object catch (error) {
-      debugPrint('[LyricsCache] не удалось прочитать кэш: $error');
+    if (decoded != null) _readEntries(decoded, parsed);
+    if (_json.readFailed) {
+      debugPrint('[LyricsCache] кэш не прочитан — запись отключена');
     }
     _pruneExpired(parsed);
     _memory = parsed;
@@ -208,7 +198,9 @@ class LyricsCache {
 
   /// Пишет снимок в файл. Снимок кодируется сразу: пока ждём очередь, память
   /// могла измениться, а на диск должно попасть согласованное состояние.
-  Future<void> _persist(Map<String, Map<LyricsSource, _CachedLyrics>> entries) {
+  Future<void> _persist(
+    Map<String, Map<LyricsSource, _CachedLyrics>> entries,
+  ) async {
     final List<Map<String, dynamic>> flat = <Map<String, dynamic>>[];
     for (final MapEntry<String, Map<LyricsSource, _CachedLyrics>> track
         in entries.entries) {
@@ -224,18 +216,8 @@ class LyricsCache {
     }
     final String payload =
         jsonEncode(<String, dynamic>{'version': 1, 'entries': flat});
-    _writing = _writing.then((_) => _writeFile(payload));
-    return _writing;
-  }
-
-  Future<void> _writeFile(String payload) async {
-    try {
-      final File file = await _cacheFile();
-      await file.writeAsString(payload, flush: true);
-    } on FileSystemException {
-      // Диск недоступен — кэш остаётся только в памяти.
-    } on Object catch (error) {
-      debugPrint('[LyricsCache] не удалось сохранить кэш: $error');
+    if (!await _json.writeString(payload)) {
+      debugPrint('[LyricsCache] текст остался только в памяти');
     }
   }
 
@@ -273,6 +255,13 @@ class LyricsEditsStore {
 
   File? _file;
 
+  /// Общий файл: атомарная запись, копия повреждённого файла, запрет записи
+  /// до успешного чтения (см. [JsonStore]).
+  late final JsonStore _json = JsonStore(
+    resolve: _editsFile,
+    label: 'LyricsEditsStore',
+  );
+
   /// Правки в памяти: нужны, чтобы запись одного трека не перечитывала файл
   /// целиком и чтобы повторные чтения не били по диску.
   Map<String, _StoredEdit>? _memory;
@@ -280,9 +269,8 @@ class LyricsEditsStore {
   /// Загрузка файла идёт один раз: параллельные чтения ждут её же.
   Future<void>? _loading;
 
-  /// Запись на диск выстроена в очередь: параллельные `write` иначе
-  /// перетирали бы снимки друг друга и часть правок терялась бы.
-  Future<void> _writing = Future<void>.value();
+  /// Правки не прочитались: работаем в памяти, на диск не пишем.
+  bool get readFailed => _json.readFailed;
 
   /// Все сохранённые правки: id трека → текст.
   ///
@@ -321,14 +309,7 @@ class LyricsEditsStore {
   /// Полная очистка — и в памяти, и на диске.
   Future<void> clear() async {
     _memory = <String, _StoredEdit>{};
-    try {
-      final File file = await _editsFile();
-      if (file.existsSync()) await file.delete();
-    } on FileSystemException {
-      // Цель — отсутствие файла; если не вышло, это не критично.
-    } on Object catch (error) {
-      debugPrint('[LyricsEditsStore] не удалось очистить правки: $error');
-    }
+    await _json.deleteFile();
   }
 
   /// Возвращает записи из памяти, загрузив файл при первом обращении.
@@ -341,21 +322,11 @@ class LyricsEditsStore {
   }
 
   Future<void> _loadFromDisk() async {
+    final dynamic decoded = await _json.read();
     final Map<String, _StoredEdit> parsed = <String, _StoredEdit>{};
-    try {
-      final File file = await _editsFile();
-      if (file.existsSync()) {
-        final String raw = await file.readAsString();
-        if (raw.trim().isNotEmpty) {
-          _readEntries(jsonDecode(raw), parsed);
-        }
-      }
-    } on FileSystemException {
-      // Нет доступа к файлу — работаем без сохранённых правок.
-    } on FormatException {
-      // Повреждённый JSON — начнём файл заново при следующей записи.
-    } on Object catch (error) {
-      debugPrint('[LyricsEditsStore] не удалось прочитать правки: $error');
+    if (decoded != null) _readEntries(decoded, parsed);
+    if (_json.readFailed) {
+      debugPrint('[LyricsEditsStore] правки не прочитаны — запись отключена');
     }
     _memory = parsed;
   }
@@ -395,7 +366,7 @@ class LyricsEditsStore {
 
   /// Пишет снимок в файл. Снимок кодируется сразу: пока ждём очередь, память
   /// могла измениться, а на диск должно попасть согласованное состояние.
-  Future<void> _persist(Map<String, _StoredEdit> entries) {
+  Future<void> _persist(Map<String, _StoredEdit> entries) async {
     final List<Map<String, dynamic>> flat = <Map<String, dynamic>>[];
     for (final MapEntry<String, _StoredEdit> item in entries.entries) {
       flat.add(<String, dynamic>{
@@ -406,18 +377,8 @@ class LyricsEditsStore {
     }
     final String payload =
         jsonEncode(<String, dynamic>{'version': 1, 'entries': flat});
-    _writing = _writing.then((_) => _writeFile(payload));
-    return _writing;
-  }
-
-  Future<void> _writeFile(String payload) async {
-    try {
-      final File file = await _editsFile();
-      await file.writeAsString(payload, flush: true);
-    } on FileSystemException {
-      // Диск недоступен — правка остаётся только в памяти.
-    } on Object catch (error) {
-      debugPrint('[LyricsEditsStore] не удалось сохранить правки: $error');
+    if (!await _json.writeString(payload)) {
+      debugPrint('[LyricsEditsStore] правка осталась только в памяти');
     }
   }
 

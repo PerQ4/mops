@@ -3,6 +3,7 @@ import 'dart:io';
 
 import 'package:flutter/foundation.dart';
 
+import '../../data/local/json_store.dart';
 import '../../data/local/lyrics_cache.dart';
 import 'podcast_models.dart';
 
@@ -30,9 +31,9 @@ class PodcastStoredData {
 /// Поэтому прогресс считаем и храним сами, рядом с кэшем текстов
 /// ([appDataDirectory]). Файл переживает перезапуск — в этом весь смысл.
 ///
-/// Формат повторяет `PlaylistTagsStore`: снимок в памяти, ленивое чтение,
-/// очередь записи. Ошибки диска глотаются: недоступная история — это пустая
-/// история, а не повод не открыть подкаст.
+/// Формат повторяет `PlaylistTagsStore`: снимок в памяти, ленивое чтение.
+/// Ошибка диска не превращается в «пустую историю»: файл копируется в
+/// `.corrupt`, а запись в него запрещается до перезапуска (см. [JsonStore]).
 class PodcastStore {
   PodcastStore({this.fileName = 'podcasts.json'});
 
@@ -50,66 +51,64 @@ class PodcastStore {
   bool _loaded = false;
   Future<void>? _loading;
 
-  /// Запись выстроена в очередь: параллельные снимки иначе перетирали бы
-  /// друг друга, и часть истории терялась бы.
-  Future<void> _writing = Future<void>.value();
+  /// Файл истории: атомарная запись и запрет записи до чтения.
+  late final JsonStore _json = JsonStore(
+    resolve: _fileHandle,
+    label: 'PodcastStore',
+  );
+
+  /// История не прочиталась: показываем пустую, но на диск не пишем, иначе
+  /// первое же сохранение прогресса стёрло бы файл целиком.
+  bool get readFailed => _json.readFailed;
 
   Future<PodcastStoredData> read() async {
-    if (_loaded) return _memory;
-    _loading ??= _loadFromDisk();
-    await _loading;
+    await _ensureLoaded();
     return _memory;
   }
 
   /// Сохраняет историю целиком. Списки обрезаются до пределов и
   /// упорядочиваются здесь, чтобы вызывающий не мог записать мусор.
-  Future<void> writeAll(PodcastStoredData data) {
+  ///
+  /// Чтение ждём до записи: раньше `_memory` и `_loaded` ставились сразу, и
+  /// снимок, сделанный до конца загрузки, затирал историю с диска.
+  Future<void> writeAll(PodcastStoredData data) async {
+    await _ensureLoaded();
     final PodcastStoredData trimmed = _trim(data);
     _memory = trimmed;
-    _loaded = true;
 
     final String payload = jsonEncode(<String, dynamic>{
       'version': 1,
       'progress': trimmed.progress.map((PodcastEntry e) => e.toJson()).toList(),
       'recent': trimmed.recent.map((PodcastEntry e) => e.toJson()).toList(),
     });
-    _writing = _writing.then((_) => _writeFile(payload));
-    return _writing;
+    if (!await _json.writeString(payload)) {
+      debugPrint('[PodcastStore] история осталась только в памяти');
+    }
   }
 
   /// Полная очистка — и памяти, и файла.
   Future<void> clear() async {
+    await _ensureLoaded();
     _memory = PodcastStoredData.empty;
-    _loaded = true;
-    try {
-      final File file = await _fileHandle();
-      if (file.existsSync()) await file.delete();
-    } on FileSystemException {
-      // Цель — отсутствие файла; не вышло — не критично.
-    } on Object catch (error) {
-      debugPrint('[PodcastStore] не удалось очистить историю: $error');
-    }
+    await _json.deleteFile();
+  }
+
+  Future<void> _ensureLoaded() async {
+    if (_loaded) return;
+    _loading ??= _loadFromDisk();
+    await _loading;
   }
 
   Future<void> _loadFromDisk() async {
     final List<PodcastEntry> progress = <PodcastEntry>[];
     final List<PodcastEntry> recent = <PodcastEntry>[];
-    try {
-      final File file = await _fileHandle();
-      if (file.existsSync()) {
-        final String raw = await file.readAsString();
-        if (raw.trim().isNotEmpty) {
-          final dynamic decoded = jsonDecode(raw);
-          _readList(decoded, 'progress', progress);
-          _readList(decoded, 'recent', recent);
-        }
-      }
-    } on FileSystemException {
-      // Нет доступа к файлу — истории просто нет.
-    } on FormatException {
-      // Повреждённый JSON начнём заново при следующей записи.
-    } on Object catch (error) {
-      debugPrint('[PodcastStore] не удалось прочитать историю: $error');
+    final dynamic decoded = await _json.read();
+    if (decoded != null) {
+      _readList(decoded, 'progress', progress);
+      _readList(decoded, 'recent', recent);
+    }
+    if (_json.readFailed) {
+      debugPrint('[PodcastStore] история не прочитана — запись отключена');
     }
     _memory = _trim(PodcastStoredData(progress: progress, recent: recent));
     _loaded = true;
@@ -159,17 +158,6 @@ class PodcastStore {
       ..sort((PodcastEntry a, PodcastEntry b) => b.at.compareTo(a.at));
     if (sorted.length <= limit) return sorted;
     return sorted.take(limit).toList(growable: false);
-  }
-
-  Future<void> _writeFile(String payload) async {
-    try {
-      final File file = await _fileHandle();
-      await file.writeAsString(payload, flush: true);
-    } on FileSystemException {
-      // Диск недоступен — история осталась в памяти.
-    } on Object catch (error) {
-      debugPrint('[PodcastStore] не удалось сохранить историю: $error');
-    }
   }
 
   Future<File> _fileHandle() async {

@@ -5,6 +5,7 @@ import 'dart:io';
 import 'package:flutter/foundation.dart';
 
 import '../models/models.dart';
+import 'json_store.dart';
 import 'lyrics_cache.dart' show appDataDirectory;
 
 /// Ошибка загрузки, которую можно показать пользователю словами.
@@ -156,12 +157,16 @@ class DownloadsStore {
   List<DownloadedTrack>? _memory;
   Map<String, int?> _partials = <String, int?>{};
 
+  /// Файл метаданных: атомарная запись и запрет записи до чтения — иначе
+  /// после сбоя чтения список загрузок затирался бы пустым.
+  late final JsonStore _json = JsonStore(resolve: _metaFile, label: 'Downloads');
+
+  /// Файл прочитан не был: записи в него не будет. Аудиофайлы при этом
+  /// остаются на диске, поэтому список нельзя перезаписывать «с нуля».
+  bool get readFailed => _json.readFailed;
+
   /// Файл читается один раз: параллельные чтения ждут ту же загрузку.
   Future<void>? _loading;
-
-  /// Запись выстроена в очередь: два завершения подряд иначе перетирали бы
-  /// файл метаданных.
-  Future<void> _writing = Future<void>.value();
 
   /// Все завершённые загрузки, новые сверху.
   Future<List<DownloadedTrack>> readAll() async {
@@ -250,14 +255,32 @@ class DownloadsStore {
       container: container,
     );
 
+    final List<DownloadedTrack> previousItems =
+        _memory ?? const <DownloadedTrack>[];
+    final Map<String, int?> previousPartials = Map<String, int?>.of(_partials);
+
     _memory = <DownloadedTrack>[
       item,
-      for (final DownloadedTrack existing
-          in _memory ?? const <DownloadedTrack>[])
+      for (final DownloadedTrack existing in previousItems)
         if (existing.id != track.id) existing,
     ];
     _partials.remove(track.id);
-    await _persist();
+    if (!await _persist()) {
+      // Список не сохранился — значит после перезапуска трек «пропадёт», хотя
+      // файл скачан. Честнее вернуть его в недокачанное состояние и сказать
+      // об ошибке, чем показывать скачанным то, чего нет в метаданных.
+      _memory = previousItems;
+      _partials = previousPartials;
+      try {
+        if (file.existsSync()) await file.rename(part.path);
+      } on FileSystemException catch (error) {
+        debugPrint('[Downloads] не удалось вернуть файл в .part: $error');
+      }
+      throw DownloadsException(
+        'Файл скачан, но список загрузок сохранить не удалось. '
+        'Проверьте свободное место и права на каталог данных.',
+      );
+    }
     return item;
   }
 
@@ -340,44 +363,34 @@ class DownloadsStore {
   }
 
   Future<void> _loadFromDisk() async {
+    final dynamic decoded = await _json.read();
     final List<DownloadedTrack> parsed = <DownloadedTrack>[];
     final Map<String, int?> partials = <String, int?>{};
 
-    try {
-      final File file = await _metaFile();
-      if (file.existsSync()) {
-        final String raw = await file.readAsString();
-        if (raw.trim().isNotEmpty) {
-          final dynamic decoded = jsonDecode(raw);
-          if (decoded is Map<String, dynamic>) {
-            final dynamic tracks = decoded['tracks'];
-            if (tracks is List) {
-              for (final dynamic item in tracks) {
-                final DownloadedTrack? track = DownloadedTrack.fromJson(item);
-                if (track != null) parsed.add(track);
-              }
-            }
-            final dynamic stored = decoded['partials'];
-            if (stored is Map) {
-              for (final MapEntry<dynamic, dynamic> entry in stored.entries) {
-                final String id = '${entry.key}';
-                if (id.isEmpty) continue;
-                final dynamic value = entry.value;
-                final dynamic expected =
-                    value is Map<String, dynamic> ? value['expected'] : null;
-                partials[id] = expected is num ? expected.toInt() : null;
-              }
-            }
-          }
+    if (decoded is Map<String, dynamic>) {
+      final dynamic tracks = decoded['tracks'];
+      if (tracks is List) {
+        for (final dynamic item in tracks) {
+          final DownloadedTrack? track = DownloadedTrack.fromJson(item);
+          if (track != null) parsed.add(track);
         }
       }
-    } on FileSystemException {
-      // Нет доступа к файлу — загрузок пока нет, запись начнётся заново.
-    } on FormatException {
-      // Повреждённый JSON — при следующей записи файл будет пересобран.
-    } on Object catch (error) {
-      // В тестах и на платформах без path_provider каталога просто нет.
-      debugPrint('[Downloads] не удалось прочитать список: $error');
+      final dynamic stored = decoded['partials'];
+      if (stored is Map) {
+        for (final MapEntry<dynamic, dynamic> entry in stored.entries) {
+          final String id = '${entry.key}';
+          if (id.isEmpty) continue;
+          final dynamic value = entry.value;
+          final dynamic expected =
+              value is Map<String, dynamic> ? value['expected'] : null;
+          partials[id] = expected is num ? expected.toInt() : null;
+        }
+      }
+    }
+    if (_json.readFailed) {
+      // Не «загрузок нет», а «список не прочитан». Писать в файл нельзя:
+      // записи о скачанных треках потерялись бы, а файлы остались бы сиротами.
+      debugPrint('[Downloads] список не прочитан — запись отключена');
     }
 
     // Запись без файла бесполезна и вводила бы в заблуждение: трек показан
@@ -402,7 +415,7 @@ class DownloadsStore {
     };
   }
 
-  Future<void> _persist() async {
+  Future<bool> _persist() async {
     final String payload = jsonEncode(<String, dynamic>{
       'version': 1,
       'tracks': <Map<String, dynamic>>[
@@ -414,19 +427,9 @@ class DownloadsStore {
           entry.key: <String, dynamic>{'expected': entry.value},
       },
     });
-    _writing = _writing.then((_) => _writeFile(payload));
-    await _writing;
-  }
-
-  Future<void> _writeFile(String payload) async {
-    try {
-      final File file = await _metaFile();
-      await file.writeAsString(payload, flush: true);
-    } on FileSystemException catch (error) {
-      debugPrint('[Downloads] не удалось сохранить список: $error');
-    } on Object catch (error) {
-      debugPrint('[Downloads] не удалось сохранить список: $error');
-    }
+    final bool saved = await _json.writeString(payload);
+    if (!saved) debugPrint('[Downloads] список загрузок не сохранён');
+    return saved;
   }
 
   Future<File> _metaFile() async {

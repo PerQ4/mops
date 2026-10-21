@@ -3,6 +3,7 @@ import 'dart:io';
 
 import 'package:flutter/foundation.dart';
 
+import 'json_store.dart';
 import 'lyrics_cache.dart' show appDataDirectory;
 
 /// Одно зачётное прослушивание (задача 8.1).
@@ -67,7 +68,10 @@ class ListenEvent {
             .where((String name) => name.isNotEmpty)
             .toList(growable: false)
         : const <String>[];
-    final int seconds = ((raw['seconds'] as num?)?.toInt() ?? 0).clamp(
+    // Приведение `as num?` падало на строковом значении и обрывало разбор
+    // всего журнала — поэтому проверяем тип, а не бросаем.
+    final dynamic rawSeconds = raw['seconds'];
+    final int seconds = (rawSeconds is num ? rawSeconds.toInt() : 0).clamp(
       0,
       24 * 60 * 60,
     );
@@ -103,12 +107,19 @@ class ListeningStatsStore {
   static const int maxEvents = 5000;
   static const Duration maxAge = Duration(days: 365);
 
-  File? _file;
+  /// Общий файл: атомарная запись, копия повреждённого файла, запрет записи
+  /// до успешного чтения (см. [JsonStore]).
+  late final JsonStore _json = JsonStore(
+    resolve: _storeFile,
+    label: 'ListeningStatsStore',
+  );
+
   List<ListenEvent>? _memory;
   Future<void>? _loading;
 
-  /// Запись выстроена в очередь: иначе два зачёта подряд перетирали бы файл.
-  Future<void> _writing = Future<void>.value();
+  /// Журнал с диска не прочитался: работаем в памяти и на диск не пишем,
+  /// иначе первое же прослушивание стёрло бы файл пустым списком.
+  bool get readFailed => _json.readFailed;
 
   Future<List<ListenEvent>> readAll() async {
     await _ensureLoaded();
@@ -128,11 +139,19 @@ class ListeningStatsStore {
         for (final ListenEvent event in next) event.toJson(),
       ],
     });
-    _writing = _writing.then((_) => _writeFile(payload));
-    await _writing;
+    final bool saved = await _json.writeString(payload);
+    if (!saved) {
+      debugPrint('[ListeningStatsStore] журнал остался только в памяти');
+    }
   }
 
-  Future<void> clear() => writeAll(const <ListenEvent>[]);
+  Future<void> clear() async {
+    await _ensureLoaded();
+    _memory = const <ListenEvent>[];
+    // Явная очистка должна работать и после ошибки чтения: пользователь
+    // просит стереть журнал, а не переписать его пустым поверх непрочитанного.
+    await _json.deleteFile();
+  }
 
   List<ListenEvent> _prune(List<ListenEvent> events) {
     final DateTime cutoff = DateTime.now().subtract(maxAge);
@@ -153,52 +172,27 @@ class ListeningStatsStore {
   }
 
   Future<void> _loadFromDisk() async {
+    final dynamic decoded = await _json.read();
     final List<ListenEvent> parsed = <ListenEvent>[];
-    try {
-      final File file = await _storeFile();
-      if (file.existsSync()) {
-        final String raw = await file.readAsString();
-        if (raw.trim().isNotEmpty) {
-          final dynamic decoded = jsonDecode(raw);
-          final dynamic events =
-              decoded is Map<String, dynamic> ? decoded['events'] : null;
-          if (events is List) {
-            for (final dynamic item in events) {
-              final ListenEvent? event = ListenEvent.fromJson(item);
-              if (event != null) parsed.add(event);
-            }
-          }
-        }
+    final dynamic events =
+        decoded is Map<String, dynamic> ? decoded['events'] : null;
+    if (events is List) {
+      for (final dynamic item in events) {
+        final ListenEvent? event = ListenEvent.fromJson(item);
+        if (event != null) parsed.add(event);
       }
-    } on FileSystemException {
-      // Нет доступа к файлу — статистики пока нет, запись начнётся заново.
-    } on FormatException {
-      // Повреждённый JSON — при следующей записи файл будет пересобран.
-    } on Object catch (error) {
-      // В тестах и на платформах без path_provider файла просто нет.
-      debugPrint('[ListeningStatsStore] не удалось прочитать журнал: $error');
+    }
+    if (_json.readFailed) {
+      // Пустая память здесь — не «журнала нет», а «файл не прочитан»:
+      // запись запрещена, см. [readFailed].
+      debugPrint('[ListeningStatsStore] журнал не прочитан, запись отключена');
     }
     _memory = _prune(parsed);
   }
 
-  Future<void> _writeFile(String payload) async {
-    try {
-      final File file = await _storeFile();
-      await file.writeAsString(payload, flush: true);
-    } on FileSystemException {
-      // Диск недоступен — статистика остаётся только в памяти.
-    } on Object catch (error) {
-      debugPrint('[ListeningStatsStore] не удалось сохранить журнал: $error');
-    }
-  }
-
   Future<File> _storeFile() async {
-    final File? ready = _file;
-    if (ready != null) return ready;
     final Directory dir = await appDataDirectory();
-    final File file = File('${dir.path}${Platform.pathSeparator}$fileName');
-    _file = file;
-    return file;
+    return File('${dir.path}${Platform.pathSeparator}$fileName');
   }
 }
 
