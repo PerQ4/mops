@@ -283,9 +283,7 @@ Future<void> _enqueue(
       );
       return;
     }
-    for (final Track track in tracks) {
-      player.enqueue(track);
-    }
+    player.enqueueAll(tracks);
   } on Object catch (error) {
     messenger.showSnackBar(SnackBar(content: Text(describeError(error))));
   }

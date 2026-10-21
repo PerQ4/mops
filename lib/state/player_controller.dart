@@ -8,6 +8,8 @@ import 'package:shared_preferences/shared_preferences.dart';
 
 import '../core/audio/audio_engine.dart';
 import '../core/audio/media_kit_engine.dart';
+import '../core/playback/listening_tracker.dart';
+import '../core/playback/playback_failure.dart';
 import '../core/scrobbling/scrobbler.dart';
 import '../data/local/listening_stats.dart';
 import '../data/local/local_media.dart';
@@ -16,6 +18,12 @@ import '../data/models/models.dart';
 import '../data/sources/sponsorblock.dart';
 import '../data/sources/stream_downloader.dart';
 import '../data/sources/stream_resolver.dart';
+// Хранилище подкастов, а не `podcastLocalProvider`: тот сам слушает плеер, и
+// взаимная зависимость провайдеров была бы циклом. Само хранилище о плеере не
+// знает и слушает только диск.
+import '../features/podcast/podcast_models.dart';
+import '../features/podcast/podcast_providers.dart';
+import '../features/podcast/podcast_store.dart';
 import 'catalog_providers.dart';
 import 'providers.dart';
 
@@ -41,6 +49,10 @@ enum PlayerRepeatMode {
 /// Отдельная константа, а не литерал `-1` в интерфейсе: одно и то же значение
 /// читают и контроллер (в `_handleTrackEnded`), и меню выбора.
 const int kSleepTimerAfterTrack = -1;
+
+/// Насколько позиция должна отъехать назад, чтобы это была перемотка, а не
+/// округление на тике. Меньший откат не считается возвратом «к началу».
+const Duration _kSponsorRewindWindow = Duration(seconds: 1);
 
 /// Полное состояние плеера, которое видит интерфейс.
 @immutable
@@ -228,12 +240,12 @@ class PlayerController extends Notifier<PlayerUiState> {
 
   /// --------------------------- статистика прослушиваний (задача 8.1)
   ///
-  /// Считаем только реально проигранные секунды: дельты позиции между тиками,
-  /// причём небольшие. Перемотка даёт скачок, и он в зачёт не идёт. Один трек
-  /// засчитывается один раз за проигрывание — когда набралось достаточно.
-  String? _listenTrackId;
-  double _listenSeconds = 0;
-  double _listenPosition = 0;
+  /// Счётчик один на статистику и на скробблинг: считается только реально
+  /// проигранное время, перемотки в зачёт не идут, повтор начинается заново.
+  /// Само правило живёт в `core/playback/listening_tracker.dart`.
+  final ListeningTracker _listen = ListeningTracker();
+
+  /// Текущее проигрывание уже попало в журнал статистики.
   bool _listenRecorded = false;
 
   /// Вставки текущего трека по данным SponsorBlock.
@@ -260,6 +272,23 @@ class PlayerController extends Notifier<PlayerUiState> {
   /// одну, пока движок не догнал новую позицию.
   bool _sponsorSeeking = false;
 
+  /// Позиция на прошлом тике — по ней видно возврат назад.
+  Duration _sponsorPosition = Duration.zero;
+
+  /// Номер загрузки текущего трека.
+  ///
+  /// Растёт на каждой загрузке: работа, начатая для прошлого трека, по этому
+  /// номеру понимает, что её результат уже не нужен.
+  int _loadGeneration = 0;
+
+  /// Отложенная запись громкости: ползунок двигают чаще, чем нужно писать диск.
+  double? _pendingVolume;
+  Timer? _volumeSaveTimer;
+
+  /// Известные эпизоды подкастов (id треков) и когда список читали в прошлый раз.
+  final Set<String> _podcastEpisodes = <String>{};
+  DateTime? _podcastPolledAt;
+
   @override
   PlayerUiState build() {
     // Отписка от предыдущего движка (если нотификатор пересоздали).
@@ -284,17 +313,19 @@ class PlayerController extends Notifier<PlayerUiState> {
       // поэтому вызов не может помешать воспроизведению.
       _syncSponsorBlock(playback);
 
-      // Скробблинг: «сейчас играет» и накопление прослушанного. Идёт до
-      // обработки конца трека: там очередь перескочит на следующий, а закрыть
-      // статистику нужно по сыгравшему треку.
+      // Прослушанное считаем здесь и один раз: журнал статистики и скробблинг
+      // получают одно и то же время из общего счётчика.
       final bool acceptedEnd = playback.status == PlaybackStatus.completed &&
           !_seeking &&
           !_handlingEnd &&
           !playback.hasError;
-      _scrobblePlayback(playback, completed: acceptedEnd);
+      final ListeningTick tick = _advanceListening(
+        playback,
+        completed: acceptedEnd,
+      );
 
-      // Статистика прослушиваний — рядом со скробблингом и по тем же тикам:
-      // здесь известна настоящая позиция, а не та, что показывает интерфейс.
+      _scrobblePlayback(playback, tick);
+      if (tick == ListeningTick.started) _listenRecorded = false;
       _countListening(playback);
 
       // На ошибке и во время перемотки вперёд не идём: «конец трека» здесь
@@ -521,6 +552,18 @@ class PlayerController extends Notifier<PlayerUiState> {
     _persistSnapshot();
   }
 
+  /// Добавляет несколько треков одним изменением состояния.
+  ///
+  /// Отдельный метод, а не цикл по [enqueue]: каждый вызов сериализует всю
+  /// очередь, и на альбоме из 500 треков это 500 сериализаций растущего
+  /// списка. Здесь сериализация одна.
+  void enqueueAll(Iterable<Track> tracks) {
+    final List<Track> added = tracks.toList(growable: false);
+    if (added.isEmpty) return;
+    state = state.copyWith(queue: <Track>[...state.queue, ...added]);
+    _persistSnapshot();
+  }
+
   /// Ставит трек сразу после текущего.
   void playNext(Track track) {
     if (!state.hasTrack) {
@@ -604,13 +647,13 @@ class PlayerController extends Notifier<PlayerUiState> {
       return;
     }
 
-    await _loadCurrent(autoplay: playback.isPlaying);
+    final int generation = await _loadCurrent(autoplay: playback.isPlaying);
     // Пока резолвили поток, пользователь мог переключить трек — тогда
     // возвращать позицию уже некуда.
     if (state.current?.id != replacement.id) return;
 
     if (playback.position > Duration.zero) {
-      await seek(playback.position);
+      await seek(playback.position, generation: generation);
     }
     _persistSnapshot();
   }
@@ -662,9 +705,7 @@ class PlayerController extends Notifier<PlayerUiState> {
   Future<void> togglePlayPause() async {
     if (!state.hasTrack) return;
     if (state.isPlaying) {
-      await _engine.pause();
-      // Пауза — удобный момент зафиксировать позицию: дальше она не меняется.
-      _persistSnapshot();
+      await pause();
     } else {
       await play();
     }
@@ -678,6 +719,7 @@ class PlayerController extends Notifier<PlayerUiState> {
   }
 
   Future<void> pause() async {
+    _flushVolume();
     await _engine.pause();
     _persistSnapshot();
   }
@@ -720,24 +762,48 @@ class PlayerController extends Notifier<PlayerUiState> {
     }
   }
 
-  Future<void> seek(Duration position) async {
+  /// Перематывает текущий трек.
+  ///
+  /// [generation] — номер загрузки, для которой перемотка задумана. Пока шла
+  /// подготовка (резолв, загрузка источника), трек мог смениться, и перемотка
+  /// улетела бы в новый — поэтому устаревшая перемотка не выполняется.
+  Future<void> seek(Duration position, {int? generation}) async {
+    final Duration target = position < Duration.zero ? Duration.zero : position;
+
+    // Восстановленный трек ещё не загружен в движок: перематывать нечего.
+    // Позицию запоминаем — её применит `_resumeRestored` сразу после старта.
+    if (_restorePending) {
+      _restorePosition = target;
+      state = state.copyWith(
+        playback: state.playback.copyWith(position: target),
+      );
+      return;
+    }
+
+    final int token = generation ?? _loadGeneration;
+    if (token != _loadGeneration) return;
+
     // Перемотка поднимает флаг до самого её окончания: ложный EOS,
     // пришедший в это окно, не должен переключать очередь.
     _seeking = true;
     try {
-      await _engine.seek(position);
+      await _engine.seek(target);
     } on Object catch (error) {
       // Сбой перемотки не останавливает воспроизведение.
       debugPrint('Перемотка не удалась: $error');
     } finally {
-      _seeking = false;
+      // Флаг снимаем только для своего поколения: у нового трека может идти
+      // своя перемотка, и её флаг трогать нельзя.
+      if (token == _loadGeneration) _seeking = false;
     }
   }
 
+  /// Перемотка по доле длительности — тем же путём, что и обычная: иначе она
+  /// обходила бы и восстановление очереди, и защиту от смены трека.
   Future<void> seekFraction(double fraction) {
     final Duration duration = state.playback.duration;
     if (duration <= Duration.zero) return Future<void>.value();
-    return _engine.seek(duration * fraction.clamp(0.0, 1.0));
+    return seek(duration * fraction.clamp(0.0, 1.0));
   }
 
   // ------------------------------------------------------------ SponsorBlock
@@ -751,6 +817,15 @@ class PlayerController extends Notifier<PlayerUiState> {
   void _syncSponsorBlock(PlaybackState playback) {
     final Track? track = state.current;
     if (track == null) return;
+
+    // Набор пропущенного относится к проигрыванию от начала, а не к треку:
+    // после повтора или перемотки назад вставки снова впереди, и пропускать
+    // их надо заново — иначе второй раз они прозвучат.
+    final bool rewound =
+        playback.position + _kSponsorRewindWindow < _sponsorPosition;
+    _sponsorPosition = playback.position;
+    if (rewound) _sponsorSkipped.clear();
+
     // У локального файла нет видео на YouTube, а значит и разметки
     // SponsorBlock: запрос с путём в качестве id был бы бессмысленным.
     if (isLocalTrackId(track.id)) {
@@ -793,8 +868,12 @@ class PlayerController extends Notifier<PlayerUiState> {
       // он присылает старую, и без отметки мы бы перематывали повторно.
       _sponsorSkipped.add(segment.uuid);
       _sponsorSeeking = true;
+      final int generation = _loadGeneration;
       unawaited(
-        seek(segment.end).whenComplete(() => _sponsorSeeking = false),
+        seek(segment.end, generation: generation).whenComplete(() {
+          // Трек мог смениться, пока шла перемотка: чужой флаг не снимаем.
+          if (generation == _loadGeneration) _sponsorSeeking = false;
+        }),
       );
       break;
     }
@@ -820,6 +899,7 @@ class PlayerController extends Notifier<PlayerUiState> {
       _sponsorCategories.containsAll(categories);
 
   void _clearSponsorState() {
+    _sponsorPosition = Duration.zero;
     if (_sponsorTrackId == null && _sponsorSegments.isEmpty) return;
     _sponsorTrackId = null;
     _sponsorCategories = const <SponsorBlockCategory>{};
@@ -827,9 +907,27 @@ class PlayerController extends Notifier<PlayerUiState> {
     _sponsorSkipped.clear();
   }
 
+  /// Меняет громкость и откладывает запись в настройки.
+  ///
+  /// Ползунок двигают десятки раз в секунду, а запись настроек — это перезапись
+  /// всего JSON. Пишем последнее значение не чаще раза в секунду; перед паузой
+  /// и сменой трека — сразу ([_flushVolume]).
   Future<void> setVolume(double volume) async {
     await _engine.setVolume(volume);
-    await ref.read(settingsControllerProvider.notifier).setLastVolume(volume);
+    _pendingVolume = volume;
+    _volumeSaveTimer ??= Timer(const Duration(seconds: 1), _flushVolume);
+  }
+
+  /// Записывает отложенную громкость немедленно.
+  void _flushVolume() {
+    _volumeSaveTimer?.cancel();
+    _volumeSaveTimer = null;
+    final double? volume = _pendingVolume;
+    _pendingVolume = null;
+    if (volume == null) return;
+    unawaited(
+      ref.read(settingsControllerProvider.notifier).setLastVolume(volume),
+    );
   }
 
   Future<void> setSpeed(double speed) async {
@@ -953,6 +1051,7 @@ class PlayerController extends Notifier<PlayerUiState> {
     // Снимаем отсчёт до паузы: пока идёт асинхронная остановка, интерфейс не
     // должен показывать всё ещё активный таймер.
     clearSleepTimer();
+    _flushVolume();
     // Трек остаётся в очереди и на своей позиции — утром можно продолжить
     // с того же места.
     unawaited(_engine.pause());
@@ -968,6 +1067,10 @@ class PlayerController extends Notifier<PlayerUiState> {
   /// пишем повторно: на паузе позиция не меняется, и лишние записи на диск
   /// были бы бесполезны.
   void _persistSnapshot() {
+    // Заодно фиксируем отложенную громкость: снимок и так пишется на смене
+    // трека, паузе и раз в пять секунд.
+    _flushVolume();
+
     final PlayerUiState current = state;
     if (current.queue.isEmpty) {
       // Пустую очередь в снимке хранить нечего — она ничего не восстановит.
@@ -1001,9 +1104,9 @@ class PlayerController extends Notifier<PlayerUiState> {
   /// позволяет начать и не с сохранённого места — так делает «назад».
   Future<void> _resumeRestored({Duration? position}) async {
     final Duration target = position ?? _restorePosition;
-    await _loadCurrent();
+    final int generation = await _loadCurrent();
     if (target > Duration.zero && state.current != null) {
-      await seek(target);
+      await seek(target, generation: generation);
     }
   }
 
@@ -1023,14 +1126,28 @@ class PlayerController extends Notifier<PlayerUiState> {
 
   // -------------------------------------------------------------- private
 
-  Future<void> _loadCurrent({bool autoplay = true}) async {
+  /// Загружает текущий трек.
+  ///
+  /// Возвращает номер поколения этой загрузки: по нему перемотка, начатая
+  /// после `await`, понимает, что трек за это время не сменился.
+  Future<int> _loadCurrent({bool autoplay = true}) async {
     // Любая настоящая загрузка снимает «восстановленный» режим: дальше
     // позицию ведёт движок, а не снимок.
     _restorePending = false;
     _restorePosition = Duration.zero;
 
+    // Перемотки и прочие действия, начатые для прошлого трека, по этому
+    // номеру поймут, что их результат уже не к месту.
+    final int generation = ++_loadGeneration;
+    _seeking = false;
+    _sponsorSeeking = false;
+    _sponsorPosition = Duration.zero;
+
+    // Громкость, не дописанную до настроек, фиксируем на границе трека.
+    _flushVolume();
+
     final Track? track = state.current;
-    if (track == null) return;
+    if (track == null) return generation;
 
     // Всё, что предзагружалось для прошлого трека, больше не нужно.
     _preloadGeneration++;
@@ -1057,7 +1174,10 @@ class PlayerController extends Notifier<PlayerUiState> {
         // есть источник. Проверяем только, что файл ещё на месте, — его могли
         // удалить или переименовать после сканирования.
         if (!await File(localPath).exists()) {
-          throw StreamResolutionException('Файл не найден: $localPath');
+          throw PlaybackFailureException(
+            'Файл не найден: $localPath',
+            PlaybackFailure.unavailable,
+          );
         }
         resolved = ResolvedStream(
           url: Uri.file(localPath),
@@ -1075,7 +1195,7 @@ class PlayerController extends Notifier<PlayerUiState> {
 
       // Пока получали ссылку, пользователь мог переключить трек — тогда
       // загрузку надо отменить, иначе заиграет «не тот».
-      if (state.current?.id != track.id) return;
+      if (state.current?.id != track.id) return generation;
 
       state = state.copyWith(
         streamNote: localPath != null
@@ -1106,12 +1226,23 @@ class PlayerController extends Notifier<PlayerUiState> {
       // Следующий трек готовим только после того, как текущий зазвучал:
       // иначе предзагрузка конкурировала бы с ним за канал на старте.
       if (autoplay) unawaited(_preloadNext());
-      return;
+      return generation;
+    } on PlaybackFailureException catch (error) {
+      // Причина известна точно — искать в тексте ничего не нужно.
+      state = state.copyWith(
+        resolving: false,
+        downloading: false,
+        error: error.message,
+        unavailableIds: error.reason == PlaybackFailure.unavailable
+            ? <String>{...state.unavailableIds, track.id}
+            : state.unavailableIds,
+      );
     } on StreamResolutionException catch (error) {
       // Резолвер отличает «недоступно» (удалено, скрыто, регион) от сетевого
       // сбоя. Только первый случай даёт смысл искать замену — во втором
       // достаточно повторить попытку.
-      final bool unavailable = error.message.contains('недоступно');
+      final bool unavailable =
+          failureOfResolution(error) == PlaybackFailure.unavailable;
       state = state.copyWith(
         resolving: false,
         downloading: false,
@@ -1126,17 +1257,26 @@ class PlayerController extends Notifier<PlayerUiState> {
         downloading: false,
         error: error.message,
       );
-    } on Exception catch (error) {
+    } on Object catch (error) {
+      // `on Object`, а не `on Exception`: ошибка (например, `ArgumentError`)
+      // тоже не должна оставлять интерфейс со спиннером навсегда.
       state = state.copyWith(
         resolving: false,
         downloading: false,
         error: 'Ошибка воспроизведения: $error',
       );
     } finally {
+      // Любой выход из загрузки гасит признаки ожидания: даже если вылетело
+      // то, что мы не предусмотрели, «крутилка» не должна остаться навсегда.
+      if (state.current?.id == track.id &&
+          (state.resolving || state.downloading)) {
+        state = state.copyWith(resolving: false, downloading: false);
+      }
       // Движок обнулил позицию при остановке прошлого трека — снимок хранит
       // новый трек с началом, а не позицию предыдущего.
       _persistSnapshot();
     }
+    return generation;
   }
 
   /// Подпись качества: контейнер и битрейт потока.
@@ -1302,11 +1442,80 @@ class PlayerController extends Notifier<PlayerUiState> {
     }
   }
 
+  /// Продвигает общий счётчик прослушанного и сообщает, что на тике
+  /// произошло: по этому событию скрёббер и статистика начинают заново.
+  ListeningTick _advanceListening(
+    PlaybackState playback, {
+    required bool completed,
+  }) {
+    final Track? track = state.current;
+    if (track == null) {
+      _listen.reset();
+      return ListeningTick.none;
+    }
+    return _listen.advance(
+      trackId: track.id,
+      position: playback.position,
+      total: _totalFor(track, playback),
+      isPlaying: playback.isPlaying,
+      completed: completed,
+    );
+  }
+
+  /// Длительность: движок знает точную, модель — запасную.
+  Duration _totalFor(Track track, PlaybackState playback) =>
+      playback.duration > Duration.zero ? playback.duration : track.duration;
+
+  /// Эпизод ли это подкаста.
+  ///
+  /// Список известных эпизодов ведёт модуль подкастов: другого признака у
+  /// `Track` нет, а играть эпизод и песню можно одним и тем же путём. Берём его
+  /// из хранилища подкастов: `podcastLocalProvider` сам слушает плеер, и
+  /// взаимная зависимость провайдеров была бы циклом.
+  bool _isPodcastEpisode(String trackId) {
+    if (_podcastEpisodes.contains(trackId)) return true;
+    _pollPodcastEpisodes();
+    return false;
+  }
+
+  /// Перечитывает список эпизодов не чаще раза в пять секунд.
+  ///
+  /// Свежий эпизод попадает в хранилище только после пары секунд звука, поэтому
+  /// одного чтения на старте трека мало: до порога скробблинга (минуты) список
+  /// успевает обновиться, и прослушивание подкаста не уйдёт в профиль.
+  void _pollPodcastEpisodes() {
+    final DateTime now = DateTime.now();
+    final DateTime? last = _podcastPolledAt;
+    if (last != null && now.difference(last) < const Duration(seconds: 5)) {
+      return;
+    }
+    _podcastPolledAt = now;
+    unawaited(_loadPodcastEpisodes());
+  }
+
+  Future<void> _loadPodcastEpisodes() async {
+    try {
+      final PodcastStoredData data =
+          await ref.read(podcastStoreProvider).read();
+      if (!ref.mounted) return;
+      for (final PodcastEntry entry in <PodcastEntry>[
+        ...data.progress,
+        ...data.recent,
+      ]) {
+        _podcastEpisodes.add(entry.episodeId);
+      }
+    } on Object catch (error) {
+      // Без списка эпизодов подкаст может уйти в профиль — но падать из-за
+      // этого воспроизведение не должно.
+      debugPrint('[Скробблинг] список подкастов не прочитан: $error');
+    }
+  }
+
   /// Передаёт сервису скробблинга, что сейчас играет и сколько уже сыграно.
   ///
   /// Сетевые ошибки сюда не доходят: сервис гасит их в лог сам, и
   /// воспроизведение от статистики не зависит.
-  void _scrobblePlayback(PlaybackState playback, {required bool completed}) {
+  void _scrobblePlayback(PlaybackState playback, ListeningTick tick) {
     final Track? track = state.current;
     if (track == null) {
       _scrobbler.reset();
@@ -1314,74 +1523,40 @@ class PlayerController extends Notifier<PlayerUiState> {
     }
     _scrobbler.onPlayback(
       track,
-      position: playback.position,
-      duration: playback.duration,
+      total: _totalFor(track, playback),
+      listened: _listen.listened,
+      tick: tick,
       isPlaying: playback.isPlaying,
-      completed: completed,
+      isPodcast: _isPodcastEpisode(track.id),
     );
   }
 
-  /// Считает прослушанное и зачитывает трек, когда набралось достаточно.
+  /// Зачитывает трек в журнал, когда набралось достаточно.
   ///
   /// Порог — четыре минуты или половина трека, что меньше: короткий трек
-  /// засчитывается после половины, длинный — после четырёх минут. В журнал
-  /// попадает только реально проигранное время: паузы, перемотки и «просто
-  /// открытый плеер» его не добавляют.
+  /// засчитывается после половины, длинный — после четырёх минут (правило в
+  /// `core/playback/listening_tracker.dart`, общее со скробблером). В журнал
+  /// попадает только реально проигранное время.
   void _countListening(PlaybackState playback) {
     final Track? track = state.current;
     if (track == null) {
-      _listenTrackId = null;
-      _listenSeconds = 0;
-      _listenPosition = 0;
       _listenRecorded = false;
       return;
-    }
-
-    final double position = playback.position.inMilliseconds / 1000.0;
-    if (track.id != _listenTrackId) {
-      // Новый трек: начинаем счёт с его текущей позиции (она может быть не
-      // нулевой после восстановления очереди).
-      _listenTrackId = track.id;
-      _listenSeconds = 0;
-      _listenPosition = position;
-      _listenRecorded = false;
-      return;
-    }
-
-    final double delta = position - _listenPosition;
-    _listenPosition = position;
-
-    // Возврат к началу — это новое прослушивание (повтор трека), а не
-    // продолжение прежнего: иначе второй раз не засчитался бы никогда.
-    if (delta < -2 && position < 3) {
-      _listenSeconds = 0;
-      _listenRecorded = false;
-      return;
-    }
-    // Скачок больше двух секунд — перемотка или подвисание, не прослушивание.
-    if (playback.isPlaying && delta > 0 && delta <= 2) {
-      _listenSeconds += delta;
     }
     if (_listenRecorded) return;
 
-    final Duration total = playback.duration > Duration.zero
-        ? playback.duration
-        : track.duration;
-    final double threshold = total > Duration.zero
-        ? min(240.0, total.inMilliseconds / 2000.0)
-        : 240.0;
-    if (_listenSeconds < threshold) return;
+    final Duration total = _totalFor(track, playback);
+    if (!shouldCreditListen(total: total, listened: _listen.listened)) return;
 
     // Запись могли выключить уже после начала трека — тогда журнал не трогаем.
     final settings = ref.read(settingsControllerProvider);
     if (!settings.listeningStatsEnabled) return;
 
     _listenRecorded = true;
-    final int seconds = total > Duration.zero
-        ? _listenSeconds
-            .clamp(0, total.inMilliseconds / 1000.0)
-            .round()
-        : _listenSeconds.round();
+    final Duration listened = _listen.listened;
+    final int millis = total > Duration.zero && listened > total
+        ? total.inMilliseconds
+        : listened.inMilliseconds;
     unawaited(
       ref.read(listeningStatsProvider.notifier).add(
             ListenEvent(
@@ -1392,7 +1567,7 @@ class PlayerController extends Notifier<PlayerUiState> {
               ],
               album: track.album?.name,
               at: DateTime.now(),
-              seconds: max(1, seconds),
+              seconds: max(1, (millis / 1000).round()),
             ),
           ),
     );
@@ -1460,8 +1635,9 @@ class PlayerController extends Notifier<PlayerUiState> {
 
   /// Дополняет очередь рекомендациями YouTube («радио по треку»).
   Future<void> _extendWithRadio() async {
+    final PlayerUiState snapshot = state;
     final Track? seed =
-        state.current ?? (state.queue.isEmpty ? null : state.queue.last);
+        snapshot.current ?? (snapshot.queue.isEmpty ? null : snapshot.queue.last);
     if (seed == null) return;
     // Локального трека нет на YouTube: «радио по треку» для него невозможно,
     // а запрос с путём вместо videoId только тратил бы сеть.
@@ -1472,9 +1648,20 @@ class PlayerController extends Notifier<PlayerUiState> {
       return;
     }
 
+    final int index = snapshot.index;
     try {
       final List<Track> radio =
           await ref.read(catalogSourceProvider).autoplayQueue(seed.id);
+      if (!ref.mounted) return;
+
+      // Пока шёл запрос, трек или очередь могли смениться. Радио относилось к
+      // прежнему месту, и вставлять его в новую очередь нельзя: треки встали
+      // бы не туда, а переход — не на тот трек.
+      if (state.current?.id != seed.id || state.index != index) return;
+      // Очередь успели дополнить вручную — следующий трек уже есть, и радио
+      // больше не нужно.
+      if (state.index + 1 < state.queue.length) return;
+
       final Set<String> known =
           state.queue.map((Track t) => t.id).toSet();
       final List<Track> fresh = radio
@@ -1489,11 +1676,14 @@ class PlayerController extends Notifier<PlayerUiState> {
         return;
       }
 
+      // Уходим на первый добавленный трек: он стоит сразу за сыгравшим.
+      final int target = state.queue.length;
       final List<Track> queue = <Track>[...state.queue, ...fresh];
       _pushHistory(state.index);
-      state = state.copyWith(queue: queue, index: state.index + 1);
+      state = state.copyWith(queue: queue, index: target);
       await _loadCurrent();
-    } on Exception catch (error) {
+    } on Object catch (error) {
+      if (!ref.mounted) return;
       state = state.copyWith(error: 'Не удалось загрузить рекомендации: $error');
     }
   }

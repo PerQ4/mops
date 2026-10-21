@@ -7,6 +7,8 @@ import 'package:shared_preferences/shared_preferences.dart';
 
 import '../../data/models/models.dart';
 import '../../state/providers.dart';
+import '../playback/listening_tracker.dart';
+import '../playback/scrobble_rules.dart';
 import 'lastfm.dart';
 import 'listenbrainz.dart';
 
@@ -25,6 +27,19 @@ const String _kLastFmNowPlaying = 'mops.scrobble.lastfm.now_playing';
 const String _kListenBrainzToken = 'mops.scrobble.listenbrainz.token';
 const String _kListenBrainzUsername = 'mops.scrobble.listenbrainz.username';
 const String _kListenBrainzEnabled = 'mops.scrobble.listenbrainz.enabled';
+
+/// Недописанные прослушивания: сеть пропала — запись ждёт в этом ключе.
+const String _kPendingScrobbles = 'mops.scrobble.pending';
+
+/// Сколько неотправленных записей храним. Дольше суток их всё равно не
+/// отправить повторно: площадки принимают прослушивание только свежим.
+const int _kMaxPending = 200;
+
+/// Сколько раз пробуем одну запись, прежде чем признать её потерянной.
+const int _kMaxAttempts = 8;
+
+/// Пауза между повторами отправки.
+const Duration _kRetryDelay = Duration(minutes: 1);
 
 /// Ключи сессии и токены не держим открытой строкой.
 ///
@@ -184,16 +199,19 @@ class ScrobblerController extends Notifier<ScrobbleState> {
 
   // --- состояние текущего проигрыша (в `ScrobbleState` не выносим: оно
   // меняется несколько раз в секунду и перестраивало бы всех слушателей).
-  String? _trackId;
-  String _artist = '';
-  String _title = '';
-  String? _album;
-  Duration _total = Duration.zero;
-  Duration _listened = Duration.zero;
-  Duration _lastPosition = Duration.zero;
-  DateTime? _startedAt;
-  bool _nowPlayingSent = false;
-  bool _scrobbled = false;
+  final ScrobbleRule _rule = ScrobbleRule();
+
+  /// Прослушивания, которые не удалось отправить: сеть может вернуться, а
+  /// прослушивание уже было — терять его нельзя.
+  final List<_PendingScrobble> _pending = <_PendingScrobble>[];
+
+  Timer? _retryTimer;
+  bool _flushing = false;
+  bool _pendingLoaded = false;
+
+  /// Номер попытки входа. Выход из аккаунта или смена ключей во время запроса
+  /// отменяют его результат: иначе вход завершился бы уже после выхода.
+  int _authEpoch = 0;
 
   @override
   ScrobbleState build() {
@@ -212,8 +230,11 @@ class ScrobblerController extends Notifier<ScrobbleState> {
     _listenBrainzEnabled = _prefs.getBool(_kListenBrainzEnabled) ?? false;
 
     _applyLastFmConfig();
+    _loadPending();
 
     ref.onDispose(() {
+      _retryTimer?.cancel();
+      _retryTimer = null;
       _lastFm.dispose();
       _listenBrainz.dispose();
     });
@@ -261,6 +282,8 @@ class ScrobblerController extends Notifier<ScrobbleState> {
     _lastFmApiSecret = secret;
     if (changed) {
       // Ключи сменились — прежняя сессия к ним не относится.
+      _authEpoch++;
+      _dropPending(_PendingScrobble.lastFm);
       _lastFmSessionKey = null;
       _lastFmEnabled = false;
       await _prefs.remove(_kLastFmSessionKey);
@@ -275,6 +298,7 @@ class ScrobblerController extends Notifier<ScrobbleState> {
       lastFmConfigured: _lastFm.isConfigured,
       lastFmUsername: changed ? '' : state.lastFmUsername,
       lastFmEnabled: _lastFmEnabled,
+      busy: false,
       clearError: true,
       clearAuth: true,
     );
@@ -290,9 +314,13 @@ class ScrobblerController extends Notifier<ScrobbleState> {
       );
       return null;
     }
+    final int epoch = _authEpoch;
     state = state.copyWith(busy: true, clearError: true, clearAuth: true);
     try {
       final String token = await _lastFm.getToken();
+      // Пока ждали токен, пользователь мог выйти из аккаунта: тогда ссылка на
+      // подтверждение уже ни к чему.
+      if (epoch != _authEpoch) return null;
       final String url = _lastFm.authUrl(token);
       state = state.copyWith(
         busy: false,
@@ -301,9 +329,11 @@ class ScrobblerController extends Notifier<ScrobbleState> {
       );
       return url;
     } on LastFmException catch (error) {
+      if (epoch != _authEpoch) return null;
       state = state.copyWith(busy: false, error: error.message);
       return null;
     } on Object catch (error) {
+      if (epoch != _authEpoch) return null;
       state = state.copyWith(busy: false, error: 'Ошибка сети: $error');
       return null;
     }
@@ -314,9 +344,13 @@ class ScrobblerController extends Notifier<ScrobbleState> {
     final String? token = state.lastFmAuthToken;
     if (token == null || token.isEmpty) return false;
 
+    final int epoch = _authEpoch;
     state = state.copyWith(busy: true, clearError: true);
     try {
       final LastFmSession session = await _lastFm.getSession(token);
+      // Пока шёл запрос, пользователь мог выйти из аккаунта или сменить ключи:
+      // тогда вход уже не относится к текущей сессии и сохранять его нельзя.
+      if (epoch != _authEpoch) return false;
       _lastFmSessionKey = session.key;
       _applyLastFmConfig();
       await _prefs.setString(_kLastFmSessionKey, encodeStoredSecret(session.key));
@@ -332,11 +366,15 @@ class ScrobblerController extends Notifier<ScrobbleState> {
         clearError: true,
         clearAuth: true,
       );
+      // Недописанное за время входа как раз на это и ждало.
+      unawaited(_flushPending());
       return true;
     } on LastFmException catch (error) {
+      if (epoch != _authEpoch) return false;
       state = state.copyWith(busy: false, error: error.message);
       return false;
     } on Object catch (error) {
+      if (epoch != _authEpoch) return false;
       state = state.copyWith(busy: false, error: 'Ошибка сети: $error');
       return false;
     }
@@ -346,6 +384,7 @@ class ScrobblerController extends Notifier<ScrobbleState> {
     _lastFmEnabled = value;
     await _prefs.setBool(_kLastFmEnabled, value);
     state = state.copyWith(lastFmEnabled: value);
+    if (value) unawaited(_flushPending());
   }
 
   Future<void> setLastFmNowPlaying(bool value) async {
@@ -355,15 +394,20 @@ class ScrobblerController extends Notifier<ScrobbleState> {
   }
 
   Future<void> signOutLastFm() async {
+    // Отменяем незавершённый вход: иначе он дописал бы сессию уже после выхода.
+    _authEpoch++;
     _lastFmSessionKey = null;
     _lastFmEnabled = false;
     _applyLastFmConfig();
+    // Недописанное принадлежало прошлому аккаунту: новому оно не нужно.
+    _dropPending(_PendingScrobble.lastFm);
     await _prefs.remove(_kLastFmSessionKey);
     await _prefs.remove(_kLastFmUsername);
     await _prefs.setBool(_kLastFmEnabled, false);
     state = state.copyWith(
       lastFmUsername: '',
       lastFmEnabled: false,
+      busy: false,
       clearAuth: true,
       clearError: true,
     );
@@ -393,6 +437,7 @@ class ScrobblerController extends Notifier<ScrobbleState> {
         listenBrainzEnabled: true,
         clearError: true,
       );
+      unawaited(_flushPending());
       return true;
     } on ListenBrainzException catch (error) {
       state = state.copyWith(busy: false, error: error.message);
@@ -407,11 +452,13 @@ class ScrobblerController extends Notifier<ScrobbleState> {
     _listenBrainzEnabled = value;
     await _prefs.setBool(_kListenBrainzEnabled, value);
     state = state.copyWith(listenBrainzEnabled: value);
+    if (value) unawaited(_flushPending());
   }
 
   Future<void> signOutListenBrainz() async {
     _listenBrainzToken = '';
     _listenBrainzEnabled = false;
+    _dropPending(_PendingScrobble.listenBrainz);
     await _prefs.remove(_kListenBrainzToken);
     await _prefs.remove(_kListenBrainzUsername);
     await _prefs.setBool(_kListenBrainzEnabled, false);
@@ -425,111 +472,47 @@ class ScrobblerController extends Notifier<ScrobbleState> {
   // ------------------------------------------------------------ хук плеера
 
   /// Сбрасывает счётчик: очередь пуста или трека больше нет.
-  void reset() {
-    _trackId = null;
-    _listened = Duration.zero;
-    _lastPosition = Duration.zero;
-    _startedAt = null;
-    _nowPlayingSent = false;
-    _scrobbled = false;
-  }
+  void reset() => _rule.reset();
 
   /// Вызывается плеером на каждом обновлении позиции.
   ///
-  /// [position] — позиция трека, а не настенные часы: на паузе она стоит, и
-  /// время простоя в статистику не попадает. [completed] — трек доиграл сам;
-  /// такой проигрыш считается полным даже если частые обновления позиции до
-  /// нас не дошли.
+  /// Сколько уже сыграно ([listened]) и что произошло ([tick]), решает общий
+  /// счётчик плеера: правило засчитывания одно на статистику и на площадки.
+  /// Здесь только решение «отправлять ли» и сама отправка.
   void onPlayback(
     Track track, {
-    required Duration position,
-    required Duration duration,
+    required Duration total,
+    required Duration listened,
+    required ListeningTick tick,
     required bool isPlaying,
-    bool completed = false,
+    required bool isPodcast,
   }) {
-    final Duration total = duration > Duration.zero ? duration : track.duration;
-    if (track.id != _trackId) _begin(track, position, total);
-
-    if (isPlaying) {
-      _accumulate(position);
-      if (!_nowPlayingSent) {
-        _nowPlayingSent = true;
-        _dispatchNowPlaying();
-      }
-    } else if (completed) {
-      _listened = total;
-    } else {
-      // Пауза или перемотка: позицию запоминаем, но не засчитываем.
-      _lastPosition = position;
-      return;
-    }
-
-    if (!_scrobbled && _shouldScrobble(total, _listened)) {
-      _scrobbled = true;
-      _dispatchScrobble();
-    }
-
-    // Трек доиграл: следующий проигрыш того же трека (повтор одного) должен
-    // начать счёт заново — иначе повтор не попадёт в статистику.
-    if (completed) _resetCycle();
+    final ScrobbleActions actions = _rule.advance(
+      track: track,
+      total: total,
+      listened: listened,
+      tick: tick,
+      isPlaying: isPlaying,
+      isPodcast: isPodcast,
+    );
+    if (actions.nowPlaying) _dispatchNowPlaying();
+    if (actions.scrobble) _dispatchScrobble();
   }
-
-  void _begin(Track track, Duration position, Duration total) {
-    _trackId = track.id;
-    _artist = _artistNames(track);
-    _title = track.title;
-    _album = track.album?.name;
-    _total = total;
-    _listened = Duration.zero;
-    _lastPosition = position;
-    _startedAt = DateTime.now();
-    _nowPlayingSent = false;
-    _scrobbled = false;
-  }
-
-  void _resetCycle() {
-    _listened = Duration.zero;
-    _lastPosition = Duration.zero;
-    _startedAt = DateTime.now();
-    _nowPlayingSent = false;
-    _scrobbled = false;
-  }
-
-  /// Накапливает прослушанное по приращению позиции.
-  ///
-  /// Приращение больше пары секунд — это перемотка, а не прослушивание:
-  /// такой скачок не засчитываем.
-  void _accumulate(Duration position) {
-    final Duration delta = position - _lastPosition;
-    if (delta > Duration.zero && delta <= const Duration(seconds: 5)) {
-      _listened += delta;
-    }
-    _lastPosition = position;
-  }
-
-  /// Правило Last.fm: трек короче 30 секунд не скробблим; в остальных случаях
-  /// достаточно половины трека или четырёх минут — что наступит раньше.
-  bool _shouldScrobble(Duration duration, Duration listened) {
-    if (duration > Duration.zero && duration.inSeconds <= 30) return false;
-    if (duration <= Duration.zero) return listened >= const Duration(minutes: 4);
-    final Duration half = duration ~/ 2;
-    final Duration threshold =
-        half < const Duration(minutes: 4) ? half : const Duration(minutes: 4);
-    return listened >= threshold;
-  }
-
-  int? get _durationSeconds =>
-      _total > Duration.zero ? _total.inSeconds : null;
 
   void _dispatchNowPlaying() {
+    final String artist = _rule.artist;
+    final String title = _rule.title;
+    final String? album = _rule.album;
+    final int? duration = _rule.durationSeconds;
+
     if (_lastFmEnabled && _lastFm.isAuthorized && _lastFmNowPlaying) {
       unawaited(
         _lastFm
             .updateNowPlaying(
-              artist: _artist,
-              track: _title,
-              album: _album,
-              duration: _durationSeconds,
+              artist: artist,
+              track: title,
+              album: album,
+              duration: duration,
             )
             .catchError(
               (Object error) =>
@@ -543,11 +526,11 @@ class ScrobblerController extends Notifier<ScrobbleState> {
             .submit(
               _listenBrainzToken,
               ListenBrainzListen(
-                artist: _artist,
-                title: _title,
-                release: _album,
-                durationMs: _total.inMilliseconds > 0
-                    ? _total.inMilliseconds
+                artist: artist,
+                title: title,
+                release: album,
+                durationMs: _rule.total.inMilliseconds > 0
+                    ? _rule.total.inMilliseconds
                     : null,
               ),
               playingNow: true,
@@ -562,54 +545,234 @@ class ScrobblerController extends Notifier<ScrobbleState> {
   }
 
   void _dispatchScrobble() {
-    final DateTime startedAt = _startedAt ?? DateTime.now();
+    final DateTime startedAt = _rule.startedAt ?? DateTime.now();
     if (_lastFmEnabled && _lastFm.isAuthorized) {
       unawaited(
-        _lastFm
-            .scrobble(
-              artist: _artist,
-              track: _title,
-              startedAt: startedAt,
-              album: _album,
-              duration: _durationSeconds,
-            )
-            .catchError(
-              (Object error) =>
-                  debugPrint('[Last.fm] прослушивание не отправлено: $error'),
-            ),
+        _send(
+          _PendingScrobble(
+            platform: _PendingScrobble.lastFm,
+            artist: _rule.artist,
+            title: _rule.title,
+            album: _rule.album,
+            durationSeconds: _rule.durationSeconds,
+            startedAt: startedAt,
+          ),
+        ),
       );
     }
     if (_listenBrainzEnabled && _listenBrainzToken.isNotEmpty) {
       unawaited(
-        _listenBrainz
-            .submit(
-              _listenBrainzToken,
-              ListenBrainzListen(
-                artist: _artist,
-                title: _title,
-                release: _album,
-                durationMs: _total.inMilliseconds > 0
-                    ? _total.inMilliseconds
-                    : null,
-                listenedAt: startedAt,
-              ),
-              playingNow: false,
-            )
-            .catchError(
-              (Object error) => debugPrint(
-                '[ListenBrainz] прослушивание не отправлено: $error',
-              ),
-            ),
+        _send(
+          _PendingScrobble(
+            platform: _PendingScrobble.listenBrainz,
+            artist: _rule.artist,
+            title: _rule.title,
+            album: _rule.album,
+            durationSeconds: _rule.durationSeconds,
+            startedAt: startedAt,
+          ),
+        ),
       );
     }
   }
 
-  static String _artistNames(Track track) {
-    final List<String> names = track.artists
-        .map((ArtistRef artist) => artist.name.trim())
-        .where((String name) => name.isNotEmpty)
-        .toList(growable: false);
-    return names.isEmpty ? track.artistLine : names.join(', ');
+  // ------------------------------------------------- неотправленные записи
+
+  /// Отправляет запись; неудачу не теряет — кладёт в очередь повтора.
+  Future<void> _send(_PendingScrobble item) async {
+    if (await _deliver(item)) {
+      // Сеть появилась — заодно дошлём то, что ждало.
+      if (_pending.isNotEmpty) unawaited(_flushPending());
+      return;
+    }
+    _pending.add(item);
+    if (_pending.length > _kMaxPending) {
+      _pending.removeRange(0, _pending.length - _kMaxPending);
+    }
+    await _savePending();
+    _scheduleRetry();
+  }
+
+  /// Одна попытка отправки. `true` — запись больше не нужна (отправлена или
+  /// площадка отключена), `false` — сеть подвела, надо повторить.
+  Future<bool> _deliver(_PendingScrobble item) async {
+    if (item.attempts >= _kMaxAttempts) {
+      debugPrint('[Скробблинг] «${item.title}»: попытки исчерпаны');
+      return true;
+    }
+    try {
+      switch (item.platform) {
+        case _PendingScrobble.lastFm:
+          if (!_lastFmEnabled || !_lastFm.isAuthorized) return true;
+          await _lastFm.scrobble(
+            artist: item.artist,
+            track: item.title,
+            startedAt: item.startedAt,
+            album: item.album,
+            duration: item.durationSeconds,
+          );
+        case _PendingScrobble.listenBrainz:
+          if (!_listenBrainzEnabled || _listenBrainzToken.isEmpty) return true;
+          await _listenBrainz.submit(
+            _listenBrainzToken,
+            ListenBrainzListen(
+              artist: item.artist,
+              title: item.title,
+              release: item.album,
+              durationMs: item.durationSeconds == null
+                  ? null
+                  : item.durationSeconds! * 1000,
+              listenedAt: item.startedAt,
+            ),
+            playingNow: false,
+          );
+        default:
+          return true;
+      }
+      return true;
+    } on Object catch (error) {
+      debugPrint('[Скробблинг] прослушивание не отправлено: $error');
+      return false;
+    }
+  }
+
+  Future<void> _flushPending() async {
+    if (_flushing || _pending.isEmpty) return;
+    _flushing = true;
+    try {
+      final List<_PendingScrobble> batch = List<_PendingScrobble>.of(_pending);
+      _pending.clear();
+      for (final _PendingScrobble item in batch) {
+        if (!await _deliver(item)) _pending.add(item.retried());
+      }
+      await _savePending();
+    } finally {
+      _flushing = false;
+    }
+    _scheduleRetry();
+  }
+
+  void _scheduleRetry() {
+    if (_retryTimer != null || _pending.isEmpty) return;
+    _retryTimer = Timer(_kRetryDelay, () {
+      _retryTimer = null;
+      unawaited(_flushPending());
+    });
+  }
+
+  /// Забывает неотправленное для одной площадки.
+  void _dropPending(String platform) {
+    final int before = _pending.length;
+    _pending.removeWhere((_PendingScrobble item) => item.platform == platform);
+    if (_pending.length != before) unawaited(_savePending());
+  }
+
+  void _loadPending() {
+    if (_pendingLoaded) return;
+    _pendingLoaded = true;
+    final String? raw = _prefs.getString(_kPendingScrobbles);
+    if (raw == null || raw.isEmpty) return;
+    try {
+      final Object? decoded = jsonDecode(raw);
+      if (decoded is List) {
+        for (final Object? item in decoded) {
+          final _PendingScrobble? pending = _PendingScrobble.fromJson(item);
+          if (pending != null && _pending.length < _kMaxPending) {
+            _pending.add(pending);
+          }
+        }
+      }
+    } on FormatException catch (error) {
+      debugPrint('[Скробблинг] очередь повтора не прочитана: $error');
+    }
+    if (_pending.isNotEmpty) unawaited(_flushPending());
+  }
+
+  Future<void> _savePending() async {
+    if (_pending.isEmpty) {
+      await _prefs.remove(_kPendingScrobbles);
+      return;
+    }
+    await _prefs.setString(
+      _kPendingScrobbles,
+      jsonEncode(<Map<String, dynamic>>[
+        for (final _PendingScrobble item in _pending) item.toJson(),
+      ]),
+    );
+  }
+}
+
+/// Одно прослушивание, которое не удалось отправить.
+///
+/// Площадка — часть записи: повтор идёт только туда, где отправка сорвалась,
+/// иначе прослушивание задвоилось бы на второй площадке.
+@immutable
+class _PendingScrobble {
+  const _PendingScrobble({
+    required this.platform,
+    required this.artist,
+    required this.title,
+    required this.startedAt,
+    this.album,
+    this.durationSeconds,
+    this.attempts = 0,
+  });
+
+  static const String lastFm = 'lastfm';
+  static const String listenBrainz = 'listenbrainz';
+
+  final String platform;
+  final String artist;
+  final String title;
+  final DateTime startedAt;
+  final String? album;
+  final int? durationSeconds;
+  final int attempts;
+
+  _PendingScrobble retried() => _PendingScrobble(
+        platform: platform,
+        artist: artist,
+        title: title,
+        startedAt: startedAt,
+        album: album,
+        durationSeconds: durationSeconds,
+        attempts: attempts + 1,
+      );
+
+  Map<String, dynamic> toJson() => <String, dynamic>{
+        'platform': platform,
+        'artist': artist,
+        'track': title,
+        'startedAt': startedAt.millisecondsSinceEpoch,
+        if (album != null) 'album': album,
+        if (durationSeconds != null) 'duration': durationSeconds,
+        'attempts': attempts,
+      };
+
+  static _PendingScrobble? fromJson(Object? raw) {
+    if (raw is! Map<String, dynamic>) return null;
+    final Object? platform = raw['platform'];
+    final Object? artist = raw['artist'];
+    final Object? title = raw['track'];
+    final Object? startedAt = raw['startedAt'];
+    if (platform is! String ||
+        artist is! String ||
+        artist.isEmpty ||
+        title is! String ||
+        title.isEmpty ||
+        startedAt is! int) {
+      return null;
+    }
+    return _PendingScrobble(
+      platform: platform,
+      artist: artist,
+      title: title,
+      startedAt: DateTime.fromMillisecondsSinceEpoch(startedAt),
+      album: raw['album'] is String ? raw['album'] as String : null,
+      durationSeconds:
+          raw['duration'] is num ? (raw['duration'] as num).toInt() : null,
+      attempts: raw['attempts'] is num ? (raw['attempts'] as num).toInt() : 0,
+    );
   }
 }
 
