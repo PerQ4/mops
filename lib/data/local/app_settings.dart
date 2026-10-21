@@ -90,6 +90,7 @@ class AppSettings {
   double get blurRadius => appearance.blurRadius;
   bool get visualizerEnabled => appearance.visualizerEnabled;
   VisualizerStyle get visualizerStyle => appearance.visualizerStyle;
+  bool get liveCoverEnabled => appearance.liveCoverEnabled;
   bool get titleBarCentered => appearance.titleBarCentered;
   bool get titleBarMatchesBackground => appearance.titleBarMatchesBackground;
 
@@ -266,6 +267,7 @@ class AppSettings {
     double? blurRadius,
     bool? visualizerEnabled,
     VisualizerStyle? visualizerStyle,
+    bool? liveCoverEnabled,
     bool? listeningStatsEnabled,
     bool? equalizerEnabled,
     List<double>? equalizerBands,
@@ -306,6 +308,7 @@ class AppSettings {
         blurRadius: blurRadius,
         visualizerEnabled: visualizerEnabled,
         visualizerStyle: visualizerStyle,
+        liveCoverEnabled: liveCoverEnabled,
         titleBarCentered: titleBarCentered,
         titleBarMatchesBackground: titleBarMatchesBackground,
       ),
@@ -452,6 +455,7 @@ class AppSettings {
     'blurRadius',
     'visualizerEnabled',
     'visualizerStyle',
+    'liveCoverEnabled',
     'listeningStatsEnabled',
     'equalizerEnabled',
     'equalizerBands',

@@ -269,6 +269,10 @@ class SettingsController extends Notifier<AppSettings> {
   Future<void> setVisualizerStyle(VisualizerStyle style) =>
       update((AppSettings s) => s.copyWith(visualizerStyle: style));
 
+  /// «Живая обложка» полноэкранного плеера (задача 8.2).
+  Future<void> setLiveCoverEnabled(bool value) =>
+      update((AppSettings s) => s.copyWith(liveCoverEnabled: value));
+
   /// Запись статистики прослушиваний (задача 8.1). Выключение не стирает уже
   /// собранное — стереть можно на экране статистики.
   Future<void> setListeningStatsEnabled(bool value) =>

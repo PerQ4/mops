@@ -193,6 +193,8 @@ class AppearanceSettings {
     this.blurRadius = 48,
     this.visualizerEnabled = false,
     this.visualizerStyle = VisualizerStyle.halo,
+    // «Живая обложка» выключена: без неё вид плеера остаётся прежним.
+    this.liveCoverEnabled = false,
     this.titleBarCentered = true,
     this.titleBarMatchesBackground = false,
   });
@@ -282,6 +284,15 @@ class AppearanceSettings {
   /// Вид визуализатора: гало по уровню или спектр полос (задача 10.8).
   final VisualizerStyle visualizerStyle;
 
+  /// «Живая обложка» в полноэкранном плеере (задача 8.2): обложка очень легко
+  /// дышит и светится по краю в такт музыке.
+  ///
+  /// По умолчанию **выключено**: без настройки вид плеера остаётся прежним,
+  /// пиксель в пиксель. Уровень берётся у того же `AudioLevelMonitor`, что и у
+  /// визуализатора, поэтому включение поднимает опрос `af-metadata` у libmpv —
+  /// лишняя работа, которая нужна не всем.
+  final bool liveCoverEnabled;
+
   /// Заголовок окна по центру (иначе — слева, у логотипа). Только Windows.
   final bool titleBarCentered;
 
@@ -321,6 +332,7 @@ class AppearanceSettings {
     double? blurRadius,
     bool? visualizerEnabled,
     VisualizerStyle? visualizerStyle,
+    bool? liveCoverEnabled,
     bool? titleBarCentered,
     bool? titleBarMatchesBackground,
   }) {
@@ -352,6 +364,7 @@ class AppearanceSettings {
       blurRadius: blurRadius ?? this.blurRadius,
       visualizerEnabled: visualizerEnabled ?? this.visualizerEnabled,
       visualizerStyle: visualizerStyle ?? this.visualizerStyle,
+      liveCoverEnabled: liveCoverEnabled ?? this.liveCoverEnabled,
       titleBarCentered: titleBarCentered ?? this.titleBarCentered,
       titleBarMatchesBackground:
           titleBarMatchesBackground ?? this.titleBarMatchesBackground,
@@ -383,6 +396,7 @@ class AppearanceSettings {
     'blurRadius': blurRadius,
     'visualizerEnabled': visualizerEnabled,
     'visualizerStyle': visualizerStyle.name,
+    'liveCoverEnabled': liveCoverEnabled,
     'titleBarCentered': titleBarCentered,
     'titleBarMatchesBackground': titleBarMatchesBackground,
   };
@@ -429,6 +443,7 @@ class AppearanceSettings {
       visualizerStyle: VisualizerStyle.fromName(
         json['visualizerStyle'] as String?,
       ),
+      liveCoverEnabled: json['liveCoverEnabled'] as bool? ?? false,
       titleBarCentered: json['titleBarCentered'] as bool? ?? true,
       titleBarMatchesBackground:
           json['titleBarMatchesBackground'] as bool? ?? false,

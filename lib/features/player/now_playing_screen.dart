@@ -18,6 +18,7 @@ import '../../widgets/artist_line.dart';
 import '../../widgets/artwork.dart';
 import '../../widgets/blurred_artwork_background.dart';
 import '../../widgets/liquid_backdrop.dart';
+import '../../widgets/live_cover.dart';
 import '../../widgets/spectrum_visualizer.dart';
 import '../../widgets/track_menu.dart';
 import 'lyrics_actions.dart';
@@ -108,6 +109,7 @@ class _NowPlayingScreenState extends ConsumerState<NowPlayingScreen> {
                                     child: _Stage(
                                       showLyrics: showLyrics,
                                       track: track,
+                                      animate: player.isPlaying,
                                     ),
                                   ),
                                   Expanded(
@@ -140,6 +142,7 @@ class _NowPlayingScreenState extends ConsumerState<NowPlayingScreen> {
                                 flexible: _Stage(
                                   showLyrics: showLyrics,
                                   track: track,
+                                  animate: player.isPlaying,
                                 ),
                               ),
                       ),
@@ -166,10 +169,17 @@ const double _kStageMinHeight = 160;
 
 /// Обложка или текст песни — то, что занимает основную площадь.
 class _Stage extends StatelessWidget {
-  const _Stage({required this.showLyrics, required this.track});
+  const _Stage({
+    required this.showLyrics,
+    required this.track,
+    required this.animate,
+  });
 
   final bool showLyrics;
   final Track track;
+
+  /// Идёт воспроизведение: нужно «живой обложке» — на паузе она замирает.
+  final bool animate;
 
   @override
   Widget build(BuildContext context) {
@@ -179,7 +189,7 @@ class _Stage extends StatelessWidget {
               key: ValueKey<String>('lyr-${track.id}'),
               videoId: track.id,
             )
-          : _ArtworkStage(track: track),
+          : _ArtworkStage(track: track, animate: animate),
     );
   }
 }
@@ -576,10 +586,17 @@ class _ColoringBackdrop extends StatelessWidget {
 /// перекрывает, потому что живёт снаружи неё. Если уровня нет (сборка libmpv без
 /// фильтра `astats`), под обложкой появляется подпись с причиной — вместо
 /// выдуманного движения.
+///
+/// С настройкой «Живая обложка» сама картинка оборачивается в [LiveCover]: она
+/// дышит и светится по краю. Обёртка необязательная — без настройки дерево и вид
+/// остаются прежними.
 class _ArtworkStage extends StatelessWidget {
-  const _ArtworkStage({required this.track});
+  const _ArtworkStage({required this.track, required this.animate});
 
   final Track track;
+
+  /// Идёт воспроизведение: «живая обложка» на паузе замирает.
+  final bool animate;
 
   /// Зазор под гало: и отступ кольца от обложки, и место, которое обложка
   /// уступает визуализатору.
@@ -607,25 +624,45 @@ class _ArtworkStage extends StatelessWidget {
               (AppSettings s) => s.visualizerEnabled,
             ),
           );
-          // Монитор читается только при включённом визуализаторе: провайдер
-          // ленивый, и пока он не нужен, libmpv для уровней не поднимается.
-          final AudioLevelMonitor? monitor =
-              withVisualizer ? ref.watch(audioLevelMonitorProvider) : null;
+          // «Отключить анимации» гасит живую обложку целиком: остаётся
+          // статичная картинка, как без настройки. Дрейф — движение, и
+          // выключать его наполовину (свет без движения) было бы странно.
+          final bool liveCover = ref.watch(
+            settingsControllerProvider.select(
+              (AppSettings s) => s.liveCoverEnabled && !s.disableAnimations,
+            ),
+          );
+          // Монитор читается только когда он кому-то нужен: провайдер ленивый, и
+          // пока ни гало, ни живой обложки нет, libmpv для уровней не поднимается.
+          final AudioLevelMonitor? monitor = withVisualizer || liveCover
+              ? ref.watch(audioLevelMonitorProvider)
+              : null;
+          // Гало живёт отдельно от живой обложки: свечение обложки — не повод
+          // рисовать кольцо вокруг неё.
+          final AudioLevelMonitor? halo = withVisualizer ? monitor : null;
+          final double Function()? levelOf =
+              liveCover && monitor != null ? () => monitor.level : null;
 
           return Center(
             child: LayoutBuilder(
               builder: (BuildContext context, BoxConstraints constraints) {
                 // Обложка квадратная и вписывается в доступное место.
                 final double available = constraints.biggest.shortestSide;
-                if (monitor == null) {
-                  return _artwork(context, variants, _side(available), null);
+                if (halo == null) {
+                  return _artwork(
+                    context,
+                    variants,
+                    _side(available),
+                    null,
+                    levelOf,
+                  );
                 }
                 // Слушаем монитор: подпись «уровня нет» должна появиться сама,
                 // без пересборки всего экрана.
                 return AnimatedBuilder(
-                  animation: monitor,
+                  animation: halo,
                   builder: (BuildContext context, Widget? child) {
-                    final bool noData = monitor.availability ==
+                    final bool noData = halo.availability ==
                         AudioLevelAvailability.unavailable;
                     // Подпись занимает место под обложкой: без вычета её высоты
                     // колонка переполнила бы отведённую высоту на низком окне.
@@ -635,8 +672,14 @@ class _ArtworkStage extends StatelessWidget {
                     return Column(
                       mainAxisSize: MainAxisSize.min,
                       children: <Widget>[
-                        _artwork(context, variants, _side(limit), monitor),
-                        if (noData) SpectrumUnavailableNote(monitor: monitor),
+                        _artwork(
+                          context,
+                          variants,
+                          _side(limit),
+                          halo,
+                          levelOf,
+                        ),
+                        if (noData) SpectrumUnavailableNote(monitor: halo),
                       ],
                     );
                   },
@@ -655,15 +698,19 @@ class _ArtworkStage extends StatelessWidget {
   }
 
   /// Обложка; при [monitor] — вместе с гало в том же квадрате.
+  ///
+  /// [levelOf] непустой — включена «живая обложка»: обёртка берёт уровень у того
+  /// же монитора, что и гало.
   Widget _artwork(
     BuildContext context,
     List<String> variants,
     double side,
     AudioLevelMonitor? monitor,
+    double Function()? levelOf,
   ) {
     // Правый клик по обложке — то же меню, что у «…»: меню трека лежит в
     // корневом навигаторе, потому что сам плеер открыт там же.
-    final Widget artwork = GestureDetector(
+    Widget artwork = GestureDetector(
       behavior: HitTestBehavior.opaque,
       onSecondaryTap: () => showTrackMenu(
         context,
@@ -681,6 +728,18 @@ class _ArtworkStage extends StatelessWidget {
         radius: BorderRadius.circular(_kArtworkRadius),
       ),
     );
+    if (levelOf != null) {
+      // Цвета свечения — из темы: когда выбрана палитра «из обложки», это те же
+      // цвета, что у фона, а лишний разбор обложки ради света не нужен.
+      artwork = LiveCover(
+        enabled: true,
+        animate: animate,
+        level: levelOf,
+        colors: _backdropColors(Theme.of(context).colorScheme),
+        radius: _kArtworkRadius,
+        child: artwork,
+      );
+    }
     if (monitor == null) {
       return SizedBox(width: side, height: side, child: artwork);
     }
