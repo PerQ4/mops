@@ -103,7 +103,7 @@ class MP3Parser extends TagParser<Mp3Metadata> {
     metadata.trackNumber ??= ape.trackNumber;
     metadata.trackTotal ??= ape.trackTotal;
     metadata.discNumber ??= ape.discNumber;
-    metadata.totalDics ??= ape.discTotal;
+    metadata.discTotal ??= ape.discTotal;
     metadata.year ??= ape.date?.year;
     metadata.bitrate ??= ape.bitrate;
     metadata.samplerate ??= ape.sampleRate;

@@ -76,7 +76,7 @@ class Mp3Metadata extends ParserTag {
   int? samplerate;
   List<String> genres = [];
   int? discNumber;
-  int? totalDics;
+  int? discTotal;
 
   @override
   String toString() {

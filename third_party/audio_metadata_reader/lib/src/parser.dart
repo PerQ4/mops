@@ -61,7 +61,7 @@ AudioMetadata readMetadata(File track, {bool getImage = false}) {
         lyrics: mp3Metadata.lyric,
         sampleRate: mp3Metadata.samplerate,
         title: mp3Metadata.songName,
-        totalDisc: mp3Metadata.totalDics,
+        totalDisc: mp3Metadata.discTotal,
         trackNumber: mp3Metadata.trackNumber,
         trackTotal: mp3Metadata.trackTotal,
         year:

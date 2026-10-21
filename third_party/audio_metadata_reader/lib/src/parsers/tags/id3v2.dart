@@ -440,7 +440,7 @@ class ID3v2Parser extends TagParser<Mp3Metadata> {
 
           if (match != null) {
             metadata.discNumber = int.parse(match.group(1)!);
-            metadata.totalDics = int.parse(match.group(2)!);
+            metadata.discTotal = int.parse(match.group(2)!);
           } else {
             metadata.discNumber = int.tryParse(value);
           }

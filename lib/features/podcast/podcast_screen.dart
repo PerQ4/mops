@@ -94,18 +94,24 @@ class _PodcastBody extends ConsumerWidget {
     final bool playing = ref.watch(
       playerControllerProvider.select((PlayerUiState s) => s.isPlaying),
     );
-    final PodcastLocalState local = ref.watch(podcastLocalProvider);
+    // Прогресс обновляется раз в 5 секунд: подписка на весь `PodcastLocalState`
+    // перестраивала бы весь список выпусков. Шапке нужен только id последнего
+    // недослушанного эпизода этого шоу — полоски строк слушают себя сами.
+    final String? resumeEpisodeId = ref.watch(
+      podcastLocalProvider.select(
+        (PodcastLocalState s) => s.progressForShow(show.key)?.episodeId,
+      ),
+    );
 
     final bool hasEpisodes = show.episodes.isNotEmpty;
     final bool isCurrentShow = currentId != null &&
         show.episodes.any((PodcastEpisode e) => e.id == currentId);
 
     // «Продолжить» ведёт на последний недослушанный выпуск именно этого шоу.
-    final PodcastEntry? resume = local.progressForShow(show.key);
-    final int resumeIndex = resume == null
+    final int resumeIndex = resumeEpisodeId == null
         ? -1
         : show.episodes.indexWhere(
-            (PodcastEpisode e) => e.id == resume.episodeId,
+            (PodcastEpisode e) => e.id == resumeEpisodeId,
           );
     final bool canResume = resumeIndex >= 0;
 
@@ -224,11 +230,9 @@ class _PodcastBody extends ConsumerWidget {
             itemBuilder: (BuildContext context, int index) {
               final PodcastEpisode episode = show.episodes[index];
               final bool isCurrent = currentId == episode.id;
-              final PodcastEntry? progress = local.progress[episode.id];
               return _EpisodeTile(
                 episode: episode,
                 showArtwork: show.artwork,
-                progress: progress,
                 isCurrent: isCurrent,
                 isPlaying: isCurrent && playing,
                 onTap: () => PodcastPlayback.playEpisode(
@@ -366,11 +370,10 @@ class _SubscribeButton extends ConsumerWidget {
 }
 
 /// Строка выпуска: дата, длительность, прогресс и запуск.
-class _EpisodeTile extends StatelessWidget {
+class _EpisodeTile extends ConsumerWidget {
   const _EpisodeTile({
     required this.episode,
     required this.showArtwork,
-    required this.progress,
     required this.isCurrent,
     required this.isPlaying,
     required this.onTap,
@@ -379,7 +382,6 @@ class _EpisodeTile extends StatelessWidget {
 
   final PodcastEpisode episode;
   final String? showArtwork;
-  final PodcastEntry? progress;
   final bool isCurrent;
   final bool isPlaying;
   final VoidCallback onTap;
@@ -388,9 +390,16 @@ class _EpisodeTile extends StatelessWidget {
   final VoidCallback? onShowDescription;
 
   @override
-  Widget build(BuildContext context) {
+  Widget build(BuildContext context, WidgetRef ref) {
     final ColorScheme scheme = Theme.of(context).colorScheme;
     final TextTheme text = Theme.of(context).textTheme;
+    // Каждая строка слушает только свою долю: запись прогресса по одному
+    // выпуску не должна перестраивать остальные.
+    final double fraction = ref.watch(
+      podcastLocalProvider.select(
+        (PodcastLocalState s) => s.progress[episode.id]?.fraction ?? 0,
+      ),
+    );
 
     final Color titleColor =
         isCurrent ? scheme.onSecondaryContainer : scheme.onSurface;
@@ -398,7 +407,6 @@ class _EpisodeTile extends StatelessWidget {
         ? scheme.onSecondaryContainer.withValues(alpha: 0.7)
         : scheme.onSurfaceVariant;
 
-    final double fraction = progress?.fraction ?? 0;
     // Почти дослушанный выпуск прогрессом не считаем — трекер его уже забыл
     // бы, а полоска у самого конца выглядела бы как незаконченный.
     final bool showProgress = fraction > 0 && fraction < 0.99;

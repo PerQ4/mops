@@ -1,3 +1,5 @@
+import 'dart:async';
+import 'dart:collection';
 import 'dart:io';
 import 'dart:isolate';
 import 'dart:math' as math;
@@ -46,7 +48,42 @@ const int _maxArtworkBytes = 8 * 1024 * 1024;
 /// Пакет отдаёт картинку только вместе с полным разбором файла, поэтому при
 /// сканировании о ней ничего не известно. Отрицательный ответ запоминаем,
 /// чтобы прокрутка списка не разбирала те же файлы заново.
+///
+/// Набор сбрасывается перед каждым сканированием: файл могли дополнить
+/// обложкой, а разбор мог не удаться из-за временной ошибки чтения.
 final Set<String> _filesWithoutArtwork = <String>{};
+
+/// Очередь разборов обложек.
+///
+/// `Isolate.run` на каждую видимую строку — это отдельный поток на строку:
+/// при быстрой прокрутке большой папки десятки разборов одновременно забивают
+/// процессор. Держим не больше [_maxConcurrent] разборов, остальные ждут
+/// своей очереди.
+abstract final class _ArtworkReads {
+  static const int _maxConcurrent = 3;
+  static int _running = 0;
+  static final Queue<Completer<void>> _waiting = Queue<Completer<void>>();
+
+  static Future<T> run<T>(Future<T> Function() task) async {
+    if (_running >= _maxConcurrent) {
+      final Completer<void> slot = Completer<void>();
+      _waiting.add(slot);
+      await slot.future;
+    } else {
+      _running++;
+    }
+    try {
+      return await task();
+    } finally {
+      if (_waiting.isNotEmpty) {
+        // Место сразу переходит следующему в очереди, счётчик не меняется.
+        _waiting.removeFirst().complete();
+      } else {
+        _running--;
+      }
+    }
+  }
+}
 
 /// Один файл на диске с прочитанными метаданными.
 ///
@@ -98,7 +135,7 @@ class LocalMediaFile {
   String get id => localTrackId(path);
 
   /// Имя файла с расширением — показывается в подписи.
-  String get fileName => path.split(RegExp(r'[\\/]')).last;
+  String get fileName => _fileName(path);
 
   /// Возможно, у файла есть обложка.
   ///
@@ -117,7 +154,8 @@ class LocalMediaFile {
   /// Читает обложку с диска по требованию.
   ///
   /// Разбор идёт в отдельном изоляте: чтение мегабайтов картинки не должно
-  /// подвешивать кадр списка.
+  /// подвешивать кадр списка. Число одновременных разборов ограничено
+  /// [_ArtworkReads], чтобы прокрутка не запускала изолят на каждую строку.
   Future<Uint8List?> readArtwork() async {
     final Uint8List? embedded = artworkBytes;
     if (embedded != null) return embedded;
@@ -129,15 +167,15 @@ class LocalMediaFile {
     }
 
     try {
-      final Uint8List? bytes =
-          await Isolate.run(() => _readEmbeddedArtwork(path));
+      final Uint8List? bytes = await _ArtworkReads.run(
+        () => Isolate.run(() => _readEmbeddedArtwork(path)),
+      );
       if (bytes == null) _filesWithoutArtwork.add(path);
       return bytes;
     } on Object catch (error) {
       debugPrint('[Локальные файлы] обложка $path: $error');
-      // Файл, который пакет не разобрал, всё равно не покажет обложку:
-      // помечаем его, чтобы прокрутка не разбирала его заново.
-      _filesWithoutArtwork.add(path);
+      // Ошибку не запоминаем: файл мог быть занят или диск — отвалиться.
+      // Иначе одна неудачная попытка навсегда оставила бы трек без обложки.
       return null;
     }
   }
@@ -202,20 +240,12 @@ class LocalMediaScanner {
       throw LocalMediaException('Папка не найдена: $folder');
     }
 
+    // Новое сканирование — новый взгляд на файлы: старые пометки «без
+    // обложки» могли появиться из-за временной ошибки чтения.
+    _filesWithoutArtwork.clear();
+
     final List<File> files = <File>[];
-    try {
-      await for (final FileSystemEntity entity
-          in root.list(recursive: true, followLinks: false)) {
-        if (cancelled?.call() ?? false) return const <LocalMediaFile>[];
-        if (entity is! File) continue;
-        final String name = entity.path.split(RegExp(r'[\\/]')).last;
-        if (name.startsWith('.')) continue;
-        if (!kLocalAudioExtensions.contains(_extension(name))) continue;
-        files.add(entity);
-      }
-    } on FileSystemException catch (error) {
-      throw LocalMediaException('Не удалось прочитать папку: ${error.message}');
-    }
+    await _collect(root, files, cancelled, isRoot: true);
 
     files.sort((File a, File b) =>
         a.path.toLowerCase().compareTo(b.path.toLowerCase()));
@@ -231,6 +261,40 @@ class LocalMediaScanner {
     }
     return result;
   }
+
+  /// Обходит папку, пропуская скрытые каталоги и файлы.
+  ///
+  /// Список папки не умеет «не заходить» в подпапку, поэтому обход ручной:
+  /// иначе `.git` или `.stfolder` вычитывались бы целиком вместе с тысячами
+  /// файлов, которые никогда не станут музыкой.
+  Future<void> _collect(
+    Directory directory,
+    List<File> files,
+    bool Function()? cancelled, {
+    required bool isRoot,
+  }) async {
+    try {
+      await for (final FileSystemEntity entity
+          in directory.list(followLinks: false)) {
+        if (cancelled?.call() ?? false) return;
+        final String name = _fileName(entity.path);
+        if (name.startsWith('.')) continue;
+        if (entity is Directory) {
+          await _collect(entity, files, cancelled, isRoot: false);
+        } else if (entity is File) {
+          if (!kLocalAudioExtensions.contains(_extension(name))) continue;
+          files.add(entity);
+        }
+      }
+    } on FileSystemException catch (error) {
+      // Нечитаемая подпапка не должна прятать всю библиотеку; корень — другое
+      // дело, о нём пользователю нужно сказать.
+      if (isRoot) {
+        throw LocalMediaException('Не удалось прочитать папку: ${error.message}');
+      }
+      debugPrint('[Локальные файлы] папка ${directory.path}: ${error.message}');
+    }
+  }
 }
 
 /// Читает метаданные одного файла.
@@ -239,7 +303,7 @@ class LocalMediaScanner {
 /// именем вместо названия и нулевой длительностью. Так папка со странным
 /// файлом не ломает весь список.
 Future<LocalMediaFile> readLocalMediaFile(String path) async {
-  final String fileName = path.split(RegExp(r'[\\/]')).last;
+  final String fileName = _fileName(path);
   final String fallbackTitle = _titleFromFileName(fileName);
 
   int size = 0;
@@ -320,6 +384,9 @@ Uint8List? _readEmbeddedArtwork(String path) {
   }
   return null;
 }
+
+/// Последний сегмент пути: и Windows, и POSIX-разделители.
+String _fileName(String path) => path.split(RegExp(r'[\\/]')).last;
 
 String _extension(String fileName) {
   final int dot = fileName.lastIndexOf('.');

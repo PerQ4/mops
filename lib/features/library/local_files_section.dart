@@ -380,6 +380,13 @@ class _LocalArtworkState extends State<_LocalArtwork> {
   Uint8List? _bytes;
   bool _loading = false;
 
+  /// Номер текущего запроса.
+  ///
+  /// Строку могли переиспользовать под другой файл, пока разбор старого ещё
+  /// шёл: без номера такой результат либо перерисовал бы чужую строку, либо
+  /// оставил на ней спиннер навсегда.
+  int _request = 0;
+
   @override
   void initState() {
     super.initState();
@@ -397,19 +404,34 @@ class _LocalArtworkState extends State<_LocalArtwork> {
 
   void _start() {
     final LocalMediaFile file = widget.file;
+    _request++;
     final Uint8List? cached = _LocalArtworkCache.get(file.path);
     if (cached != null) {
       _bytes = cached;
+      _loading = false;
       return;
     }
-    if (!file.hasArtwork) return;
+    if (!file.hasArtwork) {
+      // Разбирать нечего, но спиннер от прошлого файла гаснуть обязан.
+      _loading = false;
+      return;
+    }
     _loading = true;
-    unawaited(_read(file));
+    unawaited(_read(file, _request));
   }
 
-  Future<void> _read(LocalMediaFile file) async {
-    final Uint8List? bytes = await file.readArtwork();
-    if (!mounted || widget.file.path != file.path) return;
+  Future<void> _read(LocalMediaFile file, int request) async {
+    Uint8List? bytes;
+    try {
+      bytes = await file.readArtwork();
+    } on Object catch (error) {
+      // `readArtwork` ошибки не пробрасывает, но спиннер обязан погаснуть
+      // при любом исходе — иначе он висел бы до пересоздания строки.
+      debugPrint('[Локальные файлы] обложка ${file.path}: $error');
+    }
+    if (!mounted || request != _request || widget.file.path != file.path) {
+      return;
+    }
     if (bytes != null) _LocalArtworkCache.put(file.path, bytes);
     setState(() {
       _bytes = bytes;

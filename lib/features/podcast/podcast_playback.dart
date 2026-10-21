@@ -1,3 +1,4 @@
+import 'package:flutter/widgets.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 
 import '../../data/models/models.dart';
@@ -99,7 +100,12 @@ abstract final class PodcastPlayback {
     final int safeIndex = index.clamp(0, episodes.length - 1);
     final PlayerController controller =
         ref.read(playerControllerProvider.notifier);
+    // Экран могли закрыть, пока шёл резолв. Обращение к `ref` после `await`
+    // у уже размонтированного виджета бросает, поэтому живость запоминаем
+    // заранее по контексту и перемотку без экрана не применяем.
+    final BuildContext context = ref.context;
     await controller.playQueue(_tracks(episodes), startIndex: safeIndex);
+    if (!context.mounted) return;
 
     final String episodeId = episodes[safeIndex].id;
     if (ref.read(playerControllerProvider).current?.id != episodeId) return;
