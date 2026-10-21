@@ -3,8 +3,10 @@ import 'dart:async';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:meta/meta.dart';
 
+import '../data/local/blocked_artists.dart';
 import '../data/local/playlist_tags.dart';
 import '../data/models/models.dart';
+import '../data/sources/catalog_source.dart';
 import '../data/sources/library_source.dart';
 import 'auth_controller.dart';
 import 'catalog_providers.dart';
@@ -478,6 +480,121 @@ final Provider<List<String>> playlistTagsListProvider =
   }
   return all.toList()..sort();
 });
+
+// ------------------------------------------------- заблокированные исполнители
+
+/// Хранилище списка блокировок — одно на приложение: держит файл и очередь
+/// записи.
+final Provider<BlockedArtistsStore> blockedArtistsStoreProvider =
+    Provider<BlockedArtistsStore>((Ref ref) => BlockedArtistsStore());
+
+/// Исполнители, которых пользователь заблокировал.
+///
+/// Список лежит на диске, а не в настройках: он меняется целиком и растёт, а
+/// настройки — одна небольшая строка, которую читают на каждое изменение
+/// любой опции.
+///
+/// Чтение файла асинхронное, а каталог фильтруется синхронно и уже первым
+/// запросом, поэтому готовность списка публикуется в [CatalogSource] —
+/// запрос каталога ждёт её (см. `blockedArtistsReady`). Без этого главная
+/// на старте успевала бы показать заблокированных и дёрнулась бы, когда файл
+/// дочитан.
+class BlockedArtists extends Notifier<List<BlockedArtist>> {
+  @override
+  List<BlockedArtist> build() {
+    final BlockedArtistsStore store = ref.watch(blockedArtistsStoreProvider);
+
+    final Completer<void> ready = Completer<void>();
+    CatalogSource.blockedArtistsReady = ready.future;
+
+    unawaited(() async {
+      List<BlockedArtist> loaded = const <BlockedArtist>[];
+      try {
+        loaded = await store.readAll();
+      } on Object {
+        // Недоступный файл — блокировок нет; показывать ошибку не за что.
+      }
+      if (ref.mounted) {
+        // Заблокированное в этой сессии важнее прочитанного: пользователь мог
+        // нажать до того, как файл дочитан, и его решение не должно пропасть.
+        final Map<String, BlockedArtist> merged = <String, BlockedArtist>{
+          for (final BlockedArtist artist in loaded) artist.id: artist,
+          for (final BlockedArtist artist in state) artist.id: artist,
+        };
+        _publish(merged.values.toList(growable: false));
+      }
+      if (!ready.isCompleted) ready.complete();
+    }());
+
+    return const <BlockedArtist>[];
+  }
+
+  /// Заблокирован ли исполнитель. `null` — нет.
+  bool isBlocked(String? artistId) {
+    if (artistId == null || artistId.isEmpty) return false;
+    return state.any((BlockedArtist artist) => artist.id == artistId);
+  }
+
+  /// Блокирует исполнителя. Повторный вызов обновляет имя, а не добавляет
+  /// вторую запись.
+  Future<void> block({required String id, required String name}) async {
+    if (id.isEmpty) return;
+    final String cleanName = name.trim();
+    final List<BlockedArtist> next = state
+        .where((BlockedArtist artist) => artist.id != id)
+        .toList()
+      ..add(BlockedArtist(
+        id: id,
+        name: cleanName.isEmpty ? id : cleanName,
+      ));
+    await _save(next);
+  }
+
+  /// Снимает блокировку.
+  Future<void> unblock(String artistId) async {
+    if (artistId.isEmpty ||
+        !state.any((BlockedArtist artist) => artist.id == artistId)) {
+      return;
+    }
+    await _save(
+      state
+          .where((BlockedArtist artist) => artist.id != artistId)
+          .toList(),
+    );
+  }
+
+  /// Снимает все блокировки.
+  Future<void> clear() async => _save(const <BlockedArtist>[]);
+
+  /// Публикует список в состояние и в источник каталога, затем сохраняет.
+  Future<void> _save(List<BlockedArtist> next) async {
+    _publish(next);
+
+    // Уже загруженные полки и страницы держат старый ответ: без сброса
+    // заблокированный исполнитель оставался бы на экране до перезапуска.
+    ref.invalidate(homeSectionsProvider);
+    ref.invalidate(homeFeedProvider);
+    ref.invalidate(exploreSectionsProvider);
+    ref.invalidate(browseSectionProvider);
+    ref.invalidate(albumProvider);
+    ref.invalidate(artistProvider);
+    ref.invalidate(playlistProvider);
+    ref.invalidate(searchResultsProvider);
+
+    await ref.read(blockedArtistsStoreProvider).writeAll(next);
+  }
+
+  void _publish(List<BlockedArtist> artists) {
+    state = List<BlockedArtist>.unmodifiable(artists);
+    CatalogSource.blockedArtistIds = <String>{
+      for (final BlockedArtist artist in artists) artist.id,
+    };
+  }
+}
+
+final NotifierProvider<BlockedArtists, List<BlockedArtist>>
+    blockedArtistsProvider =
+    NotifierProvider<BlockedArtists, List<BlockedArtist>>(BlockedArtists.new);
 
 // ------------------------------------------------------------ боковая колонка
 

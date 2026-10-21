@@ -91,6 +91,33 @@ class CatalogSource {
   /// состояния при чтении и изменении настроек — см. [ContentFilter].
   static ContentFilter contentFilter = const ContentFilter();
 
+  /// Id исполнителей, которых пользователь заблокировал.
+  ///
+  /// Как и [contentFilter], живёт статикой: источник каталога создаётся без
+  /// настроек, а `catalog_source.dart` импортируют консольные инструменты и не
+  /// должны тянуть Flutter. Слой состояния публикует список до первого запроса
+  /// каталога, поэтому фильтр работает уже на стартовом экране.
+  ///
+  /// Сравнение только по id: одно и то же имя YouTube отдаёт с разными
+  /// написаниями, а у разных исполнителей имена совпадают — блокировка по
+  /// строке промахивалась бы в обе стороны.
+  static Set<String> blockedArtistIds = const <String>{};
+
+  /// Готовность списка блокировок: пока файл не прочитан, каталог не
+  /// запрашивается.
+  ///
+  /// Без ожидания первый ответ (главная, «Мне нравится») приходил бы
+  /// нефильтрованным и на мгновение показывал заблокированных исполнителей,
+  /// после чего список дёргался бы. Ошибку чтения глотаем: нет списка —
+  /// значит, нечего скрывать, и это не повод не показать каталог.
+  static Future<void>? blockedArtistsReady;
+
+  /// Заблокирован ли исполнитель с этим id. `null` и пустая строка — нет.
+  static bool isArtistBlocked(String? artistId) {
+    if (artistId == null || artistId.isEmpty) return false;
+    return blockedArtistIds.contains(artistId);
+  }
+
   static const String _browseHome = 'FEmusic_home';
   static const String _browseExplore = 'FEmusic_explore';
 
@@ -107,6 +134,7 @@ class CatalogSource {
   Future<({List<BrowseSection> sections, String? continuation})> homePage({
     String? continuation,
   }) async {
+    await _waitForBlocked();
     final Map<String, dynamic> res = await _client.browse(
       _browseHome,
       continuation: continuation,
@@ -130,6 +158,7 @@ class CatalogSource {
 
   /// Раздел «Обзор» (новые релизы, чарты, настроения).
   Future<List<BrowseSection>> explore() async {
+    await _waitForBlocked();
     final Map<String, dynamic> res = await _client.browse(_browseExplore);
     return _applyContentFilter(BrowseParser.homeSections(res), limitTop: true);
   }
@@ -139,6 +168,7 @@ class CatalogSource {
   /// Чарты и топы обрезаются до длины из настроек: серверу длину не передать,
   /// поэтому полку укорачиваем уже после разбора.
   Future<List<BrowseSection>> browseSection(String browseId) async {
+    await _waitForBlocked();
     final Map<String, dynamic> res = await _client.browse(browseId);
     return _applyContentFilter(BrowseParser.homeSections(res), limitTop: true);
   }
@@ -175,6 +205,7 @@ class CatalogSource {
     String query, {
     SearchFilter filter = SearchFilter.all,
   }) async {
+    await _waitForBlocked();
     final Map<String, dynamic> res = await _client.search(
       query,
       params: filter.params,
@@ -199,6 +230,7 @@ class CatalogSource {
 
   /// Страница альбома.
   Future<Album> album(String albumId) async {
+    await _waitForBlocked();
     final Map<String, dynamic> res = await _client.browse(albumId);
     // Исполнители шапки: у новой разметки они в `straplineTextOne`, а не
     // в подзаголовке (см. `BrowseParser.pageArtists`). Если шапка старого
@@ -215,7 +247,7 @@ class CatalogSource {
       _tracksFrom(res, fallbackPlaylistId: null),
       artists: albumArtists,
       thumbnails: albumThumbs,
-    );
+    ).where((Track track) => !_trackBlocked(track)).toList(growable: false);
 
     return Album(
       id: albumId,
@@ -271,6 +303,11 @@ class CatalogSource {
 
   /// Страница исполнителя.
   Future<Artist> artist(String artistId) async {
+    await _waitForBlocked();
+    // Страницу самого заблокированного исполнителя не прячем: на ней стоит
+    // плашка «исполнитель заблокирован» с кнопкой разблокировки. Если бы мы
+    // отфильтровали всё содержимое, разблокировать было бы неоткуда.
+    final bool pageBlocked = isArtistBlocked(artistId);
     final Map<String, dynamic> res = await _client.browse(artistId);
     final List<BrowseSection> sections = BrowseParser.sectionsFrom(res);
 
@@ -297,9 +334,10 @@ class CatalogSource {
               albums.add(album);
             }
           case ArtistItem(artist: final Artist relatedArtist):
-            if (title.contains('похож') ||
-                title.contains('related') ||
-                title.contains('fan')) {
+            if ((title.contains('похож') ||
+                    title.contains('related') ||
+                    title.contains('fan')) &&
+                !isArtistBlocked(relatedArtist.id)) {
               related.add(relatedArtist);
             }
           case PlaylistItem():
@@ -326,7 +364,11 @@ class CatalogSource {
       description: BrowseParser.pageDescription(res),
       subscribers: BrowseParser.pageSubtitle(res),
       topTracks: _limitTop(_withHeaderFallback(
-        topTracks,
+        pageBlocked
+            ? topTracks
+            : topTracks
+                .where((Track track) => !_trackBlocked(track))
+                .toList(growable: false),
         artists: <ArtistRef>[ArtistRef(name: artistName, id: artistId)],
         thumbnails: artistThumbs,
       )),
@@ -338,6 +380,7 @@ class CatalogSource {
 
   /// Страница плейлиста (в том числе чужого).
   Future<Playlist> playlist(String playlistId) async {
+    await _waitForBlocked();
     final String browseId =
         playlistId.startsWith('VL') ? playlistId : 'VL$playlistId';
 
@@ -372,15 +415,22 @@ class CatalogSource {
       token = BrowseParser.continuationToken(page);
     }
 
+    // Фильтруем уже после продолжений: заблокированный исполнитель может
+    // встретиться только на второй странице, и обрывать докрутку нельзя —
+    // иначе вместе с ним пропали бы все следующие треки.
+    final List<Track> visible = tracks
+        .where((Track track) => !_trackBlocked(track))
+        .toList(growable: false);
+
     return Playlist(
       id: playlistId,
       title: BrowseParser.pageTitle(res) ?? 'Плейлист',
       author: BrowseParser.pageSubtitle(res),
       description: BrowseParser.pageDescription(res),
       thumbnails: BrowseParser.pageThumbnails(res),
-      tracks: tracks,
-      trackCount: tracks.isEmpty ? null : tracks.length,
-      duration: _totalDuration(tracks),
+      tracks: visible,
+      trackCount: visible.isEmpty ? null : visible.length,
+      duration: _totalDuration(visible),
     );
   }
 
@@ -391,6 +441,7 @@ class CatalogSource {
   /// Используется, когда очередь закончилась: включаем «радио по треку»,
   /// как это делает YouTube Music.
   Future<List<Track>> autoplayQueue(String videoId) async {
+    await _waitForBlocked();
     // Радио запрашиваем явно. Без `playlistId` YouTube отдаёт «дальше» для
     // одиночного видео — то есть сам же трек, и после фильтра ниже список
     // оставался пустым: ни ручной запуск радио, ни автопродление не работали.
@@ -406,7 +457,13 @@ class CatalogSource {
       <String>['playlistPanelVideoRenderer'],
     )) {
       final Track? track = _panelTrack(renderer);
-      if (track != null && track.id != videoId) tracks.add(track);
+      // Радио — тоже каталог: заблокированный исполнитель не должен
+      // подхватываться автопродлением в обход фильтрации остальных экранов.
+      if (track != null &&
+          track.id != videoId &&
+          !_trackBlocked(track)) {
+        tracks.add(track);
+      }
     }
     return tracks;
   }
@@ -728,6 +785,55 @@ class CatalogSource {
     return tracks.take(size).toList(growable: false);
   }
 
+  /// Ждёт публикации списка блокировок (см. [blockedArtistsReady]).
+  ///
+  /// Ждём именно `Future`, а не флаг: запрос каталога стартует раньше, чем
+  /// файл дочитан, и без ожидания первый ответ был бы нефильтрованным.
+  Future<void> _waitForBlocked() async {
+    final Future<void>? ready = CatalogSource.blockedArtistsReady;
+    if (ready == null) return;
+    try {
+      await ready;
+    } on Object {
+      // Список не прочитан — скрывать нечего, это не ошибка каталога.
+    }
+  }
+
+  /// Лежит ли трек хотя бы у одного заблокированного исполнителя.
+  ///
+  /// Достаточно одного: если в треке участвует заблокированный артист, трек
+  /// скрывается целиком — как в ArchiveTune. Дробить трек по участникам
+  /// было бы странно: пользователь просил не видеть исполнителя, а не
+  /// вычёркивать его имя из чужих песен.
+  bool _trackBlocked(Track track) {
+    if (blockedArtistIds.isEmpty) return false;
+    return track.artists.any(
+      (ArtistRef artist) => isArtistBlocked(artist.id),
+    );
+  }
+
+  /// Среди исполнителей альбома есть заблокированный.
+  bool _artistsBlocked(List<ArtistRef> artists) {
+    if (blockedArtistIds.isEmpty) return false;
+    return artists.any(
+      (ArtistRef artist) => isArtistBlocked(artist.id),
+    );
+  }
+
+  /// Оставляет ли полка элемент с учётом настроек содержимого и блокировок.
+  bool _keepItem(BrowseItem item) {
+    switch (item) {
+      case TrackItem(:final Track track):
+        return _keepTrack(track) && !_trackBlocked(track);
+      case AlbumItem(album: final Album album):
+        return !_artistsBlocked(album.artists);
+      case ArtistItem(artist: final Artist artist):
+        return !isArtistBlocked(artist.id);
+      case PlaylistItem():
+        return true;
+    }
+  }
+
   /// Применяет настройки содержимого к полкам: прячет explicit и видео, а у
   /// топов и чартов ([limitTop]) обрезает длину.
   ///
@@ -738,21 +844,25 @@ class CatalogSource {
     bool limitTop = false,
   }) {
     final ContentFilter filter = CatalogSource.contentFilter;
-    if (!filter.hidesAnything && !limitTop) return sections;
+    // Блокировка — такая же причина прятать элементы, как и настройки, но
+    // живёт отдельно от [ContentFilter]: список приходит с диска, а не из
+    // настроек.
+    final bool hideItems =
+        filter.hidesAnything || blockedArtistIds.isNotEmpty;
+    if (!hideItems && !limitTop) return sections;
 
     final List<BrowseSection> result = <BrowseSection>[];
     for (final BrowseSection section in sections) {
       List<BrowseItem> items = section.items;
-      if (filter.hidesAnything) {
+      if (hideItems) {
         items = items
-            .where((BrowseItem item) =>
-                item is! TrackItem || _keepTrack(item.track))
+            .where(_keepItem)
             .toList(growable: false);
       }
       if (limitTop && items.length > filter.topSize) {
         items = items.take(filter.topSize).toList(growable: false);
       }
-      if (items.isEmpty && section.items.isNotEmpty && filter.hidesAnything) {
+      if (items.isEmpty && section.items.isNotEmpty && hideItems) {
         continue;
       }
       if (identical(items, section.items)) {

@@ -9,9 +9,12 @@ import '../../core/theme/seed_colors.dart';
 import '../../core/theme/ui_scaler.dart';
 import '../../core/updates/update_check.dart';
 import '../../data/local/app_settings.dart';
+import '../../data/local/blocked_artists.dart';
 import '../../data/sources/paxsenix_source.dart';
+import '../../data/sources/sponsorblock.dart';
 import '../../state/auth_controller.dart';
 import '../../core/theme/layout.dart';
+import '../../state/library_providers.dart';
 import '../../state/player_controller.dart';
 import '../../state/providers.dart';
 import '../../state/theme_providers.dart';
@@ -21,6 +24,7 @@ import '../player/sleep_timer.dart';
 import '../../state/ui_scale.dart';
 import '../../widgets/liquid_backdrop.dart';
 import '../common/navigation.dart';
+import 'blocked_artists_screen.dart';
 import 'font_settings.dart';
 import 'lyrics_animation_screen.dart';
 import 'settings_components.dart';
@@ -50,6 +54,8 @@ class SettingsScreen extends ConsumerWidget {
     // `autoDispose`).
     final UpdateCheck? update = ref.watch(updateCheckProvider).value;
     final bool hasUpdate = update?.updateAvailable ?? false;
+    // Блокировки — локальный список с диска; строка показывает, сколько их.
+    final List<BlockedArtist> blockedArtists = ref.watch(blockedArtistsProvider);
     final ColorScheme scheme = Theme.of(context).colorScheme;
 
     return Scaffold(
@@ -385,6 +391,30 @@ class SettingsScreen extends ConsumerWidget {
                       value: settings.skipSilence,
                       onChanged: controller.setSkipSilence,
                     ),
+                    // SponsorBlock — тоже перемотка, но по чужим меткам:
+                    // включается осознанно и только с выбранными категориями.
+                    SettingsSwitchRow(
+                      icon: Icons.content_cut,
+                      title: 'Пропускать не-музыкальные вставки',
+                      subtitle: 'SponsorBlock: перематывать рекламу и '
+                          'разговоры, размеченные сообществом',
+                      subtitleMaxLines: 2,
+                      value: settings.sponsorBlockEnabled,
+                      onChanged: controller.setSponsorBlockEnabled,
+                    ),
+                    if (settings.sponsorBlockEnabled)
+                      SettingsRow(
+                        icon: Icons.tune,
+                        title: 'Категории вставок',
+                        subtitle: settings.sponsorBlockCategories.isEmpty
+                            ? 'Ничего не выбрано'
+                            : settings.sponsorBlockCategories
+                                .map((SponsorBlockCategory c) => c.label)
+                                .join(', '),
+                        subtitleMaxLines: 2,
+                        onTap: () =>
+                            _pickSponsorCategories(context, controller, settings),
+                      ),
                     // И это тоже вмешательство: ровная громкость ценой динамики.
                     SettingsSwitchRow(
                       icon: Icons.multitrack_audio,
@@ -483,6 +513,18 @@ class SettingsScreen extends ConsumerWidget {
                   title: 'Длина топа',
                   subtitle: '${settings.topSize.label} элементов в чартах и топах',
                   onTap: () => _pickTopSize(context, controller, settings),
+                ),
+                // Блокировка живёт отдельно от настроек содержимого: это не
+                // фильтр выдачи, а решение по конкретным исполнителям, и
+                // список у него свой.
+                SettingsRow(
+                  icon: Icons.person_off_outlined,
+                  title: 'Заблокированные исполнители',
+                  subtitle: blockedArtists.isEmpty
+                      ? 'Никого нет'
+                      : '${blockedArtists.length} '
+                          '${blockedArtists.length == 1 ? 'исполнитель' : 'исполнителей'}',
+                  onTap: () => _openBlockedArtists(context),
                 ),
               ],
             ),
@@ -683,6 +725,35 @@ class SettingsScreen extends ConsumerWidget {
           Animation<double> secondaryAnimation,
         ) =>
             const LyricsAnimationScreen(),
+        transitionsBuilder: (
+          BuildContext context,
+          Animation<double> animation,
+          Animation<double> secondaryAnimation,
+          Widget child,
+        ) =>
+            motion.routeTransition(
+          animation: animation,
+          begin: const Offset(0, 0.02),
+          child: child,
+        ),
+      ),
+    );
+  }
+
+  /// Экран заблокированных исполнителей — тот же переход, что у «Обновлений»:
+  /// он относится только к настройкам, общий словарь маршрутов не расширяем.
+  void _openBlockedArtists(BuildContext context) {
+    final MotionTransition motion = AppMotion.pageEnter;
+    Navigator.of(context).push<void>(
+      PageRouteBuilder<void>(
+        transitionDuration: motion.duration,
+        reverseTransitionDuration: motion.reverseDuration ?? motion.duration,
+        pageBuilder: (
+          BuildContext context,
+          Animation<double> animation,
+          Animation<double> secondaryAnimation,
+        ) =>
+            const BlockedArtistsScreen(),
         transitionsBuilder: (
           BuildContext context,
           Animation<double> animation,
@@ -1160,6 +1231,75 @@ class SettingsScreen extends ConsumerWidget {
       ),
     );
     if (result != null) await controller.setLyricsProviderOrder(result);
+  }
+
+  /// Выбор категорий SponsorBlock.
+  ///
+  /// Сохраняем по кнопке, а не на каждое переключение: набор — одно решение, и
+  /// писать настройки на каждый щелчок незачем. Снятые все галочки — это
+  /// осознанное «ничего не пропускать», поэтому пустой набор допустим.
+  Future<void> _pickSponsorCategories(
+    BuildContext context,
+    SettingsController controller,
+    AppSettings settings,
+  ) async {
+    final List<SponsorBlockCategory> selected =
+        List<SponsorBlockCategory>.of(settings.sponsorBlockCategories);
+
+    final bool? saved = await showDialog<bool>(
+      context: context,
+      builder: (BuildContext dialogContext) => StatefulBuilder(
+        builder: (BuildContext context, StateSetter setState) {
+          void toggle(SponsorBlockCategory category, bool enabled) {
+            if (enabled) {
+              if (!selected.contains(category)) selected.add(category);
+            } else {
+              selected.remove(category);
+            }
+          }
+
+          return AlertDialog(
+            title: const Text('Категории вставок'),
+            content: SizedBox(
+              width: 440,
+              child: SingleChildScrollView(
+                child: Column(
+                  mainAxisSize: MainAxisSize.min,
+                  children: <Widget>[
+                    for (final SponsorBlockCategory category
+                        in SponsorBlockCategory.values)
+                      SwitchListTile(
+                        dense: true,
+                        value: selected.contains(category),
+                        onChanged: (bool on) =>
+                            setState(() => toggle(category, on)),
+                        title: Text(category.label),
+                        subtitle: Text(
+                          category.description,
+                          style: const TextStyle(fontSize: 12),
+                        ),
+                      ),
+                  ],
+                ),
+              ),
+            ),
+            actions: <Widget>[
+              TextButton(
+                onPressed: () => Navigator.pop(dialogContext, false),
+                child: const Text('Отмена'),
+              ),
+              FilledButton(
+                onPressed: () => Navigator.pop(dialogContext, true),
+                child: const Text('Сохранить'),
+              ),
+            ],
+          );
+        },
+      ),
+    );
+
+    if (saved != true) return;
+    await controller.setSponsorBlockCategories(selected);
   }
 
   /// Включение и выключение источников текста — как `providerPreferenceKeys`

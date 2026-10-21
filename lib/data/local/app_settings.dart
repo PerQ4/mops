@@ -3,6 +3,7 @@ import 'dart:convert';
 import '../../core/audio/audio_equalizer.dart';
 import '../../core/net/anti_dpi.dart';
 import '../../core/theme/seed_colors.dart';
+import '../sources/sponsorblock.dart';
 
 /// Качество аудио. YouTube отдаёт свободным клиентам только part-качество
 /// (до ~160 kbps Opus / 128 kbps AAC), поэтому «Максимум» — это лучший
@@ -233,6 +234,22 @@ List<double> _parseEqualizerBands(String? raw) {
     bands.add(value.clamp(-kEqualizerMaxGainDb, kEqualizerMaxGainDb));
   }
   return bands;
+}
+
+/// Разбирает сохранённый набор категорий SponsorBlock.
+///
+/// `null` — ключа в файле нет (настройки с прошлой версии): берём набор по
+/// умолчанию. Пустая строка — пользователь снял все галочки: это осознанный
+/// выбор «ничего не пропускать», и подменять его умолчанием нельзя.
+List<SponsorBlockCategory> _parseSponsorCategories(String? raw) {
+  if (raw == null) return kDefaultSponsorBlockCategories;
+  final List<SponsorBlockCategory> parsed = <SponsorBlockCategory>[];
+  for (final String name in raw.split(',')) {
+    final SponsorBlockCategory? category =
+        SponsorBlockCategory.fromApiName(name.trim());
+    if (category != null && !parsed.contains(category)) parsed.add(category);
+  }
+  return parsed;
 }
 
 /// Режим правой панели плеера.
@@ -577,6 +594,10 @@ class AppSettings {
     this.miniPlayerBackgroundStyle = MiniPlayerBackgroundStyle.theme,
     this.titleBarCentered = true,
     this.titleBarMatchesBackground = false,
+    // SponsorBlock выключен по умолчанию: это вмешательство в воспроизведение
+    // (перемотка через куски видео), и включать его нужно осознанно.
+    this.sponsorBlockEnabled = false,
+    this.sponsorBlockCategories = kDefaultSponsorBlockCategories,
   });
 
   final ThemeModePreference themeMode;
@@ -838,6 +859,15 @@ class AppSettings {
   /// палитры, как рамка окна). Только Windows.
   final bool titleBarMatchesBackground;
 
+  /// Пропускать вставки, размеченные на SponsorBlock.
+  ///
+  /// Это перемотка через чужие метки: она короче трека, но и «неожиданная»,
+  /// поэтому по умолчанию выключена.
+  final bool sponsorBlockEnabled;
+
+  /// Какие категории вставок пропускать. Пустой список — ничего.
+  final List<SponsorBlockCategory> sponsorBlockCategories;
+
   bool get isUiScaleAuto => uiScale <= 0;
 
   /// Включён ли источник текста.
@@ -939,6 +969,8 @@ class AppSettings {
     MiniPlayerBackgroundStyle? miniPlayerBackgroundStyle,
     bool? titleBarCentered,
     bool? titleBarMatchesBackground,
+    bool? sponsorBlockEnabled,
+    List<SponsorBlockCategory>? sponsorBlockCategories,
   }) {
     return AppSettings(
       themeMode: themeMode ?? this.themeMode,
@@ -1021,6 +1053,9 @@ class AppSettings {
       titleBarCentered: titleBarCentered ?? this.titleBarCentered,
       titleBarMatchesBackground:
           titleBarMatchesBackground ?? this.titleBarMatchesBackground,
+      sponsorBlockEnabled: sponsorBlockEnabled ?? this.sponsorBlockEnabled,
+      sponsorBlockCategories:
+          sponsorBlockCategories ?? this.sponsorBlockCategories,
     );
   }
 
@@ -1102,6 +1137,10 @@ class AppSettings {
         'miniPlayerBackgroundStyle': miniPlayerBackgroundStyle.name,
         'titleBarCentered': titleBarCentered,
         'titleBarMatchesBackground': titleBarMatchesBackground,
+        'sponsorBlockEnabled': sponsorBlockEnabled,
+        'sponsorBlockCategories': sponsorBlockCategories
+            .map((SponsorBlockCategory c) => c.apiName)
+            .join(','),
       };
 
   String encode() => jsonEncode(toJson());
@@ -1205,6 +1244,12 @@ class AppSettings {
       titleBarCentered: json['titleBarCentered'] as bool? ?? true,
       titleBarMatchesBackground:
           json['titleBarMatchesBackground'] as bool? ?? false,
+      sponsorBlockEnabled: json['sponsorBlockEnabled'] as bool? ?? false,
+      // Отсутствующий ключ (`null`) — настройки с прошлой версии, набор по
+      // умолчанию; пустая строка — пользователь снял все категории.
+      sponsorBlockCategories: _parseSponsorCategories(
+        json['sponsorBlockCategories'] as String?,
+      ),
     );
   }
 

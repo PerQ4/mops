@@ -2,6 +2,7 @@ import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 
 import '../../core/theme/layout.dart';
+import '../../data/local/blocked_artists.dart';
 import '../../data/models/models.dart';
 import '../../state/auth_controller.dart';
 import '../../state/catalog_providers.dart';
@@ -60,6 +61,123 @@ class _SubscribeButton extends ConsumerWidget {
   }
 }
 
+/// Кнопка блокировки исполнителя.
+///
+/// Блокировка — локальная (в YouTube Music её нет), поэтому кнопка живёт на
+/// странице исполнителя и в меню трека. Состояние берём из общего
+/// [blockedArtistsProvider]: одно и то же на обоих входах.
+class _BlockArtistButton extends ConsumerWidget {
+  const _BlockArtistButton({required this.artistId, required this.artistName});
+
+  final String artistId;
+  final String artistName;
+
+  @override
+  Widget build(BuildContext context, WidgetRef ref) {
+    final bool blocked = ref.watch(
+      blockedArtistsProvider.select(
+        (List<BlockedArtist> list) =>
+            list.any((BlockedArtist item) => item.id == artistId),
+      ),
+    );
+
+    return HeroCircleButton(
+      icon: blocked ? Icons.person_add_alt_1_outlined : Icons.person_off_outlined,
+      tooltip: blocked ? 'Разблокировать' : 'Заблокировать исполнителя',
+      size: 52,
+      onPressed: () => _toggleArtistBlock(
+        context,
+        ref,
+        artistId: artistId,
+        artistName: artistName,
+        blocked: blocked,
+      ),
+    );
+  }
+}
+
+/// Плашка на странице заблокированного исполнителя.
+///
+/// Страницу мы не прячем (см. `CatalogSource.artist`): именно отсюда
+/// блокировку можно снять, и без плашки было бы непонятно, почему у
+/// исполнителя «пропали» треки в остальном приложении.
+class _BlockedBanner extends StatelessWidget {
+  const _BlockedBanner({required this.onUnblock});
+
+  final VoidCallback onUnblock;
+
+  @override
+  Widget build(BuildContext context) {
+    final ColorScheme scheme = Theme.of(context).colorScheme;
+    return Padding(
+      padding: const EdgeInsets.fromLTRB(12, 12, 12, 0),
+      child: Container(
+        padding: const EdgeInsets.fromLTRB(16, 12, 8, 12),
+        decoration: BoxDecoration(
+          color: scheme.errorContainer,
+          borderRadius: BorderRadius.circular(12),
+        ),
+        child: Row(
+          children: <Widget>[
+            Icon(Icons.person_off_outlined, color: scheme.onErrorContainer),
+            const SizedBox(width: 12),
+            Expanded(
+              child: Text(
+                'Исполнитель заблокирован — его треки скрыты на главной, '
+                'в поиске и плейлистах.',
+                style: TextStyle(color: scheme.onErrorContainer),
+              ),
+            ),
+            TextButton(
+              onPressed: onUnblock,
+              style: TextButton.styleFrom(
+                foregroundColor: scheme.onErrorContainer,
+              ),
+              child: const Text('Разблокировать'),
+            ),
+          ],
+        ),
+      ),
+    );
+  }
+}
+
+/// Меняет блокировку и сообщает результат.
+///
+/// Ошибку показываем, а не глотаем: пользователь нажал кнопку и должен
+/// понимать, применилось ли решение.
+Future<void> _toggleArtistBlock(
+  BuildContext context,
+  WidgetRef ref, {
+  required String artistId,
+  required String artistName,
+  required bool blocked,
+}) async {
+  final ScaffoldMessengerState messenger = ScaffoldMessenger.of(context);
+  try {
+    if (blocked) {
+      await ref.read(blockedArtistsProvider.notifier).unblock(artistId);
+    } else {
+      await ref
+          .read(blockedArtistsProvider.notifier)
+          .block(id: artistId, name: artistName);
+    }
+    messenger.showSnackBar(
+      SnackBar(
+        content: Text(
+          blocked
+              ? 'Блокировка снята: $artistName'
+              : 'Исполнитель заблокирован: $artistName',
+        ),
+      ),
+    );
+  } on Object {
+    messenger.showSnackBar(
+      const SnackBar(content: Text('Не удалось изменить блокировку.')),
+    );
+  }
+}
+
 /// Страница исполнителя: популярные треки, альбомы, синглы, похожие.
 ///
 /// Форма — из `ArtistScreen.kt`: полноширинная обложка с градиентом и
@@ -109,6 +227,12 @@ class _ArtistBody extends ConsumerWidget {
     final Track? current = ref.watch(currentTrackProvider);
     final bool playing = ref.watch(
       playerControllerProvider.select((PlayerUiState s) => s.isPlaying),
+    );
+    final bool blocked = ref.watch(
+      blockedArtistsProvider.select(
+        (List<BlockedArtist> list) =>
+            list.any((BlockedArtist item) => item.id == artist.id),
+      ),
     );
 
     final List<Track> top = artist.topTracks;
@@ -182,9 +306,25 @@ class _ArtistBody extends ConsumerWidget {
               ),
               // Подписка на канал — как кнопка «Подписаться» в YouTube Music.
               _SubscribeButton(channelId: artist.id),
+              _BlockArtistButton(
+                artistId: artist.id,
+                artistName: artist.name,
+              ),
             ],
           ),
         ),
+        if (blocked)
+          SliverToBoxAdapter(
+            child: _BlockedBanner(
+              onUnblock: () => _toggleArtistBlock(
+                context,
+                ref,
+                artistId: artist.id,
+                artistName: artist.name,
+                blocked: true,
+              ),
+            ),
+          ),
         // Описание — отдельным блоком под шапкой, а не внутри неё
         // (ArtistScreen.kt:590-617).
         if (description != null && description.isNotEmpty)

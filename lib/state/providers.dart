@@ -20,10 +20,12 @@ import '../data/local/app_settings.dart';
 import '../data/sources/catalog_source.dart';
 import '../data/sources/paxsenix_source.dart';
 import '../data/sources/romanization.dart';
+import '../data/sources/sponsorblock.dart';
 import '../data/sources/stream_downloader.dart';
 import '../data/sources/stream_proxy.dart';
 import '../data/sources/stream_resolver.dart';
 import 'auth_controller.dart';
+import 'library_providers.dart';
 
 /// ---------------------------------------------------------------------------
 /// Базовая инициализация.
@@ -284,6 +286,24 @@ class SettingsController extends Notifier<AppSettings> {
   /// Ставить на паузу, когда пропадает устройство вывода.
   Future<void> setPauseOnDeviceMute(bool value) =>
       update((AppSettings s) => s.copyWith(pauseOnDeviceMute: value));
+
+  /// Пропускать вставки, размеченные на SponsorBlock.
+  Future<void> setSponsorBlockEnabled(bool value) =>
+      update((AppSettings s) => s.copyWith(sponsorBlockEnabled: value));
+
+  /// Заменяет набор пропускаемых категорий целиком.
+  ///
+  /// Одним обновлением, а не по категории: диалог сохраняется одной кнопкой, и
+  /// писать настройки несколько раз подряд незачем.
+  Future<void> setSponsorBlockCategories(
+    List<SponsorBlockCategory> categories,
+  ) =>
+      update(
+        (AppSettings s) => s.copyWith(
+          sponsorBlockCategories:
+              List<SponsorBlockCategory>.unmodifiable(categories),
+        ),
+      );
 
   /// Фон мини-плеера: тема, градиент или свечение.
   Future<void> setMiniPlayerBackgroundStyle(MiniPlayerBackgroundStyle style) =>
@@ -634,6 +654,12 @@ final Provider<TokenStore> tokenStoreProvider = Provider<TokenStore>(
 /// на изменения остальных настроек.
 final Provider<InnerTubeClient> innerTubeProvider = Provider<InnerTubeClient>(
   (ref) {
+    // Список заблокированных исполнителей читается с диска: поднимаем его до
+    // первого запроса каталога, иначе стартовая главная пришла бы
+    // нефильтрованной. Запросы каталога ждут готовности сами
+    // (`CatalogSource.blockedArtistsReady`).
+    ref.read(blockedArtistsProvider);
+
     final String region = ref.watch(
       settingsControllerProvider.select((AppSettings s) => s.streamingRegion),
     );
@@ -649,6 +675,18 @@ final Provider<InnerTubeClient> innerTubeProvider = Provider<InnerTubeClient>(
     return client;
   },
 );
+
+/// Клиент SponsorBlock.
+///
+/// Один на приложение: держит кэш ответов, чтобы повторный запуск трека не
+/// ходил в сеть заново. Сеть здесь вспомогательная: ошибки клиент глотает сам,
+/// поэтому провайдер не зависит от входа и настроек.
+final Provider<SponsorBlockClient> sponsorBlockClientProvider =
+    Provider<SponsorBlockClient>((Ref ref) {
+  final SponsorBlockClient client = SponsorBlockClient();
+  ref.onDispose(client.dispose);
+  return client;
+});
 
 /// Получение ссылок на аудиопотоки.
 ///

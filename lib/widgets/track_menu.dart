@@ -7,6 +7,7 @@ import 'package:url_launcher/url_launcher.dart';
 
 import '../core/theme/layout.dart';
 import '../core/theme/motion.dart';
+import '../data/local/blocked_artists.dart';
 import '../data/models/models.dart';
 import '../features/common/navigation.dart';
 import '../features/library/playlist_edit.dart';
@@ -113,10 +114,22 @@ class _TrackMenuSheet extends ConsumerWidget {
     // Перейти можно только туда, где есть id. Если YouTube его не отдал,
     // пункт не показываем вовсе — «мёртвая» кнопка путает сильнее, чем её
     // отсутствие.
-    final ArtistRef? artist = _firstNavigableArtist();
+    final List<ArtistRef> navigableArtists = track.artists
+        .where((ArtistRef a) => a.isNavigable)
+        .toList(growable: false);
+    final ArtistRef? artist =
+        navigableArtists.isEmpty ? null : navigableArtists.first;
     final AlbumRef? album = (track.album?.isNavigable ?? false)
         ? track.album
         : null;
+
+    // Блокировки — отдельным `watch`: список меняется редко, а меню должно
+    // показывать актуальное действие (заблокировать или разблокировать).
+    final List<BlockedArtist> blockedArtists =
+        ref.watch(blockedArtistsProvider);
+    final bool singleBlocked = navigableArtists.length == 1 &&
+        blockedArtists
+            .any((BlockedArtist b) => b.id == navigableArtists.first.id);
 
     return SafeArea(
       child: SingleChildScrollView(
@@ -141,6 +154,27 @@ class _TrackMenuSheet extends ConsumerWidget {
                 icon: Icons.person_outline,
                 title: 'Перейти к исполнителю',
                 onTap: () => _openArtist(context, artist),
+              ),
+            // Блокировка — только когда исполнителя можно опознать по id:
+            // блокировать «по имени» нельзя, имена у YouTube не уникальны.
+            if (navigableArtists.length == 1)
+              _MenuAction(
+                icon: singleBlocked
+                    ? Icons.person_add_alt_1_outlined
+                    : Icons.person_off_outlined,
+                title: singleBlocked
+                    ? 'Разблокировать исполнителя'
+                    : 'Заблокировать исполнителя',
+                onTap: () => _toggleArtist(context, ref, navigableArtists.first),
+              )
+            else if (navigableArtists.length > 1)
+              _MenuAction(
+                icon: Icons.person_off_outlined,
+                title: 'Заблокировать исполнителя',
+                // У трека с несколькими авторами непонятно, кого именно
+                // прятать, поэтому спрашиваем: молча выбрать первого значило
+                // бы спрятать не того.
+                onTap: () => _chooseArtist(context, ref, navigableArtists),
               ),
             if (album != null)
               _MenuAction(
@@ -365,13 +399,96 @@ class _TrackMenuSheet extends ConsumerWidget {
     }
   }
 
-  /// Первый исполнитель с id: у трека с несколькими авторами на страницу
-  /// можно уйти только к одному, и YouTube кладёт основного первым.
-  ArtistRef? _firstNavigableArtist() {
-    for (final ArtistRef artist in track.artists) {
-      if (artist.isNavigable) return artist;
+  /// Блокирует или разблокирует единственного исполнителя трека.
+  ///
+  /// Контроллер блокировок берём до `Navigator.pop`: после закрытия листа его
+  /// `ref` уже недействителен.
+  void _toggleArtist(
+    BuildContext sheetContext,
+    WidgetRef ref,
+    ArtistRef artist,
+  ) {
+    final BlockedArtists notifier =
+        ref.read(blockedArtistsProvider.notifier);
+    final bool blocked = ref
+        .read(blockedArtistsProvider)
+        .any((BlockedArtist item) => item.id == artist.id);
+    Navigator.pop(sheetContext);
+    unawaited(_applyArtistBlock(notifier, artist, blocked));
+  }
+
+  /// Спрашивает, кого из соавторов трека заблокировать.
+  void _chooseArtist(
+    BuildContext sheetContext,
+    WidgetRef ref,
+    List<ArtistRef> artists,
+  ) {
+    final BlockedArtists notifier =
+        ref.read(blockedArtistsProvider.notifier);
+    final List<BlockedArtist> blocked = ref.read(blockedArtistsProvider);
+    Navigator.pop(sheetContext);
+    unawaited(_askAndToggle(notifier, artists, blocked));
+  }
+
+  Future<void> _askAndToggle(
+    BlockedArtists notifier,
+    List<ArtistRef> artists,
+    List<BlockedArtist> blocked,
+  ) async {
+    bool isBlocked(ArtistRef artist) =>
+        blocked.any((BlockedArtist item) => item.id == artist.id);
+
+    final ArtistRef? chosen = await showDialog<ArtistRef>(
+      context: hostContext,
+      builder: (BuildContext dialogContext) => SimpleDialog(
+        title: const Text('Заблокировать исполнителя'),
+        children: <Widget>[
+          for (final ArtistRef artist in artists)
+            ListTile(
+              leading: Icon(
+                isBlocked(artist) ? Icons.lock_outline : Icons.person_outline,
+              ),
+              title: Text(artist.name),
+              subtitle: isBlocked(artist)
+                  ? const Text('Уже заблокирован — нажмите, чтобы снять')
+                  : null,
+              onTap: () => Navigator.pop(dialogContext, artist),
+            ),
+        ],
+      ),
+    );
+    if (chosen == null) return;
+    await _applyArtistBlock(notifier, chosen, isBlocked(chosen));
+  }
+
+  Future<void> _applyArtistBlock(
+    BlockedArtists notifier,
+    ArtistRef artist,
+    bool blocked,
+  ) async {
+    final String id = artist.id ?? '';
+    if (id.isEmpty) return;
+    final ScaffoldMessengerState messenger = ScaffoldMessenger.of(hostContext);
+    try {
+      if (blocked) {
+        await notifier.unblock(id);
+      } else {
+        await notifier.block(id: id, name: artist.name);
+      }
+      messenger.showSnackBar(
+        SnackBar(
+          content: Text(
+            blocked
+                ? 'Блокировка снята: ${artist.name}'
+                : 'Исполнитель заблокирован: ${artist.name}',
+          ),
+        ),
+      );
+    } on Object {
+      messenger.showSnackBar(
+        const SnackBar(content: Text('Не удалось изменить блокировку.')),
+      );
     }
-    return null;
   }
 
   Future<void> _toggleLike(WidgetRef ref) async {

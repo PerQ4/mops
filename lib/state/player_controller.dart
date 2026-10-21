@@ -10,6 +10,7 @@ import '../core/audio/media_kit_engine.dart';
 import '../core/scrobbling/scrobbler.dart';
 import '../data/local/queue_snapshot.dart';
 import '../data/models/models.dart';
+import '../data/sources/sponsorblock.dart';
 import '../data/sources/stream_downloader.dart';
 import '../data/sources/stream_proxy.dart';
 import '../data/sources/stream_resolver.dart';
@@ -220,6 +221,31 @@ class PlayerController extends Notifier<PlayerUiState> {
   /// Последний записанный снимок — чтобы не писать на диск одно и то же.
   String? _lastSnapshot;
 
+  /// Вставки текущего трека по данным SponsorBlock.
+  List<SponsorSegment> _sponsorSegments = const <SponsorSegment>[];
+
+  /// Трек, для которого получены [_sponsorSegments].
+  String? _sponsorTrackId;
+
+  /// Категории, с которыми запрошены текущие сегменты.
+  ///
+  /// Храним отдельно от настроек: если пользователь включит новую категорию,
+  /// набор разойдётся, и сегменты нужно перезапросить — иначе новая метка
+  /// просто не придёт.
+  Set<SponsorBlockCategory> _sponsorCategories =
+      const <SponsorBlockCategory>{};
+
+  /// Отметки, которые уже пропущены в этом проигрывании трека.
+  ///
+  /// Именно по UUID, а не по позиции: движок после перемотки ещё несколько
+  /// тиков присылает прежнюю позицию, и без этого списка мы бы перематывали
+  /// один и тот же отрезок по кругу.
+  final Set<String> _sponsorSkipped = <String>{};
+
+  /// Идёт перемотка через вставку: следующие тики не должны запускать ещё
+  /// одну, пока движок не догнал новую позицию.
+  bool _sponsorSeeking = false;
+
   @override
   PlayerUiState build() {
     // Отписка от предыдущего движка (если нотификатор пересоздали).
@@ -238,6 +264,11 @@ class PlayerController extends Notifier<PlayerUiState> {
       if (playback.status == PlaybackStatus.error && playback.error != null) {
         state = state.copyWith(error: playback.error);
       }
+
+      // Пропуск вставок — здесь же, на тиках движка: это единственный момент,
+      // когда известна настоящая позиция. Ошибки сети клиент глотает сам,
+      // поэтому вызов не может помешать воспроизведению.
+      _syncSponsorBlock(playback);
 
       // Скробблинг: «сейчас играет» и накопление прослушанного. Идёт до
       // обработки конца трека: там очередь перескочит на следующий, а закрыть
@@ -266,6 +297,22 @@ class PlayerController extends Notifier<PlayerUiState> {
     final settings = ref.read(settingsControllerProvider);
     unawaited(_engine.setVolume(settings.lastVolume));
     unawaited(_engine.setSpeed(settings.lastSpeed));
+
+    // Смена настроек SponsorBlock подхватывается сразу, не дожидаясь тика:
+    // включённая категория должна подтянуть свои метки даже на паузе, а
+    // выключенная — сразу перестать пропускаться. Остальные настройки
+    // (громкость, тема) сюда не относятся, поэтому сравниваем только поля
+    // блокировки.
+    ref.listen(settingsControllerProvider, (previous, next) {
+      final bool sameBlockSettings = previous != null &&
+          previous.sponsorBlockEnabled == next.sponsorBlockEnabled &&
+          setEquals(
+            previous.sponsorBlockCategories.toSet(),
+            next.sponsorBlockCategories.toSet(),
+          );
+      if (sameBlockSettings) return;
+      _syncSponsorBlock(state.playback);
+    });
 
     // Очередь прошлой сессии читаем до возврата состояния: она должна быть на
     // экране с первого кадра, а не появиться через мгновение. Восстанавливаем
@@ -637,6 +684,87 @@ class PlayerController extends Notifier<PlayerUiState> {
     final Duration duration = state.playback.duration;
     if (duration <= Duration.zero) return Future<void>.value();
     return _engine.seek(duration * fraction.clamp(0.0, 1.0));
+  }
+
+  // ------------------------------------------------------------ SponsorBlock
+
+  /// Держит сегменты в соответствии с треком и настройками и пропускает
+  /// вставку, если позиция внутри неё.
+  ///
+  /// Проверка категории идёт по текущим настройкам, а не по тем, с которыми
+  /// сегменты запрашивались: выключенная категория должна перестать
+  /// пропускаться сразу, даже если её сегменты уже лежат в памяти.
+  void _syncSponsorBlock(PlaybackState playback) {
+    final Track? track = state.current;
+    if (track == null) return;
+
+    final settings = ref.read(settingsControllerProvider);
+    final Set<SponsorBlockCategory> categories =
+        settings.sponsorBlockEnabled
+            ? settings.sponsorBlockCategories.toSet()
+            : const <SponsorBlockCategory>{};
+
+    // Настройка выключена или не выбрано ни одной категории.
+    if (categories.isEmpty) {
+      _clearSponsorState();
+      return;
+    }
+
+    if (_sponsorTrackId != track.id ||
+        !_sameSponsorCategories(categories)) {
+      _sponsorTrackId = track.id;
+      _sponsorCategories = categories;
+      _sponsorSegments = const <SponsorSegment>[];
+      _sponsorSkipped.clear();
+      unawaited(_fetchSponsorSegments(track.id, categories));
+    }
+
+    // Пропускаем только во время звука: на паузе перемотка была бы
+    // неожиданной, а на завершении трека — уже бессмысленной.
+    if (!playback.isPlaying || _sponsorSeeking) return;
+
+    final Duration position = playback.position;
+    for (final SponsorSegment segment in _sponsorSegments) {
+      if (!categories.contains(segment.category)) continue;
+      if (_sponsorSkipped.contains(segment.uuid)) continue;
+      if (position < segment.start || position >= segment.end) continue;
+
+      // Отметку ставим ДО перемотки: пока движок не догнал новую позицию,
+      // он присылает старую, и без отметки мы бы перематывали повторно.
+      _sponsorSkipped.add(segment.uuid);
+      _sponsorSeeking = true;
+      unawaited(
+        seek(segment.end).whenComplete(() => _sponsorSeeking = false),
+      );
+      break;
+    }
+  }
+
+  Future<void> _fetchSponsorSegments(
+    String videoId,
+    Set<SponsorBlockCategory> categories,
+  ) async {
+    final List<SponsorSegment> segments = await ref
+        .read(sponsorBlockClientProvider)
+        .segments(videoId, categories: categories);
+
+    // Пока шёл запрос, трек или категории могли смениться — результат
+    // устарел и к текущему воспроизведению не относится.
+    if (!ref.mounted || _sponsorTrackId != videoId) return;
+    if (!_sameSponsorCategories(categories)) return;
+    _sponsorSegments = segments;
+  }
+
+  bool _sameSponsorCategories(Set<SponsorBlockCategory> categories) =>
+      categories.length == _sponsorCategories.length &&
+      _sponsorCategories.containsAll(categories);
+
+  void _clearSponsorState() {
+    if (_sponsorTrackId == null && _sponsorSegments.isEmpty) return;
+    _sponsorTrackId = null;
+    _sponsorCategories = const <SponsorBlockCategory>{};
+    _sponsorSegments = const <SponsorSegment>[];
+    _sponsorSkipped.clear();
   }
 
   Future<void> setVolume(double volume) async {
