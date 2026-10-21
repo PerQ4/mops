@@ -6,6 +6,7 @@ import 'package:flutter_riverpod/flutter_riverpod.dart';
 import '../../core/theme/layout.dart';
 import '../../core/utils/format.dart';
 import '../../data/models/models.dart';
+import '../../data/sources/library_source.dart';
 import '../../state/auth_controller.dart';
 import '../../state/library_providers.dart';
 import '../../widgets/app_progress.dart';
@@ -31,6 +32,69 @@ Future<void> showAddToPlaylistDialog(
   );
 }
 
+/// Название нового плейлиста. `null` — отмена или пустая строка.
+///
+/// Один диалог на все точки входа: и «Новый плейлист» внутри «Добавить в
+/// плейлист», и пункт «Создать плейлист» в библиотеке. Второй такой же диалог
+/// разошёлся бы с первым по поведению (проверка пустого имени, Enter).
+Future<String?> askPlaylistTitle(BuildContext context) async {
+  final TextEditingController field = TextEditingController();
+  final String? result = await showDialog<String>(
+    context: context,
+    builder: (BuildContext dialogContext) => AlertDialog(
+      title: const Text('Новый плейлист'),
+      content: TextField(
+        controller: field,
+        autofocus: true,
+        decoration: const InputDecoration(hintText: 'Название'),
+        onSubmitted: (String value) => Navigator.pop(dialogContext, value),
+      ),
+      actions: <Widget>[
+        TextButton(
+          onPressed: () => Navigator.pop(dialogContext),
+          child: const Text('Отмена'),
+        ),
+        FilledButton(
+          onPressed: () => Navigator.pop(dialogContext, field.text),
+          child: const Text('Создать'),
+        ),
+      ],
+    ),
+  );
+  field.dispose();
+
+  final String title = result?.trim() ?? '';
+  return title.isEmpty ? null : title;
+}
+
+/// Создаёт пустой плейлист: спрашивает название, отправляет его на сервер и
+/// сообщает результат.
+///
+/// Точка входа общая для плитки в библиотеке и кнопки в шапке боковой панели:
+/// после создания список плейлистов сбрасывает [PlaylistEditor], поэтому
+/// вызывающему не нужно помнить об инвалидации.
+Future<void> createPlaylistWithDialog(
+  BuildContext context,
+  WidgetRef ref,
+) async {
+  // Мессенджер берём до ожидания: после диалога контекст может уже не быть
+  // смонтирован, а сообщение показать всё равно нужно.
+  final ScaffoldMessengerState messenger = ScaffoldMessenger.of(context);
+  final String? title = await askPlaylistTitle(context);
+  if (title == null || !context.mounted) return;
+
+  try {
+    await ref.read(playlistEditorProvider).create(title: title);
+    messenger.showSnackBar(
+      SnackBar(content: Text('Плейлист «$title» создан')),
+    );
+  } on Object catch (error) {
+    messenger.showSnackBar(
+      SnackBar(content: Text('Не удалось создать плейлист: $error')),
+    );
+  }
+}
+
 class _AddToPlaylistDialog extends ConsumerStatefulWidget {
   const _AddToPlaylistDialog({required this.track, required this.hostContext});
 
@@ -52,7 +116,7 @@ class _AddToPlaylistDialogState extends ConsumerState<_AddToPlaylistDialog> {
     final bool signedIn = ref.watch(
       authControllerProvider.select((AuthState s) => s.isSignedIn),
     );
-    final AsyncValue<List<Playlist>> playlists =
+    final AsyncValue<LibraryPlaylists> playlists =
         ref.watch(likedPlaylistsProvider);
 
     // Высоту ограничиваем долей окна: на низком окне список иначе ушёл бы
@@ -96,7 +160,8 @@ class _AddToPlaylistDialogState extends ConsumerState<_AddToPlaylistDialog> {
     );
   }
 
-  Widget _buildList(List<Playlist> playlists) {
+  Widget _buildList(LibraryPlaylists data) {
+    final List<Playlist> playlists = data.playlists;
     return ListView(
       // Список меряется по содержимому и прокручивается только если оно
       // переросло ограничение по высоте (см. `maxHeight` выше).
@@ -178,35 +243,7 @@ class _AddToPlaylistDialogState extends ConsumerState<_AddToPlaylistDialog> {
   }
 
   /// Название нового плейлиста. `null` — отмена или пустая строка.
-  Future<String?> _askTitle() async {
-    final TextEditingController field = TextEditingController();
-    final String? result = await showDialog<String>(
-      context: context,
-      builder: (BuildContext dialogContext) => AlertDialog(
-        title: const Text('Новый плейлист'),
-        content: TextField(
-          controller: field,
-          autofocus: true,
-          decoration: const InputDecoration(hintText: 'Название'),
-          onSubmitted: (String value) => Navigator.pop(dialogContext, value),
-        ),
-        actions: <Widget>[
-          TextButton(
-            onPressed: () => Navigator.pop(dialogContext),
-            child: const Text('Отмена'),
-          ),
-          FilledButton(
-            onPressed: () => Navigator.pop(dialogContext, field.text),
-            child: const Text('Создать'),
-          ),
-        ],
-      ),
-    );
-    field.dispose();
-
-    final String title = result?.trim() ?? '';
-    return title.isEmpty ? null : title;
-  }
+  Future<String?> _askTitle() => askPlaylistTitle(context);
 }
 
 /// Строка плейлиста: обложка, название и число треков.

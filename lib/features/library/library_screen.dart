@@ -6,11 +6,13 @@ import 'package:flutter_riverpod/flutter_riverpod.dart';
 import '../../core/theme/layout.dart';
 import '../../data/local/playlist_tags.dart';
 import '../../data/models/models.dart';
+import '../../data/sources/library_source.dart';
 import '../../state/auth_controller.dart';
 import '../../state/library_providers.dart';
 import '../../state/player_controller.dart';
 import '../../widgets/horizontal_list.dart';
 import '../../widgets/async_views.dart';
+import '../../widgets/artwork.dart';
 import '../../widgets/empty_state.dart';
 import '../../widgets/section_list.dart';
 import '../../widgets/track_tile.dart';
@@ -20,6 +22,7 @@ import '../podcast/podcast_library_section.dart';
 import 'library_empty_state.dart';
 import 'library_spotlight_tile.dart';
 import 'local_files_section.dart';
+import 'playlist_edit.dart';
 
 /// Личная коллекция: чипы-фильтры и содержимое выбранного раздела.
 ///
@@ -249,15 +252,16 @@ class _LibraryOverview extends ConsumerWidget {
 
   @override
   Widget build(BuildContext context, WidgetRef ref) {
-    final AsyncValue<List<Playlist>> playlists = ref.watch(
+    final AsyncValue<LibraryPlaylists> playlists = ref.watch(
       likedPlaylistsProvider,
     );
     final AsyncValue<List<Artist>> artists = ref.watch(libraryArtistsProvider);
     final AsyncValue<List<Artist>> subs = ref.watch(subscriptionsProvider);
     final AsyncValue<List<Track>> songs = ref.watch(likedSongsProvider);
 
+    final LibraryPlaylists? libraryPlaylists = playlists.value;
     final List<BrowseItem> playlistItems =
-        (playlists.value ?? const <Playlist>[])
+        (libraryPlaylists?.playlists ?? const <Playlist>[])
             .map<BrowseItem>(PlaylistItem.new)
             .toList();
     final List<BrowseItem> artistItems = (artists.value ?? const <Artist>[])
@@ -273,6 +277,13 @@ class _LibraryOverview extends ConsumerWidget {
         artistItems.isEmpty &&
         subItems.isEmpty &&
         songItems.isEmpty;
+
+    // Плитку создания показываем только когда она пришла от сервера: у гостя
+    // и в урезанном ответе её нет, а выдумывать свою не нужно.
+    final CreatePlaylistTile? createTile = libraryPlaylists?.createTile;
+    final Widget? createPlaylistEntry = createTile == null
+        ? null
+        : _CreatePlaylistTile(tile: createTile);
     final bool anyLoading =
         playlists.isLoading ||
         artists.isLoading ||
@@ -295,7 +306,7 @@ class _LibraryOverview extends ConsumerWidget {
         },
       );
     }
-    if (nothingYet) {
+    if (nothingYet && createPlaylistEntry == null) {
       return const EmptyState(
         icon: Icons.library_music_outlined,
         title: 'Коллекция пуста',
@@ -333,6 +344,7 @@ class _LibraryOverview extends ConsumerWidget {
               title: 'Плейлисты',
               items: playlistItems,
               delegate: delegate,
+              leading: createPlaylistEntry,
             ),
             ..._gridSection(
               context,
@@ -369,26 +381,28 @@ class _PlaylistsGridState extends ConsumerState<_PlaylistsGrid> {
 
   @override
   Widget build(BuildContext context) {
-    final AsyncValue<List<Playlist>> playlists = ref.watch(
+    final AsyncValue<LibraryPlaylists> playlists = ref.watch(
       likedPlaylistsProvider,
     );
     final Map<String, Set<String>> tags = ref.watch(playlistTagsProvider);
     final List<String> allTags = ref.watch(playlistTagsListProvider);
 
     return playlists.when(
-      data: (List<Playlist> data) {
+      data: (LibraryPlaylists data) {
         // Снятый с последнего плейлиста тег исчезает из списка чипов — тогда
         // фильтр по нему пришлось бы сбрасывать только вручную, а показывать
         // было бы нечего. Считаем его снятым сразу.
         final String? selected =
             _tag != null && allTags.contains(_tag) ? _tag : null;
         final List<Playlist> visible = selected == null
-            ? data
-            : data
+            ? data.playlists
+            : data.playlists
                 .where(
                   (Playlist p) => tags[p.id]?.contains(selected) ?? false,
                 )
                 .toList();
+
+        final CreatePlaylistTile? createTile = data.createTile;
 
         return Column(
           children: <Widget>[
@@ -405,6 +419,11 @@ class _PlaylistsGridState extends ConsumerState<_PlaylistsGrid> {
                 emptyTitle: selected == null
                     ? 'Плейлистов нет'
                     : 'С этим тегом плейлистов нет',
+                // Под фильтром плитка создания не относится к выбранному тегу:
+                // оставлять её значило бы показывать «несовпавший» элемент.
+                leading: createTile == null || selected != null
+                    ? null
+                    : _CreatePlaylistTile(tile: createTile),
                 onItemLongPress: (BrowseItem item) {
                   // У плитки библиотеки нет данных о владении плейлистом,
                   // поэтому правимость лист определит сам (всё, кроме «Мне
@@ -1028,6 +1047,74 @@ class _SkeletonBar extends StatelessWidget {
   }
 }
 
+/// Плитка «создать плейлист» — та же форма, что у обложек библиотеки.
+///
+/// Это не плейлист, а кнопка: серверная плитка из раздела `Плейлисты` без
+/// `browseEndpoint`. Обложку берём из ответа YouTube, чтобы плитка выглядела
+/// знакомо, а подпись ставим свою: серверный заголовок локализован и не всегда
+/// читается как действие.
+class _CreatePlaylistTile extends ConsumerWidget {
+  const _CreatePlaylistTile({required this.tile});
+
+  final CreatePlaylistTile tile;
+
+  @override
+  Widget build(BuildContext context, WidgetRef ref) {
+    final ColorScheme scheme = Theme.of(context).colorScheme;
+    final TextTheme text = Theme.of(context).textTheme;
+
+    return Container(
+      decoration: BoxDecoration(
+        color: scheme.surfaceContainerLow,
+        borderRadius: BorderRadius.circular(LibrarySpotlightTile.radius),
+      ),
+      clipBehavior: Clip.antiAlias,
+      child: Material(
+        type: MaterialType.transparency,
+        child: InkWell(
+          onTap: () => createPlaylistWithDialog(context, ref),
+          child: Padding(
+            padding: const EdgeInsets.all(12),
+            child: Column(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: <Widget>[
+                AspectRatio(
+                  aspectRatio: 1,
+                  child: Artwork(
+                    // Серверная картинка плитки; если её не пришло (или она
+                    // не загрузилась), остаётся значок «плюс».
+                    url: tile.artwork,
+                    icon: Icons.add,
+                    radius: BorderRadius.circular(
+                      LibrarySpotlightTile.thumbnailRadius,
+                    ),
+                  ),
+                ),
+                const SizedBox(height: 8),
+                Text(
+                  'Создать плейлист',
+                  maxLines: 1,
+                  overflow: TextOverflow.ellipsis,
+                  style: text.labelLarge?.copyWith(fontWeight: FontWeight.w700),
+                ),
+                const SizedBox(height: 2),
+                Text(
+                  'Пустой плейлист',
+                  maxLines: 1,
+                  overflow: TextOverflow.ellipsis,
+                  style: text.bodySmall?.copyWith(
+                    color: scheme.onSurface.withValues(alpha: 0.6),
+                  ),
+                ),
+              ],
+            ),
+          ),
+        ),
+      ),
+    );
+  }
+}
+
 /// Сетка плиток: общий шаблон для плейлистов, альбомов и исполнителей.
 class _TileGrid extends StatelessWidget {
   const _TileGrid({
@@ -1036,11 +1123,16 @@ class _TileGrid extends StatelessWidget {
     this.emptyIcon = Icons.inbox_outlined,
     this.onItemLongPress,
     this.itemOverlay,
+    this.leading,
   });
 
   final List<BrowseItem> items;
   final IconData emptyIcon;
   final String emptyTitle;
+
+  /// Плитка перед сеткой (сейчас — «создать плейлист»). Она занимает первую
+  /// ячейку, поэтому пустой список с ней не считается пустым.
+  final Widget? leading;
 
   /// Действие долгого нажатия на плитку (если у раздела оно есть).
   final ValueChanged<BrowseItem>? onItemLongPress;
@@ -1051,12 +1143,13 @@ class _TileGrid extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
-    if (items.isEmpty) {
+    if (items.isEmpty && leading == null) {
       // Пустая коллекция — карточка `LibraryEmptyState`, как в ArchiveTune
       // (`LibraryPlaylistsScreen.kt:468-479`), а не заглушка на всю страницу.
       return _LibraryEmptyPane(icon: emptyIcon, title: emptyTitle);
     }
 
+    final int leadingCount = leading == null ? 0 : 1;
     return LayoutBuilder(
       builder: (BuildContext context, BoxConstraints constraints) {
         return CustomScrollView(
@@ -1069,16 +1162,17 @@ class _TileGrid extends StatelessWidget {
                 gridDelegate: _libraryGridDelegate(constraints.maxWidth),
                 delegate: SliverChildBuilderDelegate(
                   (BuildContext context, int index) {
+                    if (leading != null && index == 0) return leading!;
+                    final BrowseItem item = items[index - leadingCount];
                     final Widget tile = LibrarySpotlightTile(
-                      item: items[index],
-                      onTap: () => _openItem(context, items[index]),
+                      item: item,
+                      onTap: () => _openItem(context, item),
                     );
-                    final Widget? overlay =
-                        itemOverlay?.call(context, items[index]);
+                    final Widget? overlay = itemOverlay?.call(context, item);
                     return GestureDetector(
                       onLongPress: onItemLongPress == null
                           ? null
-                          : () => onItemLongPress!(items[index]),
+                          : () => onItemLongPress!(item),
                       child: overlay == null
                           ? tile
                           : Stack(
@@ -1089,7 +1183,7 @@ class _TileGrid extends StatelessWidget {
                             ),
                     );
                   },
-                  childCount: items.length,
+                  childCount: items.length + leadingCount,
                 ),
               ),
             ),
@@ -1146,8 +1240,10 @@ List<Widget> _gridSection(
   required String title,
   required List<BrowseItem> items,
   required SliverGridDelegate delegate,
+  Widget? leading,
 }) {
-  if (items.isEmpty) return const <Widget>[];
+  if (items.isEmpty && leading == null) return const <Widget>[];
+  final int leadingCount = leading == null ? 0 : 1;
   return <Widget>[
     SliverToBoxAdapter(child: _GridHeader(title)),
     SliverPadding(
@@ -1155,11 +1251,15 @@ List<Widget> _gridSection(
       sliver: SliverGrid(
         gridDelegate: delegate,
         delegate: SliverChildBuilderDelegate(
-          (BuildContext context, int index) => LibrarySpotlightTile(
-            item: items[index],
-            onTap: () => _openItem(context, items[index]),
-          ),
-          childCount: items.length,
+          (BuildContext context, int index) {
+            if (leading != null && index == 0) return leading;
+            final BrowseItem item = items[index - leadingCount];
+            return LibrarySpotlightTile(
+              item: item,
+              onTap: () => _openItem(context, item),
+            );
+          },
+          childCount: items.length + leadingCount,
         ),
       ),
     ),

@@ -31,10 +31,15 @@ bool _signedIn(Ref ref) =>
     ref.watch(authControllerProvider.select((AuthState s) => s.isSignedIn));
 
 /// Плейлисты пользователя.
-final FutureProvider<List<Playlist>> likedPlaylistsProvider =
-    FutureProvider<List<Playlist>>((ref) async {
-  if (!_signedIn(ref)) return const <Playlist>[];
-  return ref.watch(librarySourceProvider).likedPlaylists();
+///
+/// Вместе со списком источник отдаёт серверную плитку «создать плейлист»:
+/// это не плейлист, поэтому она лежит отдельным полем, а не в списке.
+final FutureProvider<LibraryPlaylists> likedPlaylistsProvider =
+    FutureProvider<LibraryPlaylists>((ref) async {
+  if (!_signedIn(ref)) {
+    return const LibraryPlaylists(playlists: <Playlist>[]);
+  }
+  return ref.watch(librarySourceProvider).libraryPlaylists();
 });
 
 /// Альбомы, сохранённые в библиотеке.
@@ -264,14 +269,15 @@ class SavedIdsController extends Notifier<Set<String>> {
       return <String>{};
     }
 
-    final List<Playlist>? playlists = ref.watch(likedPlaylistsProvider).value;
+    final LibraryPlaylists? playlists =
+        ref.watch(likedPlaylistsProvider).value;
     final List<Album>? albums = ref.watch(likedAlbumsProvider).value;
 
     // Ждём оба раздела: пока хоть один не загружен, прошлый список остаётся,
     // иначе подтверждённое «в библиотеке» мигало бы пустым на каждой загрузке.
     if (playlists != null && albums != null) {
       _lastServer = <String>{
-        ...playlists.map((Playlist p) => p.id),
+        ...playlists.playlists.map((Playlist p) => p.id),
         ...albums.map((Album a) => a.id),
       };
     }
@@ -405,6 +411,15 @@ class PlaylistEditor {
           title: title,
           videoIds: <String>[videoId],
         );
+    _ref.invalidate(likedPlaylistsProvider);
+  }
+
+  /// Создаёт пустой плейлист — точка входа «Создать плейлист» в библиотеке.
+  ///
+  /// Список плейлистов после этого устаревает: без сброса новый плейлист не
+  /// появился бы до перезапуска приложения.
+  Future<void> create({required String title}) async {
+    await _ref.read(librarySourceProvider).createPlaylist(title: title);
     _ref.invalidate(likedPlaylistsProvider);
   }
 }

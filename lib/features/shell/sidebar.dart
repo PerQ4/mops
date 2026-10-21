@@ -17,6 +17,7 @@ import '../../widgets/app_progress.dart';
 import '../../widgets/artwork.dart';
 import '../../widgets/async_views.dart';
 import '../common/navigation.dart';
+import '../library/playlist_edit.dart';
 import '../playlist/playlist_screen.dart';
 import 'content_navigator.dart';
 import 'destinations.dart';
@@ -224,15 +225,22 @@ class _SidebarHeader extends ConsumerWidget {
       child: Row(
         children: <Widget>[
           const Expanded(child: _SectionLabel('Библиотека')),
-          // Обновление показываем только вошедшему: без входа список всё
-          // равно пуст, и кнопка обновляла бы нечего.
-          if (signedIn)
+          // Обновление и создание показываем только вошедшему: без входа
+          // список всё равно пуст, и кнопки делали бы нечего.
+          if (signedIn) ...<Widget>[
+            IconButton(
+              tooltip: 'Создать плейлист',
+              iconSize: 20,
+              icon: const Icon(Icons.playlist_add),
+              onPressed: () => createPlaylistWithDialog(context, ref),
+            ),
             IconButton(
               tooltip: 'Обновить библиотеку',
               iconSize: 18,
               icon: const Icon(Icons.refresh),
               onPressed: () => refreshLibrary(ref),
             ),
+          ],
           toggle,
         ],
       ),
@@ -531,7 +539,7 @@ class _LibraryList extends ConsumerWidget {
 
   @override
   Widget build(BuildContext context, WidgetRef ref) {
-    final AsyncValue<List<Playlist>> playlists =
+    final AsyncValue<LibraryPlaylists> playlists =
         ref.watch(likedPlaylistsProvider);
     final AsyncValue<List<Album>> albums = ref.watch(likedAlbumsProvider);
     final AsyncValue<List<Artist>> artists = ref.watch(libraryArtistsProvider);
@@ -561,7 +569,9 @@ class _LibraryList extends ConsumerWidget {
           header: LibrarySection.playlists.label,
           countLabel: playlistCountLabel,
           emptyText: 'Плейлистов нет',
-          source: playlists,
+          source: playlists.whenData(
+            (LibraryPlaylists data) => data.playlists,
+          ),
           titleOf: (Playlist p) => p.title,
           ownerOf: (Playlist p) => p.author ?? '',
           rowBuilder: (Playlist p, bool compact) =>

@@ -136,6 +136,130 @@ void main() {
     });
   });
 
+  group('плитка «создать плейлист»', () {
+    /// Плитка в том виде, в каком её реально отдаёт
+    /// `FEmusic_liked_playlists`: ссылки на страницу нет, зато есть
+    /// `createPlaylistEndpoint` — и в корне, и в run заголовка.
+    Map<String, dynamic> createTile() => <String, dynamic>{
+          'thumbnailRenderer': <String, dynamic>{
+            'musicThumbnailRenderer': <String, dynamic>{
+              'thumbnail': <String, dynamic>{
+                'thumbnails': <Map<String, dynamic>>[
+                  <String, dynamic>{
+                    'url': 'https://example.test/create-playlist.png',
+                    'width': 210,
+                    'height': 210,
+                  },
+                ],
+              },
+            },
+          },
+          'title': <String, dynamic>{
+            'runs': <Map<String, dynamic>>[
+              <String, dynamic>{
+                'text': 'Новый плейлист',
+                'navigationEndpoint': <String, dynamic>{
+                  'createPlaylistEndpoint': <String, dynamic>{'params': 'CAI%3D'},
+                },
+              },
+            ],
+          },
+          'subtitle': <String, dynamic>{},
+          'navigationEndpoint': <String, dynamic>{
+            'createPlaylistEndpoint': <String, dynamic>{'params': 'CAI%3D'},
+          },
+        };
+
+    test('не становится плейлистом с пустым id', () {
+      final Map<String, dynamic> tile = createTile();
+
+      expect(BrowseParser.isCreatePlaylistTile(tile), isTrue);
+      expect(BrowseParser.twoRowItem(tile), isNull);
+      expect(
+        BrowseParser.itemsOf(<dynamic>[
+          <String, dynamic>{'musicTwoRowItemRenderer': tile},
+        ]),
+        isEmpty,
+      );
+    });
+
+    test('обложка берётся из ответа сервера', () {
+      final Map<String, dynamic> tile = createTile();
+
+      expect(
+        BrowseParser.createPlaylistTileArtwork(tile),
+        'https://example.test/create-playlist.png',
+      );
+    });
+
+    test('плитка без browseId, но и без createPlaylistEndpoint, отбрасывается',
+        () {
+      // Пустой id — не повод делать плейлист: страницы у такой плитки нет.
+      final Map<String, dynamic> tile = <String, dynamic>{
+        'title': <String, dynamic>{
+          'runs': <Map<String, dynamic>>[
+            <String, dynamic>{'text': 'Загадочная плитка'},
+          ],
+        },
+      };
+
+      expect(BrowseParser.isCreatePlaylistTile(tile), isFalse);
+      expect(BrowseParser.twoRowItem(tile), isNull);
+    });
+
+    test('обычная плитка плейлиста остаётся плейлистом', () {
+      final Map<String, dynamic> tile = <String, dynamic>{
+        'title': <String, dynamic>{
+          'runs': <Map<String, dynamic>>[
+            <String, dynamic>{'text': 'Мой плейлист'},
+          ],
+        },
+        'subtitle': <String, dynamic>{
+          'runs': <Map<String, dynamic>>[
+            <String, dynamic>{'text': 'Я'},
+          ],
+        },
+        'navigationEndpoint': <String, dynamic>{
+          'browseEndpoint': <String, dynamic>{
+            'browseId': 'VLPLabc',
+            'browseEndpointContextSupportedConfigs': <String, dynamic>{
+              'browseEndpointContextMusicConfig': <String, dynamic>{
+                'pageType': 'MUSIC_PAGE_TYPE_PLAYLIST',
+              },
+            },
+          },
+        },
+      };
+
+      final BrowseItem? item = BrowseParser.twoRowItem(tile);
+      expect(item, isA<PlaylistItem>());
+      final Playlist playlist = (item! as PlaylistItem).playlist;
+      expect(playlist.id, 'VLPLabc');
+      expect(playlist.title, 'Мой плейлист');
+    });
+
+    test('в общем списке кнопка отбрасывается, а плейлисты остаются', () {
+      final Map<String, dynamic> realPlaylist = <String, dynamic>{
+        'title': <String, dynamic>{
+          'runs': <Map<String, dynamic>>[
+            <String, dynamic>{'text': 'Мой плейлист'},
+          ],
+        },
+        'navigationEndpoint': <String, dynamic>{
+          'browseEndpoint': <String, dynamic>{'browseId': 'VLPLabc'},
+        },
+      };
+
+      final List<BrowseItem> items = BrowseParser.itemsOf(<dynamic>[
+        <String, dynamic>{'musicTwoRowItemRenderer': createTile()},
+        <String, dynamic>{'musicTwoRowItemRenderer': realPlaylist},
+      ]);
+
+      expect(items, hasLength(1));
+      expect((items.single as PlaylistItem).playlist.id, 'VLPLabc');
+    });
+  });
+
   group('секции', () {
     test('плоский поиск собирается в одну секцию «Результаты»', () {
       final Map<String, dynamic> response = <String, dynamic>{

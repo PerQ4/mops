@@ -183,9 +183,39 @@ class BrowseParser {
         .join(' • ');
   }
 
+  /// Плитка «создать плейлист» из раздела библиотеки.
+  ///
+  /// Это не плейлист, а кнопка: у неё нет `browseEndpoint`, зато есть
+  /// `createPlaylistEndpoint` (сервер дублирует его и в корне плитки, и в run
+  /// заголовка). Название локализовано («Новый плейлист», «New playlist»),
+  /// поэтому по тексту плитку не ищем — только по структуре ответа.
+  ///
+  /// Без этой проверки плитка превращалась в [PlaylistItem] с пустым id:
+  /// в списке висел «пустой плейлист», а открыть его и что-то сделать с ним
+  /// было нельзя.
+  static bool isCreatePlaylistTile(dynamic renderer) {
+    if (renderer is! Map) return false;
+    return traverse(renderer, <String>[
+          'navigationEndpoint',
+          'createPlaylistEndpoint',
+        ]) !=
+        null;
+  }
+
+  /// Обложка плитки «создать плейлист»: YouTube рисует для неё отдельную
+  /// картинку, и она приходит тем же `musicThumbnailRenderer`.
+  static String? createPlaylistTileArtwork(dynamic renderer) {
+    if (!isCreatePlaylistTile(renderer)) return null;
+    return _thumbnails(renderer).best;
+  }
+
   /// Разбирает `musicTwoRowItemRenderer` — плитку альбома/плейлиста/артиста.
   static BrowseItem? twoRowItem(dynamic renderer) {
     if (renderer is! Map) return null;
+
+    // Кнопка создания плейлиста — не элемент библиотеки (см.
+    // [isCreatePlaylistTile]). Пропускаем её до разбора названия и ссылок.
+    if (isCreatePlaylistTile(renderer)) return null;
 
     final String title = _firstString(renderer, <List<String>>[
           <String>['title', 'runs', 'text'],
@@ -259,6 +289,10 @@ class BrowseParser {
         duration: _durationFromSubtitle(subtitle) ?? Duration.zero,
       ));
     }
+
+    // Плитка без ссылки на страницу — не плейлист: пустой id давал элемент,
+    // который никуда не ведёт и над которым не работают действия.
+    if (browseId.isEmpty) return null;
 
     return PlaylistItem(Playlist(
       id: browseId,
@@ -557,6 +591,9 @@ class BrowseParser {
         thumbnails: _thumbnails(renderer),
       ));
     }
+    // Без ссылки на страницу это не плейлист (например, кнопка создания):
+    // пустой id вёл бы на пустую страницу.
+    if (browseId.isEmpty) return null;
     return PlaylistItem(Playlist(
       id: browseId,
       title: title,

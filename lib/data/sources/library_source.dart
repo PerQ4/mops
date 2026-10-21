@@ -33,6 +33,35 @@ class PlaylistImageException implements Exception {
   String toString() => message;
 }
 
+/// Плитка «создать плейлист» из раздела библиотеки.
+///
+/// Это не плейлист, а кнопка, которую рисует сам YouTube Music. Обложку берём
+/// из ответа, а подпись ставим свою: серверный заголовок локализован и в
+/// русском ответе приходит как «Новый», то есть не как готовое название
+/// действия. Искать плитку по тексту тоже нельзя (см.
+/// `BrowseParser.isCreatePlaylistTile`).
+class CreatePlaylistTile {
+  const CreatePlaylistTile({this.artwork});
+
+  final String? artwork;
+}
+
+/// Плейлисты пользователя вместе с плиткой создания.
+///
+/// Плитка лежит отдельно от списка: в модели [Playlist] ей места нет — у неё
+/// нет id, и как плейлист она ломала бы открытие и действия над элементами.
+class LibraryPlaylists {
+  const LibraryPlaylists({
+    required this.playlists,
+    this.createTile,
+  });
+
+  final List<Playlist> playlists;
+
+  /// `null`, если сервер плитку не прислал (например, у гостя её нет).
+  final CreatePlaylistTile? createTile;
+}
+
 /// Операции, доступные только после входа в аккаунт.
 ///
 /// Все вызовы идут через [InnerTubeClient] с `authenticated: true`.
@@ -96,8 +125,15 @@ class LibrarySource {
     );
   }
 
-  /// Плейлисты пользователя.
-  Future<List<Playlist>> likedPlaylists() async {
+  /// Плейлисты пользователя — без серверной плитки создания.
+  ///
+  /// Экран библиотеки пользуется [libraryPlaylists]: ему нужна и плитка.
+  /// Этот метод оставлен для инструментов, которым нужен только список.
+  Future<List<Playlist>> likedPlaylists() async =>
+      (await libraryPlaylists()).playlists;
+
+  /// Плейлисты пользователя и серверная плитка «создать плейлист».
+  Future<LibraryPlaylists> libraryPlaylists() async {
     final Map<String, dynamic> res = await _client.browse(
       _browseLikedPlaylists,
       authenticated: true,
@@ -320,14 +356,29 @@ class LibrarySource {
     return Artist(id: channelId, name: name, thumbnails: thumbs);
   }
 
-  List<Playlist> _playlistsFromResponse(Map<String, dynamic> res) {
+  /// Плейлисты и плитка создания из раздела `FEmusic_liked_playlists`.
+  ///
+  /// Плитку «Новый плейлист» сервер кладёт первой и делает её обычной
+  /// `musicTwoRowItemRenderer`, но без `browseEndpoint` (вместо него —
+  /// `createPlaylistEndpoint`). В список плейлистов она не попадает: раньше из
+  /// неё получался плейлист с пустым id, с которым ничего нельзя было сделать.
+  LibraryPlaylists _playlistsFromResponse(Map<String, dynamic> res) {
     final List<Playlist> playlists = <Playlist>[];
+    CreatePlaylistTile? createTile;
+
     for (final dynamic renderer
         in traverseList(res, <String>['musicTwoRowItemRenderer'])) {
+      if (BrowseParser.isCreatePlaylistTile(renderer)) {
+        createTile = CreatePlaylistTile(
+          artwork: BrowseParser.createPlaylistTileArtwork(renderer),
+        );
+        continue;
+      }
       final BrowseItem? item = BrowseParser.twoRowItem(renderer);
       if (item is PlaylistItem) playlists.add(item.playlist);
     }
-    return playlists;
+
+    return LibraryPlaylists(playlists: playlists, createTile: createTile);
   }
 
   /// Альбомы из раздела библиотеки: плитки `musicTwoRowItemRenderer`.
