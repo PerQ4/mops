@@ -93,6 +93,31 @@ void main() {
       expect(track!.artists, isEmpty);
       expect(track.duration, const Duration(minutes: 3, seconds: 59));
     });
+
+    test('без ссылок альбом не становится вторым исполнителем', () {
+      final Map<String, dynamic> row = trackRow();
+      // У гостевых и урезанных ответов ссылок на страницы нет, и байлайн
+      // приходит простым текстом. Исполнители в нём — только первый сегмент:
+      // иначе альбом печатался в плеере как второй автор.
+      row['flexColumns'] = <Map<String, dynamic>>[
+        column(<Map<String, dynamic>>[run('Creep')]),
+        column(<Map<String, dynamic>>[
+          run('Radiohead'),
+          run(' • '),
+          run('Pablo Honey'),
+          run(' • '),
+          run('3:59'),
+        ]),
+      ];
+
+      final Track? track = BrowseParser.responsiveItem(row);
+      expect(track, isNotNull);
+      expect(
+        track!.artists.map((ArtistRef a) => a.name),
+        <String>['Radiohead'],
+      );
+      expect(track.duration, const Duration(minutes: 3, seconds: 59));
+    });
   });
 
   group('строка-не-трек', () {

@@ -655,7 +655,11 @@ class BrowseParser {
   ) {
     final List<ArtistRef> linked = _linkedArtists(runs);
     if (linked.isNotEmpty) return linked;
-    return _artistsFromSubtitle(fallbackText);
+    // Байлайн трека устроен так: «Исполнители • Альбом • 3:45». Исполнители —
+    // всегда первый сегмент, всё после первого разделителя — альбом, год и
+    // время. Раньше в фолбэк уходил весь текст, и альбом попадал в авторы:
+    // в плеере под названием трека он печатался вторым исполнителем.
+    return _artistsFromSubtitle(fallbackText.split('•').first);
   }
 
   /// Достаёт длительность из подписи вида «Исполнитель • 3:20».
@@ -928,8 +932,10 @@ class BrowseParser {
 
       final String trimmed = text.trim();
       if (trimmed.isEmpty) continue;
-      // Разделители между сущностями — «•».
-      if (trimmed == '•') continue;
+      // Разделитель полей байлайна. Всё после первого — уже не исполнители:
+      // там альбом, год, длительность и счётчики. Поэтому не «пропускаем», а
+      // останавливаемся: иначе альбом попадал в список авторов.
+      if (trimmed == '•') break;
       // Длительность и год исполнителями не являются.
       if (parseDurationText(trimmed) != null) continue;
       if (RegExp(r'^(19|20)\d{2}$').hasMatch(trimmed)) continue;
