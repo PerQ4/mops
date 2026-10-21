@@ -112,7 +112,11 @@ jobs:
       - name: Сборка
         # Иконки лежат в перечислениях и записях, поэтому их нельзя
         # вырезать: без этого часть иконок пропадает.
-        run: flutter build ${{ matrix.os == 'ubuntu-latest' && 'linux' || matrix.os == 'windows-latest' && 'windows' || 'macos' }} --release --no-tree-shake-icons
+        #
+        # MOPS_VERSION — номер версии для экрана «О приложении». Берём имя тега:
+        # в pubspec номер отстаёт от тегов, а версия в интерфейсе должна
+        # совпадать с тем, что человек скачал.
+        run: flutter build ${{ matrix.os == 'ubuntu-latest' && 'linux' || matrix.os == 'windows-latest' && 'windows' || 'macos' }} --release --no-tree-shake-icons --dart-define=MOPS_VERSION=${{ github.ref_name }}
 
       # Установщик собирается там же, где и приложение: Inno Setup есть только
       # для Windows, в задаче релиза (она на Linux) его не запустить.
