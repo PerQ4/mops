@@ -6,7 +6,6 @@ import 'package:flutter_riverpod/flutter_riverpod.dart';
 
 import '../../data/local/app_settings.dart';
 import '../../core/theme/app_theme.dart';
-import '../../core/theme/motion.dart';
 import '../../state/player_controller.dart';
 import '../../state/providers.dart';
 import '../../state/shell.dart';

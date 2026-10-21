@@ -590,6 +590,9 @@ class AppSettings {
     this.lastVolume = 1.0,
     this.lastSpeed = 1.0,
     this.uiScale = 0.0,
+    // Плотные строки выключены по умолчанию: иначе вид списков изменился бы
+    // сам после обновления.
+    this.compactRows = false,
     this.bypass = const AntiDpiConfig(),
     this.autoDetectProxy = true,
     this.sidebarCollapsed = false,
@@ -800,6 +803,12 @@ class AppSettings {
   /// Масштаб интерфейса. `0` — автоматически (по масштабу рабочего стола).
   final double uiScale;
 
+  /// Плотные строки треков и библиотеки (пункт 11.2).
+  ///
+  /// Выключено по умолчанию: мобильная высота 72 — прежний вид, а компактный
+  /// режим включают осознанно, когда на экране нужно больше строк.
+  final bool compactRows;
+
   /// Обход блокировок провайдера (подмена хоста, прокси).
   final AntiDpiConfig bypass;
 
@@ -1001,6 +1010,7 @@ class AppSettings {
     double? lastVolume,
     double? lastSpeed,
     double? uiScale,
+    bool? compactRows,
     AntiDpiConfig? bypass,
     bool? autoDetectProxy,
     bool? sidebarCollapsed,
@@ -1086,6 +1096,7 @@ class AppSettings {
       lastVolume: lastVolume ?? this.lastVolume,
       lastSpeed: lastSpeed ?? this.lastSpeed,
       uiScale: uiScale ?? this.uiScale,
+      compactRows: compactRows ?? this.compactRows,
       bypass: bypass ?? this.bypass,
       autoDetectProxy: autoDetectProxy ?? this.autoDetectProxy,
       sidebarCollapsed: sidebarCollapsed ?? this.sidebarCollapsed,
@@ -1178,6 +1189,7 @@ class AppSettings {
         'lastVolume': lastVolume,
         'lastSpeed': lastSpeed,
         'uiScale': uiScale,
+        'compactRows': compactRows,
         'bypass': bypass.toJson(),
         'autoDetectProxy': autoDetectProxy,
         'sidebarCollapsed': sidebarCollapsed,
@@ -1279,6 +1291,7 @@ class AppSettings {
       lastVolume: (json['lastVolume'] as num?)?.toDouble() ?? 1.0,
       lastSpeed: (json['lastSpeed'] as num?)?.toDouble() ?? 1.0,
       uiScale: (json['uiScale'] as num?)?.toDouble() ?? 0.0,
+      compactRows: json['compactRows'] as bool? ?? false,
       bypass: json['bypass'] is Map<String, dynamic>
           ? AntiDpiConfig.fromJson(json['bypass'] as Map<String, dynamic>)
           : const AntiDpiConfig(),

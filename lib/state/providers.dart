@@ -416,6 +416,10 @@ class SettingsController extends Notifier<AppSettings> {
   Future<void> setUiScale(double scale) =>
       update((AppSettings s) => s.copyWith(uiScale: scale));
 
+  /// Плотные строки треков и библиотеки (пункт 11.2).
+  Future<void> setCompactRows(bool value) =>
+      update((AppSettings s) => s.copyWith(compactRows: value));
+
   // ------------------------------------------------- обход блокировок
 
   Future<void> setBypass(AntiDpiConfig config) =>

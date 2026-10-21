@@ -284,6 +284,17 @@ class SettingsScreen extends ConsumerWidget {
                   onChanged: controller.setForceHighRefreshRate,
                   enabled: false,
                 ),
+                // Плотность строк — к концу группы: она меняет вид списков, но
+                // не раскладку, и рядом с масштабом и шрифтом читалась бы как
+                // ещё один способ «увеличить» интерфейс.
+                SettingsSwitchRow(
+                  icon: Icons.compress,
+                  title: 'Плотные строки',
+                  subtitle: 'Компактные строки треков и библиотеки — '
+                      'на экране помещается больше',
+                  value: settings.compactRows,
+                  onChanged: controller.setCompactRows,
+                ),
               ],
             ),
             const SizedBox(height: SettingsDims.sectionSpacing),

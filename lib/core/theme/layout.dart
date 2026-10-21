@@ -118,6 +118,45 @@ abstract final class AppLayout {
   static const double trackArtwork = 56;
   static const double trackArtworkRadius = 12;
 
+  /// Горизонтальный отступ строки трека — `padding(horizontal = 8.dp)`.
+  static const double trackRowInset = 8;
+
+  /// Отступ обложки внутри строки — `Box(padding(8.dp))` у `ListItem`.
+  static const double trackArtworkInset = 8;
+
+  /// Зазор между обложкой и подписью.
+  static const double trackTextInset = 6;
+
+  /// Зазор между названием и подписью.
+  static const double trackTitleGap = 2;
+
+  /// Плотный режим строк (пункт 11.2): 52 — обложка 40 и по 6 пикселей
+  /// запаса сверху и снизу. Мобильные 72 оставляли на 1080p около десяти
+  /// строк; здесь их почти в полтора раза больше, а пропорции сохранены.
+  static const double trackRowHeightCompact = 52;
+  static const double trackArtworkCompact = 40;
+  static const double trackRowInsetCompact = 6;
+  static const double trackArtworkInsetCompact = 6;
+  static const double trackTextInsetCompact = 4;
+  static const double trackTitleGapCompact = 1;
+
+  /// Кнопка «…» в плотной строке: стандартные 48 не помещаются в 40
+  /// пикселей, оставшихся после отступов.
+  static const double trackActionSizeCompact = 32;
+
+  /// Строка библиотеки в боковой панели.
+  static const double libraryRowHeight = 64;
+  static const double libraryArtwork = 48;
+  static const double libraryRowGap = 12;
+  static const double libraryRowVerticalMargin = 2;
+
+  /// Плотный вариант строки библиотеки: та же логика, что у строки трека, —
+  /// меньше обложка, кегль названия и вертикальные отступы вместе.
+  static const double libraryRowHeightCompact = 52;
+  static const double libraryArtworkCompact = 40;
+  static const double libraryRowGapCompact = 8;
+  static const double libraryRowVerticalMarginCompact = 1;
+
   /// Карточки в каруселях (альбомы, исполнители, плейлисты).
   static const double cardWidth = 160;
 

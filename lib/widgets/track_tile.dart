@@ -5,10 +5,12 @@ import 'package:flutter_riverpod/flutter_riverpod.dart';
 import '../core/theme/layout.dart';
 import '../core/theme/motion.dart';
 import '../core/utils/format.dart';
+import '../data/local/app_settings.dart';
 import '../data/models/models.dart';
 import '../features/common/navigation.dart';
 import '../state/catalog_providers.dart';
 import '../state/player_controller.dart';
+import '../state/providers.dart';
 import 'artwork.dart';
 import 'track_menu.dart';
 
@@ -62,6 +64,11 @@ class TrackTile extends ConsumerWidget {
   Widget build(BuildContext context, WidgetRef ref) {
     final ColorScheme scheme = Theme.of(context).colorScheme;
     final TextTheme text = Theme.of(context).textTheme;
+    final bool compactRows = ref.watch(
+      settingsControllerProvider.select(
+        (AppSettings s) => s.compactRows,
+      ),
+    );
 
     // Отметка ставится только после того, как YouTube действительно отказал
     // в потоке из-за недоступности (см. PlayerController): до первой попытки
@@ -79,7 +86,20 @@ class TrackTile extends ConsumerWidget {
     final Color subtitleColor = isCurrent
         ? scheme.onSecondaryContainer.withValues(alpha: 0.7)
         : scheme.onSurfaceVariant;
-    final double artworkSize = AppLayout.trackArtwork;
+    final double artworkSize = compactRows
+        ? AppLayout.trackArtworkCompact
+        : AppLayout.trackArtwork;
+    // Все размеры плотного режима подобраны вместе: высота, отступы и кегль.
+    // Меняя одно без другого, строка выглядела бы сжатой, а не компактной.
+    final double rowInset = compactRows
+        ? AppLayout.trackRowInsetCompact
+        : AppLayout.trackRowInset;
+    final double artworkInset = compactRows
+        ? AppLayout.trackArtworkInsetCompact
+        : AppLayout.trackArtworkInset;
+    final double textInset = compactRows
+        ? AppLayout.trackTextInsetCompact
+        : AppLayout.trackTextInset;
 
     // Одна точка входа в меню: и кнопка «…», и долгое нажатие открывают одно
     // и то же, поэтому действие не приходится искать по интерфейсу.
@@ -87,13 +107,15 @@ class TrackTile extends ConsumerWidget {
         onMenu ?? () => showTrackMenu(context, track);
 
     final Widget tile = SizedBox(
-      height: AppLayout.trackRowHeight,
+      height: compactRows
+          ? AppLayout.trackRowHeightCompact
+          : AppLayout.trackRowHeight,
       // Внешний отступ строки — 8, как `padding(horizontal = 8.dp)` у `ListItem`
       // в Items.kt. Обложка лежит в `Box(padding(8))`, текст — в колонке с
       // `padding(horizontal = 6)`: вместе это даёт прежний зазор 14 между
       // обложкой и подписью.
       child: Padding(
-        padding: const EdgeInsets.symmetric(horizontal: 8),
+        padding: EdgeInsets.symmetric(horizontal: rowInset),
         child: Material(
           // Активная строка подсвечивается `secondaryContainer`, радиус 12 —
           // как `RoundedCornerShape(12.dp)` у `ListItem`.
@@ -111,7 +133,7 @@ class TrackTile extends ConsumerWidget {
                 // Внутренний отступ обложки 8 — это `Box(padding(8.dp))`,
                 // в который `ListItem` заворачивает `thumbnailContent`.
                 Padding(
-                  padding: const EdgeInsets.all(8),
+                  padding: EdgeInsets.all(artworkInset),
                   child: SizedBox(
                     width: artworkSize,
                     height: artworkSize,
@@ -119,7 +141,10 @@ class TrackTile extends ConsumerWidget {
                         ? Center(
                             child: Text(
                               '$leadingNumber',
-                              style: text.titleSmall?.copyWith(
+                              style: (compactRows
+                                      ? text.labelLarge
+                                      : text.titleSmall)
+                                  ?.copyWith(
                                 color: isCurrent
                                     ? scheme.onSecondaryContainer
                                     : scheme.onSurfaceVariant,
@@ -141,7 +166,7 @@ class TrackTile extends ConsumerWidget {
                 Expanded(
                   // Отступ подписи по горизонтали 6 — как у `Column` в `ListItem`.
                   child: Padding(
-                    padding: const EdgeInsets.symmetric(horizontal: 6),
+                    padding: EdgeInsets.symmetric(horizontal: textInset),
                     child: Column(
                       mainAxisAlignment: MainAxisAlignment.center,
                       crossAxisAlignment: CrossAxisAlignment.start,
@@ -150,14 +175,21 @@ class TrackTile extends ConsumerWidget {
                           track.title,
                           maxLines: 1,
                           overflow: TextOverflow.ellipsis,
-                          style: text.bodyLarge?.copyWith(
+                          style: (compactRows
+                                  ? text.bodyMedium
+                                  : text.bodyLarge)
+                              ?.copyWith(
                             color: isDimmed
                                 ? titleColor.withValues(alpha: 0.6)
                                 : titleColor,
                             fontWeight: FontWeight.w600,
                           ),
                         ),
-                        const SizedBox(height: 2),
+                        SizedBox(
+                          height: compactRows
+                              ? AppLayout.trackTitleGapCompact
+                              : AppLayout.trackTitleGap,
+                        ),
                         // Бейджи и подпись — в одной строке: в `ListItem`
                         // бейджи идут перед текстом подписи с зазором 4.
                         Row(
@@ -169,7 +201,10 @@ class TrackTile extends ConsumerWidget {
                                 subtitleOverride: subtitleOverride,
                                 showDuration: showDuration,
                                 unavailable: unavailable,
-                                style: text.bodySmall?.copyWith(
+                                style: (compactRows
+                                        ? text.labelSmall
+                                        : text.bodySmall)
+                                    ?.copyWith(
                                   color: subtitleColor.withValues(
                                     alpha: isDimmed
                                         ? subtitleColor.a * 0.6
@@ -185,11 +220,31 @@ class TrackTile extends ConsumerWidget {
                   ),
                 ),
                 if (trailing != null)
-                  trailing!
+                  // Свой хвост у строки очереди выше плотной строки: уменьшаем
+                  // его целиком, а не ломаем раскладку.
+                  compactRows
+                      ? SizedBox(
+                          height: artworkSize,
+                          child: FittedBox(
+                            fit: BoxFit.scaleDown,
+                            alignment: Alignment.centerRight,
+                            child: trailing!,
+                          ),
+                        )
+                      : trailing!
                 else
                   IconButton(
                     tooltip: 'Действия',
-                    iconSize: 20,
+                    iconSize: compactRows ? 18 : 20,
+                    // В плотной строке после отступов остаётся 40 пикселей:
+                    // стандартная кнопка на 48 не помещается и ломала строку.
+                    padding: compactRows ? EdgeInsets.zero : null,
+                    constraints: compactRows
+                        ? const BoxConstraints.tightFor(
+                            width: AppLayout.trackActionSizeCompact,
+                            height: AppLayout.trackActionSizeCompact,
+                          )
+                        : null,
                     color: scheme.onSurfaceVariant,
                     icon: const Icon(Icons.more_vert),
                     onPressed: openMenu,

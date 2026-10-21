@@ -891,7 +891,7 @@ class _LibraryToolbar extends StatelessWidget {
 /// Кнопки появляются при наведении, активная строка подсвечена фоном. Пока
 /// курсор не наведён, кнопки не занимают место вовсе — иначе под них всегда
 /// резервировалось бы место и название обрезалось даже без наведения.
-class _LibraryRow extends StatefulWidget {
+class _LibraryRow extends ConsumerStatefulWidget {
   const _LibraryRow({
     required this.leading,
     required this.title,
@@ -917,10 +917,10 @@ class _LibraryRow extends StatefulWidget {
   final ValueChanged<_EntryAction> onMenu;
 
   @override
-  State<_LibraryRow> createState() => _LibraryRowState();
+  ConsumerState<_LibraryRow> createState() => _LibraryRowState();
 }
 
-class _LibraryRowState extends State<_LibraryRow> {
+class _LibraryRowState extends ConsumerState<_LibraryRow> {
   bool _hovered = false;
   bool _focused = false;
   bool _busy = false;
@@ -929,13 +929,30 @@ class _LibraryRowState extends State<_LibraryRow> {
   Widget build(BuildContext context) {
     final ColorScheme scheme = Theme.of(context).colorScheme;
     final TextTheme text = Theme.of(context).textTheme;
+    final bool compactRows = ref.watch(
+      settingsControllerProvider.select(
+        (AppSettings s) => s.compactRows,
+      ),
+    );
+    // Плотный режим сжимает строку целиком: высоту, обложку (её размер задают
+    // строки-владельцы) и кегль подписи. Одной высоты было бы мало — текст
+    // выглядел бы приплюснутым.
+    final double rowHeight = compactRows
+        ? AppLayout.libraryRowHeightCompact
+        : AppLayout.libraryRowHeight;
+    final double rowGap = compactRows
+        ? AppLayout.libraryRowGapCompact
+        : AppLayout.libraryRowGap;
+    final double rowMargin = compactRows
+        ? AppLayout.libraryRowVerticalMarginCompact
+        : AppLayout.libraryRowVerticalMargin;
     // Действия нужны и с клавиатуры: Tab доводит фокус до строки, и без этого
     // кнопки «Играть» и «…» оставались недостижимыми — строились только под
     // курсором. Фокус дочерней кнопки тоже держит их на месте.
     final bool showActions = _hovered || _focused || widget.active;
 
     return SizedBox(
-      height: 64,
+      height: rowHeight,
       child: MouseRegion(
         onEnter: (_) => setState(() => _hovered = true),
         onExit: (_) => setState(() => _hovered = false),
@@ -954,12 +971,12 @@ class _LibraryRowState extends State<_LibraryRow> {
                     borderRadius: BorderRadius.circular(AppLayout.radiusS),
                   )
                 : null,
-            margin: const EdgeInsets.symmetric(horizontal: 6, vertical: 2),
+            margin: EdgeInsets.symmetric(horizontal: 6, vertical: rowMargin),
             padding: const EdgeInsets.symmetric(horizontal: 8),
             child: Row(
               children: <Widget>[
                 widget.leading,
-                const SizedBox(width: 12),
+                SizedBox(width: rowGap),
                 Expanded(
                   child: Column(
                     mainAxisAlignment: MainAxisAlignment.center,
@@ -969,7 +986,8 @@ class _LibraryRowState extends State<_LibraryRow> {
                         widget.title,
                         maxLines: 1,
                         overflow: TextOverflow.ellipsis,
-                        style: text.bodyLarge?.copyWith(
+                        style: (compactRows ? text.bodyMedium : text.bodyLarge)
+                            ?.copyWith(
                           fontWeight: FontWeight.w600,
                           color: widget.active
                               ? scheme.onSecondaryContainer
@@ -977,12 +995,17 @@ class _LibraryRowState extends State<_LibraryRow> {
                         ),
                       ),
                       if (widget.subtitle != null) ...<Widget>[
-                        const SizedBox(height: 2),
+                        SizedBox(
+                          height: compactRows
+                              ? AppLayout.trackTitleGapCompact
+                              : AppLayout.trackTitleGap,
+                        ),
                         Text(
                           widget.subtitle!,
                           maxLines: 1,
                           overflow: TextOverflow.ellipsis,
-                          style: text.bodySmall?.copyWith(
+                          style: (compactRows ? text.labelSmall : text.bodySmall)
+                              ?.copyWith(
                             color: widget.active
                                 ? scheme.onSecondaryContainer.withValues(
                                     alpha: 0.7,
@@ -1143,6 +1166,15 @@ class _PlaylistRowState extends ConsumerState<_PlaylistRow> {
         (PlayerUiState s) => s.current?.playlistId == _playlist.id,
       ),
     );
+    // Размер обложки меняется вместе со строкой: в плотном режиме она меньше.
+    final bool compactRows = ref.watch(
+      settingsControllerProvider.select(
+        (AppSettings s) => s.compactRows,
+      ),
+    );
+    final double artworkSize = compactRows
+        ? AppLayout.libraryArtworkCompact
+        : AppLayout.libraryArtwork;
 
     if (widget.compact) {
       return _CompactEntry(
@@ -1166,7 +1198,7 @@ class _PlaylistRowState extends ConsumerState<_PlaylistRow> {
     return _LibraryRow(
       leading: Artwork(
         url: _playlist.thumbnails.sized(96),
-        size: 48,
+        size: artworkSize,
         radius: BorderRadius.circular(4),
         icon: Icons.queue_music,
       ),
@@ -1342,6 +1374,14 @@ class _AlbumRowState extends ConsumerState<_AlbumRow> {
         (PlayerUiState s) => s.current?.album?.id == _album.id,
       ),
     );
+    final bool compactRows = ref.watch(
+      settingsControllerProvider.select(
+        (AppSettings s) => s.compactRows,
+      ),
+    );
+    final double artworkSize = compactRows
+        ? AppLayout.libraryArtworkCompact
+        : AppLayout.libraryArtwork;
 
     if (widget.compact) {
       return _CompactEntry(
@@ -1360,7 +1400,7 @@ class _AlbumRowState extends ConsumerState<_AlbumRow> {
     return _LibraryRow(
       leading: Artwork(
         url: _album.thumbnails.sized(96),
-        size: 48,
+        size: artworkSize,
         radius: BorderRadius.circular(6),
         icon: Icons.album_outlined,
       ),
@@ -1490,6 +1530,14 @@ class _ArtistRowState extends ConsumerState<_ArtistRow> {
             s.current?.artists.any((ArtistRef a) => a.id == _artist.id) ?? false,
       ),
     );
+    final bool compactRows = ref.watch(
+      settingsControllerProvider.select(
+        (AppSettings s) => s.compactRows,
+      ),
+    );
+    final double artworkSize = compactRows
+        ? AppLayout.libraryArtworkCompact
+        : AppLayout.libraryArtwork;
 
     if (widget.compact) {
       return _CompactEntry(
@@ -1509,8 +1557,8 @@ class _ArtistRowState extends ConsumerState<_ArtistRow> {
     return _LibraryRow(
       leading: Artwork(
         url: _artist.thumbnails.sized(96),
-        size: 48,
-        radius: BorderRadius.circular(24),
+        size: artworkSize,
+        radius: BorderRadius.circular(artworkSize / 2),
         icon: Icons.person_outline,
       ),
       title: _artist.name,
