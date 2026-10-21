@@ -199,6 +199,9 @@ jobs:
             artifacts/mops-macos.tar.gz
             artifacts/mops-installer/*.exe
           fail_on_unmatched_files: false
+          # Тег с дефисом (`v0.2.13-beta.1`) — предрелиз: он не должен вставать
+          # как «последний релиз» и не должен предлагаться стабильным сборкам.
+          prerelease: ${{ contains(github.ref_name, '-') }}
           generate_release_notes: true
           body: |
             ## Как запустить
