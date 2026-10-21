@@ -747,6 +747,7 @@ class MediaKitEngine implements AudioEngine {
   /// `astats` визуализатора с меткой `mopsvis`), чтобы пересборка не снесла
   /// чужое.
   static const String _eqLabel = 'mopseq';
+  static const String _gainLabel = 'mopsgain';
   static const String _skipLabel = 'mopsskip';
   static const String _normLabel = 'mopsnorm';
 
@@ -757,6 +758,13 @@ class MediaKitEngine implements AudioEngine {
     65, 92, 131, 185, 262, 370, 523, 740, 1047, 1480, 2093, 2960,
     4186, 5920, 8372, 11840, 16744, 20000,
   ];
+
+  /// Допустимый диапазон усиления полос `superequalizer`. Параметры `Nb` у
+  /// него — линейный коэффициент, а не децибелы: 1 — полоса без изменения,
+  /// 0 — полоса вырезана, а верхняя граница в нашей сборке — 20 (mpv пишет
+  /// «out of range [0 - 20]»). Отсюда и потолок ограничения.
+  static const double _superEqualizerMinGain = 0;
+  static const double _superEqualizerMaxGain = 20;
 
   /// Параметры фильтра `silenceremove`: срезать тишину в начале и в середине.
   ///
@@ -865,19 +873,33 @@ class MediaKitEngine implements AudioEngine {
     final List<double> bands = _equalizerBands;
     if (bands.length != kEqualizerBandCount || equalizerIsFlat(bands)) return;
 
-    // Основной вариант — `superequalizer` (18 полос, кадровая обработка).
-    if (await MpvFilterProbe.supports('superequalizer', '1b=0')) {
-      final List<double> gains = _sampleSuperEqualizer(bands);
+    // Кривая остаётся в дБ до самой сборки строки: интерполяция между полосами
+    // в децибелах совпадает с тем, что видит человек на графике, а линейное
+    // усиление считается один раз — для фильтра.
+    final List<double> gains = _sampleSuperEqualizer(bands);
+    // Проверку `volume` заводим сразу: она идёт параллельно проверке
+    // эквалайзера, и первый подъём кривой не ждёт две паузы подряд.
+    final Future<bool> volumeSupported =
+        MpvFilterProbe.supports('volume', 'volume=-1.00dB');
+
+    // Основной вариант — `superequalizer` (18 полос, кадровая обработка),
+    // запасной — `equalizer`: одна параметрическая полоса на фильтр.
+    final bool hasSuper =
+        await MpvFilterProbe.supports('superequalizer', '1b=1');
+    final bool hasFallback = !hasSuper &&
+        await MpvFilterProbe.supports('equalizer', 'f=1000:t=q:w=1:g=0');
+    if (!hasSuper && !hasFallback) return;
+
+    if (hasSuper) {
       final String params = <String>[
         for (int i = 0; i < gains.length; i++)
-          '${i + 1}b=${gains[i].toStringAsFixed(2)}',
+          '${i + 1}b=${_superEqualizerGain(gains[i]).toStringAsFixed(2)}',
       ].join(':');
       own.add('@$_eqLabel:superequalizer=$params');
-      return;
-    }
-    // Запасной — `equalizer`: одна параметрическая полоса на фильтр. Полосы
-    // метим отдельными метками: одно имя на несколько фильтров mpv не даёт.
-    if (await MpvFilterProbe.supports('equalizer', 'f=1000:t=q:w=1:g=0')) {
+    } else {
+      // У `equalizer` параметр `g` действительно в децибелах, поэтому
+      // конвертация не нужна. Полосы метим отдельными метками: одно имя на
+      // несколько фильтров mpv не даёт.
       for (int i = 0; i < kEqualizerBandCount; i++) {
         own.add(
           '@$_eqLabel${i + 1}:equalizer='
@@ -886,11 +908,28 @@ class MediaKitEngine implements AudioEngine {
         );
       }
     }
+
+    // Запас по громкости: полосы складываются, и подъём кривой уводит пики за
+    // ноль. Опускаем весь тракт на самый большой подъём — пресет звучит тише,
+    // но не режет верх. Плоскую кривую сюда не пускает проверка выше.
+    final double peakDb = gains.reduce(math.max);
+    if (peakDb > 0 && await volumeSupported) {
+      final String attenuation = (-peakDb).toStringAsFixed(2);
+      own.add('@$_gainLabel:volume=volume=${attenuation}dB');
+    }
   }
+
+  /// Переводит децибелы в линейное усиление полосы `superequalizer`.
+  static double _superEqualizerGain(double db) =>
+      math.pow(10, db / 20).toDouble().clamp(
+            _superEqualizerMinGain,
+            _superEqualizerMaxGain,
+          ).toDouble();
 
   /// Раскладывает 10-полосную кривую по 18 фиксированным полосам
   /// `superequalizer`: значение в полосе фильтра — линейная интерполяция между
-  /// соседними полосами эквалайзера в логарифмической шкале частот.
+  /// соседними полосами эквалайзера в логарифмической шкале частот. Результат
+  /// в дБ — в линейное усиление его переводит [_superEqualizerGain].
   static List<double> _sampleSuperEqualizer(List<double> bands) => <double>[
         for (final double frequency in _superEqualizerFrequencies)
           _gainAt(bands, frequency),
@@ -925,6 +964,7 @@ class MediaKitEngine implements AudioEngine {
   static bool _isOwnedFilter(String segment) {
     final String text = segment.trim();
     return text.startsWith('@$_eqLabel') ||
+        text.startsWith('@$_gainLabel') ||
         text.startsWith('@$_skipLabel') ||
         text.startsWith('@$_normLabel');
   }

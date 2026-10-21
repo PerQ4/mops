@@ -24,15 +24,17 @@ class EqualizerPreset {
 
 const List<EqualizerPreset> kEqualizerPresets = <EqualizerPreset>[
   EqualizerPreset('flat', 'Плоский', kEqualizerFlatBands),
-  EqualizerPreset('bass', 'Бас', <double>[7, 6, 5, 3, 1, 0, 0, 0, 0, 0]),
-  EqualizerPreset('vocal', 'Вокал', <double>[-3, -2, -1, 1, 3, 4, 3, 1, 0, -1]),
-  EqualizerPreset('rock', 'Рок', <double>[5, 4, 2, 0, -1, 0, 2, 4, 5, 5]),
-  EqualizerPreset('pop', 'Поп', <double>[-1, 0, 2, 4, 4, 2, 0, -1, -1, -2]),
-  EqualizerPreset('jazz', 'Джаз', <double>[3, 2, 1, 2, -1, -1, 0, 1, 2, 3]),
+  EqualizerPreset('bass', 'Бас', <double>[6, 5, 4, 2, 1, 0, 0, 0, 0, 0]),
+  // Голос живёт в 1–4 кГц: низ режем, середину поднимаем, иначе слова тонут
+  // под басом и тарелками.
+  EqualizerPreset('vocal', 'Вокал', <double>[-4, -3, -2, 1, 4, 5, 4, 3, 0, -2]),
+  EqualizerPreset('rock', 'Рок', <double>[5, 4, 2, 0, -2, -1, 1, 3, 5, 6]),
+  EqualizerPreset('pop', 'Поп', <double>[-2, 0, 2, 3, 4, 2, 0, -1, -2, -2]),
+  EqualizerPreset('jazz', 'Джаз', <double>[3, 3, 1, 1, 0, -2, -2, 0, 2, 2]),
   EqualizerPreset('classical', 'Классика',
-      <double>[4, 3, 2, 0, -1, -1, 0, 2, 3, 4]),
+      <double>[0, 0, 0, -1, -1, 1, 1, 2, 3, 3]),
   EqualizerPreset('electronic', 'Электроника',
-      <double>[5, 4, 1, 0, -2, 0, 1, 2, 5, 6]),
+      <double>[6, 5, 2, 0, -2, 1, 1, 3, 5, 4]),
 ];
 
 /// Пресет по имени; неизвестное имя — плоский.
