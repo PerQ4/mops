@@ -10,6 +10,7 @@ import 'package:flutter/scheduler.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 
 import '../../data/local/app_settings.dart';
+import '../../core/theme/motion.dart';
 import '../../data/models/models.dart';
 import '../../data/sources/romanization.dart';
 import '../../state/catalog_providers.dart';
@@ -95,11 +96,9 @@ double tableValue(List<double> table, double index) {
   return table[low] + (table[low + 1] - table[low]) * t;
 }
 
-/// Анимации строк (`LyricsV2.kt:600-617`).
-const int _scaleDurationMs = 166;
-const int _alphaActiveMs = 330;
-const int _alphaIdleMs = 500;
-const int _blurDurationMs = 300;
+// Длительности и кривые анимаций строк (`LyricsV2.kt:600-617`) вынесены в
+// словарь движений — `AppMotion.lyricsLineScale` и соседние: так их можно
+// выключить одной настройкой, а не править здесь по одной.
 
 /// Оформление «караоке» (`LyricsV2.kt:1207-1228`).
 const double _wordBounceFactor = 1;
@@ -836,8 +835,8 @@ class _PlainLyricsState extends ConsumerState<_PlainLyrics> {
       if (lineContext == null) return;
       Scrollable.ensureVisible(
         lineContext,
-        duration: const Duration(milliseconds: 320),
-        curve: Curves.easeOutCubic,
+        duration: AppMotion.lyricsScroll.duration,
+        curve: AppMotion.lyricsScroll.curve,
         alignment: _viewportAnchor,
       );
     });
@@ -1645,6 +1644,9 @@ class _LyricLine extends StatelessWidget {
     final double targetAlpha = _alpha;
     final double targetBlur = _blur;
     final double targetScale = active ? 1 : 0.95;
+    final MotionTransition lineFade = active
+        ? AppMotion.lyricsLineFadeIn
+        : AppMotion.lyricsLineFadeOut;
 
     final Widget body = Padding(
       padding: padding,
@@ -1652,21 +1654,21 @@ class _LyricLine extends StatelessWidget {
         // Прозрачность: активная строка загорается за 330 мс, гаснет за 500 мс
         // (`LyricsV2.kt:609-617`).
         tween: Tween<double>(begin: targetAlpha, end: targetAlpha),
-        duration: Duration(milliseconds: active ? _alphaActiveMs : _alphaIdleMs),
-        curve: Curves.fastOutSlowIn,
+        duration: lineFade.duration,
+        curve: lineFade.curve,
         builder: (BuildContext context, double alpha, Widget? _) {
           return TweenAnimationBuilder<double>(
             // Размытие: 300 мс (`LyricsV2.kt:591-599`).
             tween: Tween<double>(begin: targetBlur, end: targetBlur),
-            duration: const Duration(milliseconds: _blurDurationMs),
-            curve: Curves.fastOutSlowIn,
+            duration: AppMotion.lyricsLineBlur.duration,
+            curve: AppMotion.lyricsLineBlur.curve,
             builder: (BuildContext context, double blur, Widget? _) {
               return TweenAnimationBuilder<double>(
                 // Масштаб: 166 мс, 1.0 у активной и 0.95 у остальных
                 // (`LyricsV2.kt:600-608`).
                 tween: Tween<double>(begin: targetScale, end: targetScale),
-                duration: const Duration(milliseconds: _scaleDurationMs),
-                curve: Curves.fastOutSlowIn,
+                duration: AppMotion.lyricsLineScale.duration,
+                curve: AppMotion.lyricsLineScale.curve,
                 builder: (BuildContext context, double scaleValue, Widget? _) {
                   Widget content = active && words.isNotEmpty && !search.isActive
                       ? _karaoke(scheme)
@@ -1856,6 +1858,9 @@ class _InterludeLine extends StatelessWidget {
     final double targetAlpha = _alpha;
     final double targetBlur = _blur;
     final double targetScale = active ? 1 : 0.95;
+    final MotionTransition lineFade = active
+        ? AppMotion.lyricsLineFadeIn
+        : AppMotion.lyricsLineFadeOut;
 
     return Padding(
       padding: padding,
@@ -1863,21 +1868,21 @@ class _InterludeLine extends StatelessWidget {
         // Прозрачность: активная строка загорается за 330 мс, гаснет за 500 мс
         // (`LyricsV2.kt:609-617`).
         tween: Tween<double>(begin: targetAlpha, end: targetAlpha),
-        duration: Duration(milliseconds: active ? _alphaActiveMs : _alphaIdleMs),
-        curve: Curves.fastOutSlowIn,
+        duration: lineFade.duration,
+        curve: lineFade.curve,
         builder: (BuildContext context, double alpha, Widget? _) {
           return TweenAnimationBuilder<double>(
             // Размытие: 300 мс (`LyricsV2.kt:591-599`).
             tween: Tween<double>(begin: targetBlur, end: targetBlur),
-            duration: const Duration(milliseconds: _blurDurationMs),
-            curve: Curves.fastOutSlowIn,
+            duration: AppMotion.lyricsLineBlur.duration,
+            curve: AppMotion.lyricsLineBlur.curve,
             builder: (BuildContext context, double blur, Widget? _) {
               return TweenAnimationBuilder<double>(
                 // Масштаб: 166 мс, 1.0 у активной и 0.95 у остальных
                 // (`LyricsV2.kt:600-608`).
                 tween: Tween<double>(begin: targetScale, end: targetScale),
-                duration: const Duration(milliseconds: _scaleDurationMs),
-                curve: Curves.fastOutSlowIn,
+                duration: AppMotion.lyricsLineScale.duration,
+                curve: AppMotion.lyricsLineScale.curve,
                 builder: (BuildContext context, double scaleValue, Widget? _) {
                   Widget note = ValueListenableBuilder<int>(
                     valueListenable: positionMs,

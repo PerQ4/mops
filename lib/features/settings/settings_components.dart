@@ -227,6 +227,7 @@ class SettingsSwitchRow extends StatelessWidget {
     this.subtitle,
     this.accent,
     this.subtitleMaxLines = 1,
+    this.enabled = true,
   });
 
   final IconData icon;
@@ -237,6 +238,11 @@ class SettingsSwitchRow extends StatelessWidget {
   final Color? accent;
   final int? subtitleMaxLines;
 
+  /// Можно ли переключать. `false` — настройка показана, но платформа её не
+  /// выполняет: переключатель гаснет, а подпись объясняет причину. Так честнее,
+  /// чем прятать пункт или делать вид, что он работает.
+  final bool enabled;
+
   @override
   Widget build(BuildContext context) {
     return _SettingsRowBase(
@@ -245,8 +251,8 @@ class SettingsSwitchRow extends StatelessWidget {
       subtitle: subtitle,
       subtitleMaxLines: subtitleMaxLines,
       accent: accent,
-      onTap: () => onChanged(!value),
-      trailing: Switch(value: value, onChanged: onChanged),
+      onTap: enabled ? () => onChanged(!value) : null,
+      trailing: Switch(value: value, onChanged: enabled ? onChanged : null),
     );
   }
 }

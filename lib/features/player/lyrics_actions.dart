@@ -4,6 +4,7 @@ import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:url_launcher/url_launcher.dart';
 
+import '../../core/theme/motion.dart';
 import '../../core/utils/format.dart';
 import '../../data/local/app_settings.dart';
 import '../../data/models/models.dart';
@@ -1214,8 +1215,8 @@ class _ResultCard extends StatelessWidget {
                 const _PreviewPlaceholder()
               else
                 AnimatedSize(
-                  duration: const Duration(milliseconds: 160),
-                  curve: Curves.easeOut,
+                  duration: AppMotion.fadeSmall.duration,
+                  curve: AppMotion.fadeSmall.curve,
                   alignment: Alignment.topCenter,
                   child: Text(
                     info.preview,

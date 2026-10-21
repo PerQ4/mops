@@ -2,6 +2,7 @@ import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 
 import '../../core/theme/layout.dart';
+import '../../core/theme/motion.dart';
 import '../../core/utils/format.dart';
 import '../../data/local/app_settings.dart';
 import '../../data/models/models.dart';
@@ -112,9 +113,9 @@ class _LibrarySidebarState extends ConsumerState<LibrarySidebar> {
     // Во время перетаскивания анимация выключена — панель идёт за курсором.
     return AnimatedContainer(
       duration: _dragging == null
-          ? const Duration(milliseconds: 220)
+          ? AppMotion.resizeFast.duration
           : Duration.zero,
-      curve: Curves.easeOutCubic,
+      curve: AppMotion.resizeFast.curve,
       width: collapsed ? AppLayout.sidebarCollapsedWidth : expanded,
       child: Material(
         color: scheme.surfaceContainer,
@@ -984,8 +985,8 @@ class _LibraryRowState extends State<_LibraryRow> {
                   ),
                 ),
                 AnimatedSize(
-                  duration: const Duration(milliseconds: 150),
-                  curve: Curves.easeOutCubic,
+                  duration: AppMotion.rowActions.duration,
+                  curve: AppMotion.rowActions.curve,
                   alignment: Alignment.centerRight,
                   child: showActions
                       ? Row(

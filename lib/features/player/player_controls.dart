@@ -8,6 +8,7 @@ import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:material_3_expressive/material_3_expressive.dart' as m3e;
 
 import '../../core/audio/audio_engine.dart';
+import '../../core/theme/motion.dart';
 import '../../core/utils/format.dart';
 import '../../data/local/app_settings.dart';
 import '../../state/player_controller.dart';
@@ -904,8 +905,8 @@ class _TransportPlayButton extends StatelessWidget {
         width: size,
         height: size,
         child: AnimatedContainer(
-          duration: const Duration(milliseconds: 90),
-          curve: Curves.linear,
+          duration: AppMotion.controlMorph.duration,
+          curve: AppMotion.controlMorph.curve,
           decoration: BoxDecoration(color: fill, borderRadius: shape),
           child: Material(
             type: MaterialType.transparency,

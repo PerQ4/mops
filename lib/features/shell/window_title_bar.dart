@@ -6,6 +6,7 @@ import 'package:flutter/services.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 
 import '../../data/local/app_settings.dart';
+import '../../core/theme/motion.dart';
 import '../../state/player_controller.dart';
 import '../../state/providers.dart';
 import '../../state/shell.dart';
@@ -238,8 +239,8 @@ class _CircleButtonState extends State<_CircleButton> {
           onTapUp: (_) => setState(() => _pressed = false),
           onTapCancel: () => setState(() => _pressed = false),
           child: AnimatedContainer(
-            duration: const Duration(milliseconds: 120),
-            curve: Curves.easeOut,
+            duration: AppMotion.quickChange.duration,
+            curve: AppMotion.quickChange.curve,
             width: 28,
             height: 28,
             decoration: BoxDecoration(

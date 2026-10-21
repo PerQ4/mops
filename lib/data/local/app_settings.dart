@@ -396,6 +396,8 @@ class AppSettings {
     this.useMaterialExpressive = true,
     this.pureBlack = false,
     this.paletteStyle = PaletteStylePreference.tonal,
+    this.disableAnimations = false,
+    this.forceHighRefreshRate = false,
     this.playerPanelWidth = 280,
     this.playerPanelMode = RightPanelMode.queue,
     this.sidebarWidth = 280,
@@ -479,6 +481,21 @@ class AppSettings {
   final ColorSource colorSource;
   final int seedColorIndex;
   final bool useMaterialExpressive;
+
+  /// Отключить анимации (задача 7.3).
+  ///
+  /// Когда включено, все длительности из `AppMotion` становятся нулевыми:
+  /// переходы и раскрытия происходят мгновенно. Значение переживает
+  /// перезапуск, как и остальные настройки.
+  final bool disableAnimations;
+
+  /// Просить у платформы максимальную частоту обновления (7.3).
+  ///
+  /// Флаг хранится для платформ, которые умеют такой запрос (в ArchiveTune —
+  /// `force_high_refresh_rate` для Android). На десктопе запроса нет:
+  /// приложение и так рисует с частотой экрана, поэтому в настройках пункт
+  /// показан неактивным с пояснением, а не выключенным «насовсем».
+  final bool forceHighRefreshRate;
 
   /// Откуда брать текст песни.
   final LyricsSource lyricsSource;
@@ -729,6 +746,8 @@ class AppSettings {
     bool? useMaterialExpressive,
     bool? pureBlack,
     PaletteStylePreference? paletteStyle,
+    bool? disableAnimations,
+    bool? forceHighRefreshRate,
     double? playerPanelWidth,
     RightPanelMode? playerPanelMode,
     double? sidebarWidth,
@@ -798,6 +817,8 @@ class AppSettings {
       useMaterialExpressive: useMaterialExpressive ?? this.useMaterialExpressive,
       pureBlack: pureBlack ?? this.pureBlack,
       paletteStyle: paletteStyle ?? this.paletteStyle,
+      disableAnimations: disableAnimations ?? this.disableAnimations,
+      forceHighRefreshRate: forceHighRefreshRate ?? this.forceHighRefreshRate,
       playerPanelWidth: playerPanelWidth ?? this.playerPanelWidth,
       playerPanelMode: playerPanelMode ?? this.playerPanelMode,
       sidebarWidth: sidebarWidth ?? this.sidebarWidth,
@@ -872,6 +893,8 @@ class AppSettings {
         'useMaterialExpressive': useMaterialExpressive,
         'pureBlack': pureBlack,
         'paletteStyle': paletteStyle.name,
+        'disableAnimations': disableAnimations,
+        'forceHighRefreshRate': forceHighRefreshRate,
         'playerPanelWidth': playerPanelWidth,
         'playerPanelMode': playerPanelMode.name,
         'sidebarWidth': sidebarWidth,
@@ -948,6 +971,8 @@ class AppSettings {
       pureBlack: json['pureBlack'] as bool? ?? false,
       paletteStyle:
           PaletteStylePreference.fromName(json['paletteStyle'] as String?),
+      disableAnimations: json['disableAnimations'] as bool? ?? false,
+      forceHighRefreshRate: json['forceHighRefreshRate'] as bool? ?? false,
       playerPanelWidth: (json['playerPanelWidth'] as num?)?.toDouble() ?? 280,
       playerPanelMode:
           RightPanelMode.fromName(json['playerPanelMode'] as String?),

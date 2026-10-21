@@ -5,6 +5,7 @@ import 'package:flutter/services.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:material_3_expressive/material_3_expressive.dart' as m3e;
 
+import '../../core/theme/motion.dart';
 import '../../data/models/models.dart';
 import '../../data/sources/catalog_source.dart';
 import '../../state/catalog_providers.dart';
@@ -63,8 +64,10 @@ class _CommandPaletteRoute extends PageRouteBuilder<void> {
         barrierDismissible: true,
         barrierLabel: 'Закрыть поиск',
         barrierColor: barrierColor,
-        transitionDuration: const Duration(milliseconds: 200),
-        reverseTransitionDuration: const Duration(milliseconds: 150),
+        transitionDuration: AppMotion.overlayEnter.duration,
+        reverseTransitionDuration:
+            AppMotion.overlayEnter.reverseDuration ??
+                AppMotion.overlayEnter.duration,
         pageBuilder: (
           BuildContext context,
           Animation<double> animation,
@@ -77,21 +80,11 @@ class _CommandPaletteRoute extends PageRouteBuilder<void> {
               Animation<double> secondaryAnimation,
               Widget child,
             ) {
-              final CurvedAnimation curved = CurvedAnimation(
-                parent: animation,
-                curve: Curves.easeOutCubic,
-                reverseCurve: Curves.easeInCubic,
-              );
               // Панель «всплывает» сверху — как поиск на рабочем столе.
-              return FadeTransition(
-                opacity: curved,
-                child: SlideTransition(
-                  position: Tween<Offset>(
-                    begin: const Offset(0, -0.04),
-                    end: Offset.zero,
-                  ).animate(curved),
-                  child: child,
-                ),
+              return AppMotion.overlayEnter.routeTransition(
+                animation: animation,
+                begin: const Offset(0, -0.04),
+                child: child,
               );
             },
       );

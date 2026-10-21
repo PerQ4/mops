@@ -4,6 +4,7 @@ import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 
 import '../../core/theme/layout.dart';
+import '../../core/theme/motion.dart';
 import '../../data/local/app_settings.dart';
 import '../../data/models/models.dart';
 import '../../state/auth_controller.dart';
@@ -133,8 +134,8 @@ class _FloatingDockState extends ConsumerState<FloatingDock> {
     // плеера раскрывается вправо — он теперь справа от навигации. Якорь по
     // левому краю (стыку): островок словно выезжает из-под навигации вправо.
     final Widget playerIsland = AnimatedSize(
-      duration: const Duration(milliseconds: 260),
-      curve: Curves.easeOutCubic,
+      duration: AppMotion.panelResize.duration,
+      curve: AppMotion.panelResize.curve,
       alignment: Alignment.centerLeft,
       child: showPlayerIsland
           ? _PlayerIsland(swipe: _swipe, navHidden: !showNavIsland)
@@ -311,8 +312,8 @@ class _NavButton extends StatelessWidget {
           onTap: onTap,
           borderRadius: pillRadius,
           child: AnimatedContainer(
-            duration: const Duration(milliseconds: 220),
-            curve: Curves.easeOutCubic,
+            duration: AppMotion.resizeFast.duration,
+            curve: AppMotion.resizeFast.curve,
             height: pillHeight,
             padding: EdgeInsets.symmetric(horizontal: selected ? 16 : 14),
             decoration: BoxDecoration(
@@ -332,8 +333,8 @@ class _NavButton extends StatelessWidget {
                 // Название показываем только у выбранного пункта: список
                 // остаётся компактным, но видно, где находишься.
                 AnimatedSize(
-                  duration: const Duration(milliseconds: 220),
-                  curve: Curves.easeOutCubic,
+                  duration: AppMotion.resizeFast.duration,
+                  curve: AppMotion.resizeFast.curve,
                   alignment: Alignment.centerLeft,
                   child: selected
                       ? Padding(
@@ -555,11 +556,12 @@ class _PlayerIslandState extends ConsumerState<_PlayerIsland> {
       onTap: () => AppRoutes.nowPlaying(context),
       child: AnimatedContainer(
         // Пока ведём пальцем — следуем за ним без задержки; после отпускания
-        // островок возвращается на место пружиной (`easeOutBack` даёт лёгкий
-        // «перелёт», как у выразительных компонентов Material 3).
+        // островок возвращается на место пружиной ([AppMotion.dockReturn]:
+        // `easeOutBack` даёт лёгкий «перелёт», как у выразительных компонентов
+        // Material 3).
         duration:
-            _dragging ? Duration.zero : const Duration(milliseconds: 280),
-        curve: Curves.easeOutBack,
+            _dragging ? Duration.zero : AppMotion.dockReturn.duration,
+        curve: AppMotion.dockReturn.curve,
         transform: Matrix4.translationValues(
           // Влево — едем вместе с обрезкой: капсула уходит под навигацию, а
           // левый край (обрез) остаётся на её границе. Вправо — лёгкий сдвиг,
@@ -894,8 +896,8 @@ class _DockPanel extends ConsumerWidget {
     final ColorScheme scheme = Theme.of(context).colorScheme;
 
     return AnimatedSize(
-      duration: const Duration(milliseconds: 240),
-      curve: Curves.easeOutCubic,
+      duration: AppMotion.dockPanel.duration,
+      curve: AppMotion.dockPanel.curve,
       alignment: Alignment.bottomCenter,
       child: mode == PlayerPanelMode.none || track == null
           ? const SizedBox(width: FloatingDock.panelWidth)

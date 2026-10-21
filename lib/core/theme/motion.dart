@@ -21,6 +21,11 @@
 /// `reverseDuration`, `curve`, `reverseCurve`, — поэтому переход вставляется в
 /// виджет без пересчёта. Смысл словаря в том, что одинаковые действия
 /// (появление, уход, нажатие) на разных экранах берут один и тот же переход.
+///
+/// Значения отдаются геттерами, а не константами: у приложения есть настройка
+/// «Отключить анимации» (задача 7.3), и тогда любая длительность из словаря
+/// становится нулевой. Из-за этого [AppMotion] нельзя использовать в `const`
+/// выражениях.
 library;
 
 import 'package:flutter/material.dart';
@@ -84,7 +89,8 @@ abstract final class MotionDuration {
 /// Кривые motion-схемы M3 Expressive.
 ///
 /// Сначала обычные — для цвета, прозрачности и служебных поверхностей; затем
-/// expressive-пространственные, которые и дают «отдачу».
+/// expressive-пространственные, которые и дают «отдачу»; в конце — несколько
+/// стандартных кривых Flutter для переходов, у которых свой характер.
 abstract final class MotionCurve {
   /// Обычная кривая: подходит всему, что не должно бросаться в глаза.
   static const Curve standard = m3e.M3EMotion.standard;
@@ -121,6 +127,29 @@ abstract final class MotionCurve {
   /// Та же отдача, но для цвета и прозрачности — без перелёта через цель:
   /// прозрачность за границей 0…1 всё равно обрезалась бы.
   static const Curve expressiveEffects = Cubic(0.34, 0.8, 0.34, 1);
+
+  // Ниже — стандартные кривые Flutter. Они не из expressive-схемы, но у части
+  // движений (переходы маршрутов, прокрутка текста, смена формы кнопки) свой
+  // характер, и expressive-кривая его бы изменила. Имена совпадают с
+  // `Curves.*`, чтобы связь с исходной кривой была видна без перевода.
+
+  /// Кривая на торможение: движение «доходит» до цели.
+  static const Curve easeOutCubic = Curves.easeOutCubic;
+
+  /// Кривая на разгон — обратный ход перехода маршрута.
+  static const Curve easeInCubic = Curves.easeInCubic;
+
+  /// Мягкая кривая на торможение — подсветка и мелкие сдвиги.
+  static const Curve easeOut = Curves.easeOut;
+
+  /// Кривая с перелётом через цель — отдача после жеста.
+  static const Curve easeOutBack = Curves.easeOutBack;
+
+  /// Равномерное движение — там, где важна только конечная точка.
+  static const Curve linear = Curves.linear;
+
+  /// Плавное начало и торможение — ступенчатые переходы строки текста песни.
+  static const Curve fastOutSlowIn = Curves.fastOutSlowIn;
 }
 
 /// Именованный переход: длительность и кривая одним значением.
@@ -147,6 +176,18 @@ class MotionTransition {
 
   /// Кривая обратного хода; не задана — обратный ход идёт как прямой.
   final Curve? reverseCurve;
+
+  /// Тот же переход без движения.
+  ///
+  /// Нужен настройке «Отключить анимации»: длительности обнуляются, а кривые
+  /// остаются — `CurvedAnimation` с нулевой длительностью просто сразу выдаёт
+  /// конечный кадр, и виджеты не успевают показать промежуточное положение.
+  MotionTransition get instant => MotionTransition(
+    duration: Duration.zero,
+    reverseDuration: Duration.zero,
+    curve: curve,
+    reverseCurve: reverseCurve,
+  );
 
   /// Прямая кривая как `Animatable` — для `animation.drive(...)`.
   ///
@@ -180,26 +221,79 @@ class MotionTransition {
       child: child,
     );
   }
+
+  /// Переход маршрута: проявление и сдвиг из [begin] в ноль.
+  ///
+  /// Один помощник вместо связки `FadeTransition` + `SlideTransition` +
+  /// `CurvedAnimation`, которая дублировалась в `navigation.dart` и
+  /// `command_palette.dart`. Вызов стоит в `transitionsBuilder`, где виджет
+  /// перестраивается вместе с анимацией, поэтому `CurvedAnimation` здесь
+  /// уместен.
+  Widget routeTransition({
+    required Animation<double> animation,
+    required Offset begin,
+    required Widget child,
+  }) {
+    final CurvedAnimation curved = CurvedAnimation(
+      parent: animation,
+      curve: curve,
+      reverseCurve: reverseCurve ?? curve,
+    );
+    return FadeTransition(
+      opacity: curved,
+      child: SlideTransition(
+        position: Tween<Offset>(begin: begin, end: Offset.zero).animate(curved),
+        child: child,
+      ),
+    );
+  }
 }
 
 /// Переходы, которыми размечены действия в приложении.
+///
+/// Каждый переход — геттер, поэтому при включённой настройке «Отключить
+/// анимации» он отдаётся мгновенным (см. [animationsDisabled]).
 abstract final class AppMotion {
+  /// Выключены ли анимации (задача 7.3).
+  ///
+  /// Общая переменная, а не параметр: словарь читают места без доступа к
+  /// `ref` — переходы навигатора, `Scrollable.ensureVisible`, — как и
+  /// `artworkLowDataMode` в утилитах обложек. Настройки выставляют её при
+  /// каждой смене, поэтому первый же перестроенный виджет берёт новые
+  /// значения.
+  static bool animationsDisabled = false;
+
+  /// Переход как есть или мгновенный, если анимации выключены.
+  static MotionTransition _motion(MotionTransition motion) =>
+      animationsDisabled ? motion.instant : motion;
+
+  /// Длительность как есть или нулевая, если анимации выключены.
+  static Duration _time(Duration duration) =>
+      animationsDisabled ? Duration.zero : duration;
+
+  // ------------------------------------------------------------ переезды
+
   /// Элемент переезжает на новое место: карточка меняет позицию, лента
   /// прокручивается на элемент.
-  static const MotionTransition elementMove = MotionTransition(
+  static MotionTransition get elementMove => _motion(_elementMove);
+  static const MotionTransition _elementMove = MotionTransition(
     duration: MotionDuration.long2,
     curve: MotionCurve.expressiveSpatial,
   );
 
   /// Короткий переезд: сдвиг на строку, подъём кнопки — резче обычного.
-  static const MotionTransition elementMoveSmall = MotionTransition(
+  static MotionTransition get elementMoveSmall => _motion(_elementMoveSmall);
+  static const MotionTransition _elementMoveSmall = MotionTransition(
     duration: MotionDuration.medium3,
     curve: MotionCurve.expressiveFastSpatial,
   );
 
+  // ------------------------------------------------- появление и уход
+
   /// Элемент появляется: вперёд — с торможением, назад (уход) — по обычной
   /// быстрой кривой. Один переход закрывает обе половины `AnimatedSwitcher`.
-  static const MotionTransition elementMoveEnter = MotionTransition(
+  static MotionTransition get elementMoveEnter => _motion(_elementMoveEnter);
+  static const MotionTransition _elementMoveEnter = MotionTransition(
     duration: MotionDuration.medium4,
     curve: MotionCurve.emphasizedDecelerate,
     reverseDuration: MotionDuration.short4,
@@ -208,7 +302,8 @@ abstract final class AppMotion {
 
   /// Элемент уходит — тот же переход, читаемый от ухода: если экран сам
   /// называет, чем он закрывается, брать надо этот.
-  static const MotionTransition elementMoveExit = MotionTransition(
+  static MotionTransition get elementMoveExit => _motion(_elementMoveExit);
+  static const MotionTransition _elementMoveExit = MotionTransition(
     duration: MotionDuration.short4,
     curve: MotionCurve.emphasizedAccelerate,
     reverseDuration: MotionDuration.medium4,
@@ -216,59 +311,202 @@ abstract final class AppMotion {
   );
 
   /// Элемент меняет размер или форму.
-  static const MotionTransition elementResize = MotionTransition(
+  static MotionTransition get elementResize => _motion(_elementResize);
+  static const MotionTransition _elementResize = MotionTransition(
     duration: MotionDuration.medium2,
     curve: MotionCurve.emphasized,
+  );
+
+  /// Появление подэкрана: проявляется и чуть поднимается. Обратный ход —
+  /// тем же характером, поэтому у перехода своя обратная кривая.
+  static MotionTransition get pageEnter => _motion(_pageEnter);
+  static const MotionTransition _pageEnter = MotionTransition(
+    duration: Duration(milliseconds: 260),
+    curve: MotionCurve.easeOutCubic,
+    reverseDuration: Duration(milliseconds: 200),
+    reverseCurve: MotionCurve.easeInCubic,
+  );
+
+  /// Появление панели поверх экрана — палитра команд.
+  static MotionTransition get overlayEnter => _motion(_overlayEnter);
+  static const MotionTransition _overlayEnter = MotionTransition(
+    duration: Duration(milliseconds: 200),
+    curve: MotionCurve.easeOutCubic,
+    reverseDuration: Duration(milliseconds: 150),
+    reverseCurve: MotionCurve.easeInCubic,
+  );
+
+  /// Раскрытие и сворачивание блока изменением размера: островок плеера и
+  /// правая панель. От [elementResize] отличается только длительностью —
+  /// здесь важна быстрота, а не подчёркнутая expressive-кривая.
+  static MotionTransition get panelResize => _motion(_panelResize);
+  static const MotionTransition _panelResize = MotionTransition(
+    duration: Duration(milliseconds: 260),
+    curve: MotionCurve.easeOutCubic,
+  );
+
+  /// Раскрытие панели вверх из островка плеера.
+  static MotionTransition get dockPanel => _motion(_dockPanel);
+  static const MotionTransition _dockPanel = MotionTransition(
+    duration: Duration(milliseconds: 240),
+    curve: MotionCurve.easeOutCubic,
+  );
+
+  /// Быстрое изменение размера: ширина боковой панели, подсветка выбранного
+  /// пункта навигации и раскрытие его подписи.
+  static MotionTransition get resizeFast => _motion(_resizeFast);
+  static const MotionTransition _resizeFast = MotionTransition(
+    duration: Duration(milliseconds: 220),
+    curve: MotionCurve.easeOutCubic,
+  );
+
+  /// Появление кнопок действия в строке списка.
+  static MotionTransition get rowActions => _motion(_rowActions);
+  static const MotionTransition _rowActions = MotionTransition(
+    duration: Duration(milliseconds: 150),
+    curve: MotionCurve.easeOutCubic,
+  );
+
+  /// Быстрая смена цвета или прозрачности: кнопки своей шапки окна и кнопки
+  /// поверх встроенного браузера.
+  static MotionTransition get quickChange => _motion(_quickChange);
+  static const MotionTransition _quickChange = MotionTransition(
+    duration: Duration(milliseconds: 120),
+    curve: MotionCurve.easeOut,
+  );
+
+  /// Плавное раскрытие текста в нижней панели текста песни.
+  static MotionTransition get fadeSmall => _motion(_fadeSmall);
+  static const MotionTransition _fadeSmall = MotionTransition(
+    duration: Duration(milliseconds: 160),
+    curve: MotionCurve.easeOut,
+  );
+
+  /// Плавный перевод градиента фона полноэкранного плеера при смене трека.
+  static MotionTransition get backdropShift => _motion(_backdropShift);
+  static const MotionTransition _backdropShift = MotionTransition(
+    duration: Duration(milliseconds: 900),
+    curve: MotionCurve.easeOutCubic,
+  );
+
+  /// Смена содержимого сцены плеера — обложка вместо текста. Кривая линейна,
+  /// как и по умолчанию у `AnimatedSwitcher`: содержимое здесь равноправно,
+  /// и подчёркивать одну из половин нечем.
+  static MotionTransition get stageSwitch => _motion(_stageSwitch);
+  static const MotionTransition _stageSwitch = MotionTransition(
+    duration: Duration(milliseconds: 220),
+    curve: MotionCurve.linear,
+  );
+
+  /// Смена формы кнопки воспроизведения.
+  static MotionTransition get controlMorph => _motion(_controlMorph);
+  static const MotionTransition _controlMorph = MotionTransition(
+    duration: Duration(milliseconds: 90),
+    curve: MotionCurve.linear,
   );
 
   /// Анимация крупного перелёта — обложка из карточки в плеер.
   ///
   /// Длительность задаёт маршрут, кривую — сам перелёт: в Flutter `Hero`
   /// летит по анимации маршрута, поэтому переход и нужен целиком.
-  static const MotionTransition heroFlight = MotionTransition(
+  static MotionTransition get heroFlight => _motion(_heroFlight);
+  static const MotionTransition _heroFlight = MotionTransition(
     duration: MotionDuration.long1,
     curve: MotionCurve.emphasizedDecelerate,
     reverseDuration: MotionDuration.medium2,
     reverseCurve: MotionCurve.emphasizedAccelerate,
   );
 
+  // --------------------------------------------------------------- нажатия
+
   /// Нажатие с отдачей: строка «проседает» под пальцем и пружинит обратно.
-  static const MotionTransition clickBounce = MotionTransition(
+  static MotionTransition get clickBounce => _motion(_clickBounce);
+  static const MotionTransition _clickBounce = MotionTransition(
     duration: MotionDuration.medium4,
     curve: MotionCurve.expressiveSpatial,
   );
 
   /// Наведение и подсветка: меняются цвет и прозрачность, без перелёта и без
   /// движения геометрии.
-  static const MotionTransition hoverFade = MotionTransition(
+  static MotionTransition get hoverFade => _motion(_hoverFade);
+  static const MotionTransition _hoverFade = MotionTransition(
     duration: MotionDuration.medium3,
     curve: MotionCurve.standard,
   );
 
   /// Возврат на место после жеста: строка списка из-под пальца, экран из-под
   /// свайпа «назад». Жест уже закончился, поэтому ход только тормозит.
-  static const MotionTransition snapBack = MotionTransition(
+  static MotionTransition get snapBack => _motion(_snapBack);
+  static const MotionTransition _snapBack = MotionTransition(
     duration: MotionDuration.short4,
     curve: MotionCurve.standardDecelerate,
   );
 
+  /// Возврат островка плеера после перетаскивания — с лёгким перелётом:
+  /// отдача, как у выразительных компонентов Material 3.
+  static MotionTransition get dockReturn => _motion(_dockReturn);
+  static const MotionTransition _dockReturn = MotionTransition(
+    duration: Duration(milliseconds: 280),
+    curve: MotionCurve.easeOutBack,
+  );
+
   /// Проявление обложки из кэша.
-  static const MotionTransition artworkFade = MotionTransition(
+  static MotionTransition get artworkFade => _motion(_artworkFade);
+  static const MotionTransition _artworkFade = MotionTransition(
     duration: MotionDuration.short3,
     curve: MotionCurve.standardDecelerate,
   );
 
-  // Прежние имена словаря. Часть кода (настройки) зовёт их напрямую, поэтому
-  // они остаются: значения теперь те же, что у схемы, а не подобранные на глаз.
+  // ------------------------------------------------------------ текст песни
+
+  /// Прокрутка текста к выбранной строке при поиске.
+  static MotionTransition get lyricsScroll => _motion(_lyricsScroll);
+  static const MotionTransition _lyricsScroll = MotionTransition(
+    duration: Duration(milliseconds: 320),
+    curve: MotionCurve.easeOutCubic,
+  );
+
+  /// Строка текста становится активной: она «загорается» быстрее, чем гаснет.
+  static MotionTransition get lyricsLineFadeIn => _motion(_lyricsLineFadeIn);
+  static const MotionTransition _lyricsLineFadeIn = MotionTransition(
+    duration: Duration(milliseconds: 330),
+    curve: MotionCurve.fastOutSlowIn,
+  );
+
+  /// Активная строка гаснет — медленнее, чем загорается.
+  static MotionTransition get lyricsLineFadeOut => _motion(_lyricsLineFadeOut);
+  static const MotionTransition _lyricsLineFadeOut = MotionTransition(
+    duration: Duration(milliseconds: 500),
+    curve: MotionCurve.fastOutSlowIn,
+  );
+
+  /// Размытие неактивной строки текста по расстоянию до активной.
+  static MotionTransition get lyricsLineBlur => _motion(_lyricsLineBlur);
+  static const MotionTransition _lyricsLineBlur = MotionTransition(
+    duration: Duration(milliseconds: 300),
+    curve: MotionCurve.fastOutSlowIn,
+  );
+
+  /// Масштаб строки текста: активная крупнее остальных.
+  static MotionTransition get lyricsLineScale => _motion(_lyricsLineScale);
+  static const MotionTransition _lyricsLineScale = MotionTransition(
+    duration: Duration(milliseconds: 166),
+    curve: MotionCurve.fastOutSlowIn,
+  );
+
+  // ------------------------------------------- прежние имена словаря
+
+  // Часть кода (настройки) зовёт их напрямую, поэтому они остаются: значения
+  // теперь те же, что у схемы, а не подобранные на глаз.
 
   /// Длительность мелкого отклика — 200 мс.
-  static const Duration fast = MotionDuration.short4;
+  static Duration get fast => _time(MotionDuration.short4);
 
   /// Длительность среднего движения — 300 мс.
-  static const Duration medium = MotionDuration.medium2;
+  static Duration get medium => _time(MotionDuration.medium2);
 
   /// Длительность крупного движения — 500 мс.
-  static const Duration slow = MotionDuration.long2;
+  static Duration get slow => _time(MotionDuration.long2);
 
   /// Кривая мелкого отклика — обычная кривая схемы.
   static const Curve snappy = MotionCurve.standard;

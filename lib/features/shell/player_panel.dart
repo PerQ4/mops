@@ -4,6 +4,7 @@ import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 
 import '../../core/theme/layout.dart';
+import '../../core/theme/motion.dart';
 import '../../data/local/app_settings.dart';
 import '../../state/providers.dart';
 import '../../core/utils/artwork_urls.dart';
@@ -76,9 +77,9 @@ class _PlayerRightPanelSlotState extends ConsumerState<PlayerRightPanelSlot> {
 
     return AnimatedContainer(
       duration: _dragging == null
-          ? const Duration(milliseconds: 260)
+          ? AppMotion.panelResize.duration
           : Duration.zero,
-      curve: Curves.easeOutCubic,
+      curve: AppMotion.panelResize.curve,
       width: widget.open ? width : 0,
       child: ClipRect(
         // Панель держим фиксированной ширины и «выезжаем» ею из-за края:

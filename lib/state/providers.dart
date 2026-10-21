@@ -10,6 +10,7 @@ import '../core/audio/audioplayers_engine.dart';
 import '../core/auth/token_store.dart';
 import '../core/innertube/innertube_client.dart';
 import '../core/net/anti_dpi.dart';
+import '../core/theme/motion.dart';
 import '../core/theme/seed_colors.dart';
 import '../core/theme/ui_scaler.dart';
 import '../core/utils/artwork_urls.dart';
@@ -63,6 +64,7 @@ class SettingsController extends Notifier<AppSettings> {
     final AppSettings settings = ref.watch(initialSettingsProvider);
     _publishContentFilter(settings);
     _publishLowDataMode(settings);
+    _publishMotion(settings);
     return settings;
   }
 
@@ -70,6 +72,7 @@ class SettingsController extends Notifier<AppSettings> {
     state = next;
     _publishContentFilter(next);
     _publishLowDataMode(next);
+    _publishMotion(next);
     final SharedPreferences prefs = ref.read(sharedPreferencesProvider);
     await prefs.setString(kSettingsKey, next.encode());
   }
@@ -88,6 +91,15 @@ class SettingsController extends Notifier<AppSettings> {
 
   Future<void> setUseMaterialExpressive(bool value) =>
       update((AppSettings s) => s.copyWith(useMaterialExpressive: value));
+
+  /// Отключить анимации: все длительности из словаря движений станут нулевыми.
+  Future<void> setDisableAnimations(bool value) =>
+      update((AppSettings s) => s.copyWith(disableAnimations: value));
+
+  /// Запрос высокой частоты обновления — платформа решает, может ли его
+  /// выполнить (на десктопе такой возможности нет, см. `AppSettings`).
+  Future<void> setForceHighRefreshRate(bool value) =>
+      update((AppSettings s) => s.copyWith(forceHighRefreshRate: value));
 
   Future<void> setLyricsSource(LyricsSource source) =>
       update((AppSettings s) => s.copyWith(lyricsSource: source));
@@ -394,6 +406,15 @@ void _publishContentFilter(AppSettings settings) {
 /// содержимого, значение кладётся в общую переменную при каждой смене настроек.
 void _publishLowDataMode(AppSettings settings) {
   artworkLowDataMode.value = settings.lowDataMode;
+}
+
+/// Передаёт настройку анимаций в словарь движений.
+///
+/// Длительности читаются из мест без `ref` (переходы навигатора,
+/// `Scrollable.ensureVisible`), поэтому флаг, как и два выше, живёт в общей
+/// переменной и обновляется при каждой смене настроек.
+void _publishMotion(AppSettings settings) {
+  AppMotion.animationsDisabled = settings.disableAnimations;
 }
 
 /// ---------------------------------------------------------------------------

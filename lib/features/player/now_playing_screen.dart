@@ -172,8 +172,7 @@ class _Stage extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
-    return AnimatedSwitcher(
-      duration: const Duration(milliseconds: 220),
+    return AppMotion.stageSwitch.switcher(
       child: showLyrics
           ? LyricsView(
               key: ValueKey<String>('lyr-${track.id}'),
@@ -463,8 +462,8 @@ class _GradientBackdrop extends StatelessWidget {
       children: <Widget>[
         // Плавно переводим градиент при смене трека или готовности палитры.
         AnimatedContainer(
-          duration: const Duration(milliseconds: 900),
-          curve: Curves.easeOutCubic,
+          duration: AppMotion.backdropShift.duration,
+          curve: AppMotion.backdropShift.curve,
           decoration: BoxDecoration(
             gradient: LinearGradient(
               begin: Alignment.topCenter,

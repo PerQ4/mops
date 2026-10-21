@@ -7,6 +7,7 @@ import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:url_launcher/url_launcher.dart';
 
 import '../../core/auth/inapp_login.dart';
+import '../../core/theme/motion.dart';
 import '../../core/webview/webview_environment.dart';
 import '../../data/models/models.dart';
 import '../../state/player_controller.dart';
@@ -558,8 +559,8 @@ class _OverlayButtonState extends State<_OverlayButton> {
           behavior: HitTestBehavior.opaque,
           onTap: widget.onTap,
           child: AnimatedContainer(
-            duration: const Duration(milliseconds: 120),
-            curve: Curves.easeOut,
+            duration: AppMotion.quickChange.duration,
+            curve: AppMotion.quickChange.curve,
             width: 40,
             height: 40,
             decoration: BoxDecoration(

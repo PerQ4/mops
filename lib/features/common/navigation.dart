@@ -1,5 +1,6 @@
 import 'package:flutter/material.dart';
 
+import '../../core/theme/motion.dart';
 import '../../data/models/models.dart';
 import '../album/album_screen.dart';
 import '../artist/artist_screen.dart';
@@ -7,6 +8,7 @@ import '../player/clip_screen.dart';
 import '../player/now_playing_screen.dart';
 import '../playlist/playlist_screen.dart';
 import '../search/search_results_screen.dart';
+import '../settings/about_screen.dart';
 import '../settings/account_screen.dart';
 import '../settings/backup_screen.dart';
 import '../settings/spotify_import_screen.dart';
@@ -39,6 +41,9 @@ abstract final class AppRoutes {
         ? Navigator.of(context, rootNavigator: true)
         : (contentNavigatorKey.currentState ?? Navigator.of(context));
 
+    // Переход берём из словаря движений: он же задаёт обратный ход.
+    final MotionTransition motion = AppMotion.pageEnter;
+
     return navigator.push<T>(
       PageRouteBuilder<T>(
         // barrierDismissible включает штатное закрытие маршрута по Escape:
@@ -51,31 +56,21 @@ abstract final class AppRoutes {
           Animation<double> secondaryAnimation,
         ) =>
             page,
-        transitionDuration: const Duration(milliseconds: 260),
-        reverseTransitionDuration: const Duration(milliseconds: 200),
+        transitionDuration: motion.duration,
+        reverseTransitionDuration: motion.reverseDuration ?? motion.duration,
         transitionsBuilder: (
           BuildContext context,
           Animation<double> animation,
           Animation<double> secondaryAnimation,
           Widget child,
         ) {
-          final CurvedAnimation curved = CurvedAnimation(
-            parent: animation,
-            curve: Curves.easeOutCubic,
-            reverseCurve: Curves.easeInCubic,
-          );
-          return FadeTransition(
-            opacity: curved,
-            child: SlideTransition(
-              position: Tween<Offset>(
-                begin: const Offset(0, 0.02),
-                end: Offset.zero,
-              ).animate(curved),
-              // Пока идёт жест «назад», верхний экран едет за пальцем и
-              // темнеет — как в системной анимации Android. Без этого жест
-              // срабатывал «молча»: экран просто исчезал в конце.
-              child: PredictiveBack(child: child),
-            ),
+          // Пока идёт жест «назад», верхний экран едет за пальцем и
+          // темнеет — как в системной анимации Android. Без этого жест
+          // срабатывал «молча»: экран просто исчезал в конце.
+          return motion.routeTransition(
+            animation: animation,
+            begin: const Offset(0, 0.02),
+            child: PredictiveBack(child: child),
           );
         },
       ),
@@ -139,6 +134,10 @@ abstract final class AppRoutes {
 
   static Future<void> settings(BuildContext context) =>
       _push<void>(context, const SettingsScreen());
+
+  /// «О приложении»: версия, ссылка на репозиторий, лицензии и проекты.
+  static Future<void> about(BuildContext context) =>
+      _push<void>(context, const AboutScreen());
 
   static Future<void> account(BuildContext context) =>
       _push<void>(context, const AccountScreen());

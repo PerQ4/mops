@@ -212,6 +212,28 @@ class SettingsScreen extends ConsumerWidget {
                   value: settings.titleBarMatchesBackground,
                   onChanged: controller.setTitleBarMatchesBackground,
                 ),
+                // Анимации — настройка доступности, поэтому стоят рядом с
+                // оформлением, а не отдельной группой.
+                SettingsSwitchRow(
+                  icon: Icons.animation,
+                  title: 'Отключить анимации',
+                  subtitle: 'Переходы и раскрытия происходят мгновенно',
+                  value: settings.disableAnimations,
+                  onChanged: controller.setDisableAnimations,
+                ),
+                // Высокая частота обновления: на десктопе приложение уже рисует
+                // с частотой экрана, а API попросить больше у Flutter нет.
+                // Пункт показан неактивным с пояснением, а не выключенным
+                // «насовсем»: флаг остаётся в настройках для платформ, где
+                // запрос появится.
+                SettingsSwitchRow(
+                  icon: Icons.speed,
+                  title: 'Высокая частота обновления',
+                  subtitle: _refreshRateSubtitle(context),
+                  value: settings.forceHighRefreshRate,
+                  onChanged: controller.setForceHighRefreshRate,
+                  enabled: false,
+                ),
               ],
             ),
             const SizedBox(height: SettingsDims.sectionSpacing),
@@ -530,16 +552,13 @@ class SettingsScreen extends ConsumerWidget {
               title: 'О приложении',
               accent: scheme.secondary,
               children: <Widget>[
-                // Информационная строка: без действия и без шеврона, а подпись
-                // не обрезаем — текст лицензии должен читаться целиком.
+                // Строка открывает отдельный экран: версия, ссылки, лицензии и
+                // проекты не помещаются в подпись и не относятся к настройкам.
                 SettingsRow(
                   icon: Icons.info_outline,
-                  title: 'mOps',
-                  subtitle: 'Кросс-платформенный клиент YouTube Music\n'
-                      'Material 3 Expressive · Flutter\n\n'
-                      'Неофициальное приложение. Не связано с Google LLC '
-                      'и YouTube. Используйте в рамках условий сервиса.',
-                  subtitleMaxLines: null,
+                  title: 'О приложении',
+                  subtitle: 'Версия, лицензии и использованные проекты',
+                  onTap: () => AppRoutes.about(context),
                 ),
               ],
             ),
@@ -621,6 +640,23 @@ class SettingsScreen extends ConsumerWidget {
       'масштаб ${settings.liquidScale.toStringAsFixed(1)}× · '
       'насыщенность ${(settings.liquidSaturation * 100).round()}% · '
       '${settings.liquidColorSource.label.toLowerCase()}';
+
+  /// Подпись строки высокой частоты обновления: называем текущую частоту
+  /// экрана, а не обещаем ускорить отрисовку.
+  ///
+  /// `Display.refreshRate` есть не на всех платформах: при нуле или исключении
+  /// просто не называем число, но причину недоступности говорим всегда.
+  String _refreshRateSubtitle(BuildContext context) {
+    double rate = 0;
+    try {
+      rate = View.of(context).display.refreshRate;
+    } on Object {
+      rate = 0;
+    }
+    final String current = rate > 0 ? ' (${rate.round()} Гц)' : '';
+    return 'Недоступно на десктопе: приложение уже рисует с частотой '
+        'экрана$current';
+  }
 
   /// Диалог настроек «Жидкости»: все параметры сразу и живой предпросмотр.
   Future<void> _editLiquidSettings(
