@@ -6,6 +6,7 @@ import 'package:media_kit/media_kit.dart';
 
 import 'audio_engine.dart';
 import 'audio_equalizer.dart';
+import 'mpv_audio_chain.dart';
 import 'mpv_filter_probe.dart';
 
 /// Реализация [AudioEngine] поверх `media_kit` (на Linux — libmpv).
@@ -29,10 +30,16 @@ class MediaKitEngine implements AudioEngine {
             // высоты, а темп и питч раскладывает между `speed` и `af`. Без
             // этого `setPitch` бросает ArgumentError.
             Player(configuration: const PlayerConfiguration(pitch: true)) {
+    // Цепочку `af` движок не держит сам: он её совладелец вместе с монитором
+    // уровня. Владелец один на плеер — см. [MpvAudioChain].
+    _chain = MpvAudioChain.forPlayer(_player);
     _attach();
   }
 
   final Player _player;
+
+  /// Очередь записей `af`, общая с монитором уровня.
+  late final MpvAudioChain? _chain;
   final StreamController<PlaybackState> _controller =
       StreamController<PlaybackState>.broadcast();
   final StreamController<List<AudioOutputDevice>> _devices =
@@ -134,8 +141,11 @@ class MediaKitEngine implements AudioEngine {
   double? _volumeBeforeDeviceChange;
   Timer? _volumeRecoveryTimer;
 
-  /// Пересборки `af` идут по очереди: параллельные чтение и запись одного
-  /// свойства дали бы гонку — цепочка собиралась бы из устаревшего состояния.
+  /// Очередь пересборок своей доли в `af`.
+  ///
+  /// Параллельные пересборки читали бы состояние эффектов вразнобой и ставили
+  /// цепочку из устаревшего набора. Сами записи в `af` сериализует
+  /// [MpvAudioChain] — туда же обращается монитор уровня.
   Future<void>? _chainQueue;
 
   @override
@@ -507,9 +517,10 @@ class MediaKitEngine implements AudioEngine {
     ));
 
     try {
-      await _player.open(_mediaFor(source, isLocal), play: autoplay);
-      _sourceLoaded = true;
-      await _applyTempoPitch(resetPitch: pitchWasShifted);
+      await _openInChain(
+        () => _player.open(_mediaFor(source, isLocal), play: autoplay),
+        resetPitch: pitchWasShifted,
+      );
       // Эффекты ставим после темпа/питча: media_kit задаёт своё `af` целиком и
       // затёр бы их. Не ждём: проверка фильтров на пробном плеере занимает
       // мгновения, но задерживать старт звука ею незачем.
@@ -541,7 +552,8 @@ class MediaKitEngine implements AudioEngine {
       final Duration target = _state.status == PlaybackStatus.completed
           ? Duration.zero
           : _state.position;
-      await _restart(target);
+      // Пользователь нажал «играть» — именно это и восстанавливаем.
+      await _restart(target, autoplay: true);
       return;
     }
     await _player.play();
@@ -603,23 +615,43 @@ class MediaKitEngine implements AudioEngine {
 
   /// Заново открывает последний источник — после `stop` или конца трека.
   ///
-  /// `target` — откуда начать (ноль — с начала).
-  Future<void> _restart(Duration target, {bool emitLoading = true}) async {
+  /// `target` — откуда начать (ноль — с начала). [autoplay] — играть ли сразу;
+  /// по умолчанию сохраняется то, что было: после ошибки или паузы перезапуск
+  /// не должен включать звук без команды пользователя.
+  Future<void> _restart(
+    Duration target, {
+    bool emitLoading = true,
+    bool? autoplay,
+  }) async {
     final String? source = _lastSource;
     if (source == null) return;
+    final bool shouldPlay = autoplay ??
+        (_state.status == PlaybackStatus.playing ||
+            _state.status == PlaybackStatus.buffering);
 
     _opening = true;
     if (emitLoading) {
       _emit(_state.copyWith(status: PlaybackStatus.loading, clearError: true));
     }
     try {
-      await _player.open(
-        _mediaFor(source, _lastIsLocal, start: target),
-        play: true,
+      await _openInChain(
+        () => _player.open(
+          _mediaFor(source, _lastIsLocal, start: target),
+          play: shouldPlay,
+        ),
       );
-      _sourceLoaded = true;
-      await _applyTempoPitch();
       unawaited(_rebuildAudioChain());
+      if (!shouldPlay) {
+        // Открыли на паузе: настоящего `playing = true` не будет, снимаем
+        // флаг открытия сами.
+        _opening = false;
+        _emit(_state.copyWith(
+          status: PlaybackStatus.paused,
+          position: target,
+          clearError: true,
+        ));
+        return;
+      }
       if (_state.status == PlaybackStatus.loading) {
         _emit(_state.copyWith(
           status: PlaybackStatus.playing,
@@ -635,6 +667,30 @@ class MediaKitEngine implements AudioEngine {
         error: _humanizeError(error.toString()),
       ));
     }
+  }
+
+  /// Открывает поток в очереди `af` и сразу восстанавливает темп/питч.
+  ///
+  /// `open` сбрасывает `af` — media_kit ставит туда только свой `scaletempo`.
+  /// Если открывать вне очереди, запись движка или монитора могла бы попасть в
+  /// зазор и потеряться. Здесь открытие и повторная сборка идут одной задачей
+  /// владельца цепочки.
+  Future<void> _openInChain(
+    Future<void> Function() open, {
+    bool resetPitch = false,
+  }) async {
+    final MpvAudioChain? chain = _chain;
+    if (chain == null) {
+      await open();
+      _sourceLoaded = true;
+      await _applyTempoPitch(resetPitch: resetPitch);
+      return;
+    }
+    await chain.exclusive(() async {
+      await open();
+      _sourceLoaded = true;
+      await _applyTempoPitch(resetPitch: resetPitch);
+    });
   }
 
   /// Собирает [Media] для сетевого адреса или локального файла.
@@ -700,8 +756,15 @@ class MediaKitEngine implements AudioEngine {
   Future<void> setSpeed(double speed) async {
     final double clamped = speed.clamp(0.5, 2.0);
     _speed = clamped;
-    await _player.setRate(clamped);
-    // `setRate` переписывает `af` целиком (scaletempo) — возвращаем эффекты.
+    // `setRate` переписывает `af` целиком (scaletempo), поэтому идёт в очередь
+    // владельца цепочки: иначе запись монитора или пересборка эффектов между
+    // чтением и записью потерялась бы.
+    final MpvAudioChain? chain = _chain;
+    if (chain != null) {
+      await chain.exclusive(() => _player.setRate(clamped));
+    } else {
+      await _player.setRate(clamped);
+    }
     await _rebuildAudioChain();
     _emit(_state.copyWith(speed: clamped));
   }
@@ -713,7 +776,12 @@ class MediaKitEngine implements AudioEngine {
   Future<void> setPitch(double pitch) async {
     final double clamped = pitch.clamp(0.5, 2.0);
     _pitch = clamped;
-    await _player.setPitch(clamped);
+    final MpvAudioChain? chain = _chain;
+    if (chain != null) {
+      await chain.exclusive(() => _player.setPitch(clamped));
+    } else {
+      await _player.setPitch(clamped);
+    }
     await _rebuildAudioChain();
     _emit(_state.copyWith(pitch: clamped));
   }
@@ -740,6 +808,9 @@ class MediaKitEngine implements AudioEngine {
   }
 
   // ------------------------------------------------------------------ эффекты
+
+  /// Имя доли движка в общей цепочке `af`.
+  static const String _partId = 'engine';
 
   /// Метка фильтров, которыми владеет движок.
   ///
@@ -799,9 +870,10 @@ class MediaKitEngine implements AudioEngine {
   /// Пересобирает цепочку `af` целиком и ставит её одним значением.
   ///
   /// Ставить фильтры по частям нельзя: при отказе mpv оставляет всю прежнюю
-  /// цепочку, и тогда непонятно, что применилось. Чужое (scaletempo, astats)
-  /// сохраняется, свои прошлые фильтры снимаются по метке, затем дописываются
-  /// текущие. Пересборки сериализованы — см. [\_chainQueue].
+  /// цепочку, и тогда непонятно, что применилось. Чужое (scaletempo, astats
+  /// визуализатора) сохраняется, свои прошлые фильтры снимаются, затем
+  /// дописываются текущие. Саму запись делает [MpvAudioChain] — он же владелец
+  /// `af` для монитора уровня.
   Future<void> _rebuildAudioChain() {
     final Future<void> run = (_chainQueue ?? Future<void>.value())
         .then((_) => _applyAudioChain());
@@ -811,61 +883,65 @@ class MediaKitEngine implements AudioEngine {
   }
 
   Future<void> _applyAudioChain() async {
-    final NativePlayer? native = _native;
-    if (native == null) {
+    final MpvAudioChain? chain = _chain;
+    if (chain == null) {
       _setEffectIssue(null);
       return;
     }
-    // Пока поток не открыт, ставить цепочку некуда: её подхватит ближайший
-    // `open`/`_restart`, который сам вызовет пересборку.
-    if (!_sourceLoaded) return;
 
-    try {
-      final List<String> segments = _splitChain(await native.getProperty('af'))
-        ..removeWhere(_isOwnedFilter);
-
-      final List<String> own = <String>[];
-      final List<String> issues = <String>[];
-      await _appendEqualizer(own);
-      if (_skipSilence) {
-        if (await MpvFilterProbe.supports(
-          'silenceremove',
-          _skipSilenceParams,
-        )) {
-          own.add('@$_skipLabel:silenceremove=$_skipSilenceParams');
-        } else {
-          issues.add(_filterIssue('silenceremove'));
-        }
-      }
-      if (_normalization) {
-        if (await MpvFilterProbe.supports('dynaudnorm', '')) {
-          own.add('@$_normLabel:dynaudnorm');
-        } else {
-          issues.add(_filterIssue('dynaudnorm'));
-        }
-      }
-      segments.addAll(own);
-
-      await native.setProperty('af', segments.join(','));
-      // Проверяем приём: при отказе mpv оставляет прежнюю цепочку. Молчать об
-      // этом нельзя, но и рвать звук из-за фильтра — тоже.
-      final String applied = await native.getProperty('af');
-      final bool eqRequested =
-          _equalizerBands.length == kEqualizerBandCount &&
-              !equalizerIsFlat(_equalizerBands);
-      if (eqRequested && !applied.contains('@$_eqLabel')) {
-        issues.add(_filterIssue('superequalizer'));
-      }
-      if (_skipSilence && !applied.contains('@$_skipLabel')) {
+    final List<String> own = <String>[];
+    final List<String> issues = <String>[];
+    await _appendEqualizer(own);
+    if (_skipSilence) {
+      if (await MpvFilterProbe.supports(
+        'silenceremove',
+        _skipSilenceParams,
+      )) {
+        own.add('@$_skipLabel:silenceremove=$_skipSilenceParams');
+      } else {
         issues.add(_filterIssue('silenceremove'));
       }
-      if (_normalization && !applied.contains('@$_normLabel')) {
+    }
+    if (_normalization) {
+      if (await MpvFilterProbe.supports('dynaudnorm', '')) {
+        own.add('@$_normLabel:dynaudnorm');
+      } else {
         issues.add(_filterIssue('dynaudnorm'));
       }
-      _setEffectIssue(issues.isEmpty ? null : issues.toSet().join('; '));
-    } on Object catch (error) {
-      _setEffectIssue('не удалось применить аудиофильтры: $error');
     }
+
+    // Долю обновляем всегда, а применяем только при открытом потоке: до `open`
+    // ставить цепочку некуда, её подхватит ближайшее открытие.
+    final String? applied = await chain.setPart(
+      _partId,
+      MpvAudioChain.enginePriority,
+      own,
+      apply: _sourceLoaded,
+    );
+    if (!_sourceLoaded) {
+      _setEffectIssue(issues.isEmpty ? null : issues.toSet().join('; '));
+      return;
+    }
+
+    // Проверяем приём: при отказе mpv оставляет прежнюю цепочку. Молчать об
+    // этом нельзя, но и рвать звук из-за фильтра — тоже.
+    if (applied == null) {
+      _setEffectIssue('не удалось применить аудиофильтры');
+      return;
+    }
+    final bool eqRequested =
+        _equalizerBands.length == kEqualizerBandCount &&
+            !equalizerIsFlat(_equalizerBands);
+    if (eqRequested && !MpvAudioChain.containsLabel(applied, _eqLabel)) {
+      issues.add(_filterIssue('superequalizer'));
+    }
+    if (_skipSilence && !MpvAudioChain.containsLabel(applied, _skipLabel)) {
+      issues.add(_filterIssue('silenceremove'));
+    }
+    if (_normalization && !MpvAudioChain.containsLabel(applied, _normLabel)) {
+      issues.add(_filterIssue('dynaudnorm'));
+    }
+    _setEffectIssue(issues.isEmpty ? null : issues.toSet().join('; '));
   }
 
   /// Дописывает в [own] фильтр эквалайзера, если он настроен и есть в сборке.
@@ -949,24 +1025,6 @@ class MediaKitEngine implements AudioEngine {
       }
     }
     return bands.last;
-  }
-
-  /// Разбирает цепочку `af` на отдельные фильтры. Запятая внутри параметров не
-  /// встречается ни у наших фильтров, ни у `scaletempo` media_kit, поэтому
-  /// верхнеуровневое деление безопасно.
-  static List<String> _splitChain(String raw) => raw
-      .split(',')
-      .map((String segment) => segment.trim())
-      .where((String segment) => segment.isNotEmpty)
-      .toList();
-
-  /// Наш ли это фильтр (ставили его мы сами). Чужое — не трогаем.
-  static bool _isOwnedFilter(String segment) {
-    final String text = segment.trim();
-    return text.startsWith('@$_eqLabel') ||
-        text.startsWith('@$_gainLabel') ||
-        text.startsWith('@$_skipLabel') ||
-        text.startsWith('@$_normLabel');
   }
 
   /// Причина отказа фильтра словами mpv — для честного сообщения в интерфейсе.

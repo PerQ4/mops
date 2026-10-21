@@ -4,6 +4,7 @@ import 'dart:math' as math;
 import 'package:flutter/foundation.dart';
 import 'package:media_kit/media_kit.dart';
 
+import 'mpv_audio_chain.dart';
 import 'mpv_filter_probe.dart';
 
 /// Что известно об уровне звука.
@@ -22,8 +23,9 @@ enum AudioLevelAvailability {
 /// Уровень звука и спектр частот из libmpv для визуализатора.
 ///
 /// Источник — сам libmpv, а не плеер и не позиция трека. В цепочку
-/// аудиофильтров (`af`) дописывается один фильтр `lavfi` с графом (метка
-/// `mopsvis`): исходный стереосигнал разветвляется на восемь полос
+/// аудиофильтров (`af`) владелец цепочки ([MpvAudioChain]) вставляет один
+/// фильтр `lavfi` с графом (метка `mopsvis`): исходный стереосигнал
+/// разветвляется на восемь полос
 /// (`bandpass`), все девять потоков сводятся вместе, а `astats` считает RMS
 /// каждого канала. Каналы 1–2 — исходные левый и правый, 3–10 — полосы от
 /// 60 Гц до 8 кГц. Из `af-metadata/mopsvis/lavfi.astats.N.RMS_level` читаются
@@ -39,8 +41,9 @@ enum AudioLevelAvailability {
 /// плеере дважды опасно: mpv пишет отказ в `stream.error`, и движок принимает его
 /// за сбой трека — воспроизведение «ломается»; а чтение `af-metadata/...` по
 /// метке, которой в цепочке нет, в такой сборке роняет libmpv. Поэтому разовая
-/// проверка идёт на отдельном пустом плеере: ему ошибка не мешает, а метаданные
-/// спрашиваются у живого только после утвердительного ответа. Придумывать вместо
+/// проверка идёт на отдельном пробном плеере (с коротким настоящим звуком и
+/// `ao=null`): ему ошибка не мешает, а метаданные спрашиваются у живого только
+/// после утвердительного ответа. Придумывать вместо
 /// уровня «уровень от позиции» нельзя: это было бы движение, не связанное со
 /// звуком.
 ///
@@ -55,6 +58,12 @@ class AudioLevelMonitor extends ChangeNotifier {
     final PlatformPlayer? platform = _player.platform;
     if (platform is NativePlayer) {
       _native = platform;
+      // Цепочкой `af` владеет один объект на плеер: сюда же пишет движок.
+      // Свой фильтр не дописываем сами, а отдаём владельцу долей.
+      _chain = MpvAudioChain.forPlayer(_player);
+      // Владелец сообщает о каждой пересборке: после `open` это единственный
+      // надёжный признак, что фильтр вернулся в цепочку.
+      _chainSub = _chain?.applied.listen(_onChainApplied);
     } else {
       // `af` — свойство libmpv; у платформенной реализации media_kit его нет.
       _availability = AudioLevelAvailability.unavailable;
@@ -137,17 +146,29 @@ class AudioLevelMonitor extends ChangeNotifier {
   /// ещё нет». 60 чтений — это ~2 секунды.
   static const int _emptyReadsBeforeCheck = 60;
 
-  /// Сколько раз за сессию поднимать фильтр заново, если его вытеснил движок
-  /// (темп и питч пишутся в то же свойство `af`).
+  /// Сколько раз подряд поднимать фильтр заново, если его вытеснили посреди
+  /// проигрывания.
+  ///
+  /// Счётчик не «на сессию»: он сбрасывается, как только цепочка собралась с
+  /// нашей меткой (в том числе после `open`, где движок пересобирает её сам).
+  /// Ограничение нужно только чтобы не крутить бесконечный цикл, когда mpv
+  /// стабильно отвергает фильтр.
   static const int _maxReattaches = 3;
+
+  /// Имя доли в общей цепочке `af`.
+  static const String _partId = 'visualizer';
 
   final Player _player;
 
   /// Плеер libmpv; `null` — у платформы нет свойств mpv.
   NativePlayer? _native;
 
+  /// Очередь записей `af`, общая с движком.
+  MpvAudioChain? _chain;
+
   StreamSubscription<bool>? _playingSub;
   StreamSubscription<PlayerLog>? _logSub;
+  StreamSubscription<String>? _chainSub;
   Timer? _timer;
 
   double _level = 0;
@@ -166,7 +187,13 @@ class AudioLevelMonitor extends ChangeNotifier {
   bool _disposed = false;
   bool _pollInFlight = false;
   int _emptyReads = 0;
-  int _reattaches = 0;
+  int _reattachAttempts = 0;
+  bool _reattachInFlight = false;
+
+  /// Когда цепочка последний раз собиралась с нашей меткой. После пересборки
+  /// метаданные появляются не сразу — это время не считается «фильтр пропал».
+  DateTime? _chainAppliedAt;
+
   String? _lastMpvMessage;
   DateTime? _lastMpvMessageAt;
 
@@ -190,6 +217,9 @@ class AudioLevelMonitor extends ChangeNotifier {
   void _onPlaying(bool playing) {
     if (_disposed) return;
     if (playing) {
+      // Новое воспроизведение (трек, `open`, `_restart`) — новый шанс поднять
+      // фильтр: прежние неудачи к этому моменту уже не в счёт.
+      _reattachAttempts = 0;
       unawaited(_begin());
       return;
     }
@@ -236,42 +266,84 @@ class AudioLevelMonitor extends ChangeNotifier {
     _timer ??= Timer.periodic(_pollInterval, (_) => unawaited(_poll()));
   }
 
-  /// Дописывает свой фильтр в конец цепочки `af` и проверяет, что он принят.
+  /// Отдаёт свой фильтр владельцу `af` и проверяет, что он принят.
   Future<bool> _attach() async {
-    final NativePlayer? native = _native;
-    if (native == null) return false;
+    final MpvAudioChain? chain = _chain;
+    if (chain == null) return false;
     final String filter = _spectrumMode ? _spectrumFilter : _levelFilter;
-    try {
-      // Цепочку не затираем: в том же свойстве `af` живёт `scaletempo` движка
-      // (темп и питч), и подмена выключила бы компенсацию высоты тона.
-      final String current = (await native.getProperty('af')).trim();
-      await native.setProperty('af', _append(current, filter));
-      final String applied = await native.getProperty('af');
-      // Метка в цепочке ещё не значит, что фильтр собрался: граф `lavfi`
-      // инициализируется позже. Окончательный ответ даст метаданные или
-      // сообщение mpv (см. [_repairFilter]).
-      if (!applied.contains(_label)) {
-        // mpv отверг фильтр и оставил прежнюю цепочку.
-        _markUnavailable(_lastMpvMessage ?? 'libmpv не принял фильтр «$filter»');
-        return false;
-      }
-      _attached = true;
-      _emptyReads = 0;
-      _bandsAvailable = _spectrumMode;
-      if (_availability != AudioLevelAvailability.available) {
-        _availability = AudioLevelAvailability.available;
-        _reason = null;
-        notifyListeners();
-      }
-      return true;
-    } on Object catch (error) {
-      _markUnavailable('не удалось обратиться к libmpv: $error');
+    // Цепочку не затираем: владелец сохраняет `scaletempo` движка и фильтры
+    // эквалайзера, а нашу долю ставит вместе с ними одним значением.
+    final String? applied = await chain.setPart(
+      _partId,
+      MpvAudioChain.visualizerPriority,
+      <String>[filter],
+    );
+    if (_disposed) return false;
+    // Метка в цепочке ещё не значит, что фильтр собрался: граф `lavfi`
+    // инициализируется позже. Окончательный ответ дадут метаданные или
+    // сообщение mpv (см. [_repairFilter]).
+    if (applied == null || !MpvAudioChain.containsLabel(applied, _label)) {
+      // mpv отверг фильтр и оставил прежнюю цепочку. Свою долю убираем: иначе
+      // каждый следующий сбор отвергался бы целиком — вместе с эквалайзером.
+      unawaited(chain.removePart(_partId));
+      _markUnavailable(_lastMpvMessage ?? 'libmpv не принял фильтр «$filter»');
       return false;
     }
+    _attached = true;
+    _emptyReads = 0;
+    _reattachAttempts = 0;
+    _chainAppliedAt = DateTime.now();
+    _bandsAvailable = _spectrumMode;
+    if (_availability != AudioLevelAvailability.available) {
+      _availability = AudioLevelAvailability.available;
+      _reason = null;
+      notifyListeners();
+    }
+    return true;
   }
 
-  static String _append(String chain, String filter) =>
-      chain.isEmpty ? filter : '$chain,$filter';
+  /// Владелец пересобрал цепочку (в том числе после `open`).
+  ///
+  /// Здесь и снимается главная беда прежнего счётчика: пока фильтр на месте,
+  /// попытки обнуляются, поэтому число перезагрузок трека ни на что не влияет.
+  void _onChainApplied(String chain) {
+    if (_disposed) return;
+    if (MpvAudioChain.containsLabel(chain, _label)) {
+      _chainAppliedAt = DateTime.now();
+      _emptyReads = 0;
+      _reattachAttempts = 0;
+      if (!_attached) {
+        _attached = true;
+        _bandsAvailable = _spectrumMode;
+      }
+      return;
+    }
+    if (!_attached) return;
+    // Метка пропала: `open` сбросил `af` или кто-то переписал цепочку.
+    _attached = false;
+    _emptyReads = 0;
+    unawaited(_reattach());
+  }
+
+  /// Просит владельца вернуть фильтр; повторные просьбы не наслаиваются.
+  Future<void> _reattach() async {
+    if (_disposed || _reattachInFlight) return;
+    if (_reattachAttempts >= _maxReattaches) {
+      // Сдаёмся, но не тянем за собой остальные фильтры: доля, которую mpv
+      // стабильно отвергает, ломала бы всю цепочку.
+      final MpvAudioChain? chain = _chain;
+      if (chain != null) unawaited(chain.removePart(_partId));
+      _markUnavailable('фильтр уровня вытеснен из цепочки af');
+      return;
+    }
+    _reattachAttempts++;
+    _reattachInFlight = true;
+    try {
+      await _attach();
+    } finally {
+      _reattachInFlight = false;
+    }
+  }
 
   /// Собирает граф `lavfi` из восьми полосовых ветвей.
   static String _buildSpectrumGraph() {
@@ -299,6 +371,9 @@ class AudioLevelMonitor extends ChangeNotifier {
 
   Future<void> _poll() async {
     if (_disposed || _pollInFlight) return;
+    // Метки в цепочке нет — читать `af-metadata` по ней нельзя: в этой сборке
+    // чтение по отсутствующей метке роняет libmpv.
+    if (!_attached) return;
     final NativePlayer? native = _native;
     if (native == null) return;
     _pollInFlight = true;
@@ -342,18 +417,28 @@ class AudioLevelMonitor extends ChangeNotifier {
   }
 
   /// Метаданных нет дольше двух секунд. Либо фильтр вытеснили из `af`, либо он
-  /// не собрался. Различаем по цепочке и словам mpv.
+  /// не собрался. Различаем по цепочке, времени после пересборки и словам mpv.
   Future<void> _repairFilter() async {
-    final NativePlayer? native = _native;
-    if (native == null) return;
-    final String chain = (await native.getProperty('af')).trim();
-    if (chain.contains(_label)) {
+    final MpvAudioChain? chain = _chain;
+    if (chain == null) return;
+    final String applied = await chain.current();
+    if (_disposed) return;
+    if (MpvAudioChain.containsLabel(applied, _label)) {
+      // Цепочка только что пересобрана (например, после `open`) — метаданным
+      // нужно мгновение, чтобы появиться. Это не отказ фильтра.
+      final DateTime? at = _chainAppliedAt;
+      if (at != null &&
+          DateTime.now().difference(at) < const Duration(seconds: 3)) {
+        _emptyReads = 0;
+        _attached = true;
+        return;
+      }
       // Метка на месте, но метаданных нет: значит, не собрался сам фильтр.
       // Такое mpv пишет отдельным сообщением — его и показываем.
-      final DateTime? at = _lastMpvMessageAt;
+      final DateTime? messageAt = _lastMpvMessageAt;
       final String? message = _lastMpvMessage;
-      final bool recent = at != null &&
-          DateTime.now().difference(at) < const Duration(seconds: 5);
+      final bool recent = messageAt != null &&
+          DateTime.now().difference(messageAt) < const Duration(seconds: 5);
       if (recent && message != null && _mentionsOurFilter(message)) {
         _markUnavailable(message);
         return;
@@ -361,13 +446,8 @@ class AudioLevelMonitor extends ChangeNotifier {
       _emptyReads = 0;
       return;
     }
-    if (_reattaches >= _maxReattaches) {
-      _markUnavailable('фильтр уровня вытеснен из цепочки af');
-      return;
-    }
-    _reattaches++;
     _attached = false;
-    await _attach();
+    await _reattach();
   }
 
   /// Сообщение относится к нашему фильтру, а не к эффектам движка.
@@ -460,6 +540,10 @@ class AudioLevelMonitor extends ChangeNotifier {
     _stopPolling();
     _playingSub?.cancel();
     _logSub?.cancel();
+    _chainSub?.cancel();
+    // Свою долю снимает владелец цепочки — сами `af` не трогаем.
+    final MpvAudioChain? chain = _chain;
+    if (chain != null) unawaited(chain.removePart(_partId));
     super.dispose();
   }
 }
