@@ -1,5 +1,6 @@
 import 'dart:async';
 
+import 'package:flutter/foundation.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 
@@ -39,6 +40,21 @@ class _SearchScreenState extends ConsumerState<SearchScreen> {
   /// Запрос, который реально отправляем в сеть (после задержки).
   String _query = '';
   SearchFilter _filter = SearchFilter.all;
+
+  @override
+  void initState() {
+    super.initState();
+    // На десктопе открыть поиск и сразу печатать — обычное ожидание: клавиатура
+    // не выезжает и фокус никому не мешает. На телефоне не трогаем — там фокус
+    // вытащил бы экранную клавиатуру сразу при открытии вкладки.
+    final bool touchFirst = defaultTargetPlatform == TargetPlatform.android ||
+        defaultTargetPlatform == TargetPlatform.iOS;
+    if (!touchFirst) {
+      WidgetsBinding.instance.addPostFrameCallback((_) {
+        if (mounted) _focus.requestFocus();
+      });
+    }
+  }
 
   @override
   void dispose() {

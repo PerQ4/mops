@@ -462,6 +462,9 @@ class _SwipeToSongBoxState extends ConsumerState<SwipeToSongBox> {
   /// Идёт перетаскивание — тогда возврат к нулю должен быть мгновенным.
   bool _dragging = false;
 
+  /// Разрешён ли свайп для текущего жеста: мышь строку не листает.
+  bool _pointerAllowed = true;
+
   @override
   Widget build(BuildContext context) {
     // У играющего трека «играть следующим» и «в очередь» бессмысленны —
@@ -480,9 +483,27 @@ class _SwipeToSongBoxState extends ConsumerState<SwipeToSongBox> {
     return GestureDetector(
       // Ловим жест по всей строке, включая промежутки между элементами.
       behavior: HitTestBehavior.opaque,
-      onHorizontalDragStart: (_) => setState(() => _dragging = true),
-      onHorizontalDragUpdate: _onDragUpdate,
-      onHorizontalDragEnd: _onDragEnd,
+      onHorizontalDragStart: (DragStartDetails details) {
+        // Мышь строку не листает: горизонтальное движение мышью (выделение,
+        // случайный сдвиг) отправляло трек в очередь. Свайп — жест пальца
+        // и стилуса, на десктопе он остаётся для тач-экранов и трекпада.
+        _pointerAllowed = details.kind == PointerDeviceKind.touch ||
+            details.kind == PointerDeviceKind.stylus ||
+            details.kind == PointerDeviceKind.invertedStylus ||
+            details.kind == null;
+        setState(() => _dragging = _pointerAllowed);
+      },
+      onHorizontalDragUpdate: (DragUpdateDetails details) {
+        if (!_pointerAllowed) return;
+        _onDragUpdate(details);
+      },
+      onHorizontalDragEnd: (DragEndDetails details) {
+        if (!_pointerAllowed) {
+          _reset();
+          return;
+        }
+        _onDragEnd(details);
+      },
       onHorizontalDragCancel: _reset,
       child: Stack(
         children: <Widget>[
