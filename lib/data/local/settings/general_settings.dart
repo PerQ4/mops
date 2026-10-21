@@ -1,3 +1,5 @@
+import 'json_read.dart';
+
 /// Где искать треки.
 ///
 /// В ArchiveTune поиск можно ограничить своей библиотекой — так быстрее
@@ -126,14 +128,18 @@ class GeneralSettings {
 
   factory GeneralSettings.fromJson(Map<String, dynamic> json) {
     return GeneralSettings(
-      localMediaFolder: json['localMediaFolder'] as String? ?? '',
-      searchSource: SearchSource.fromName(json['searchSource'] as String?),
-      hideExplicit: json['hideExplicit'] as bool? ?? false,
-      hideVideo: json['hideVideo'] as bool? ?? false,
-      topSize: TopSize.fromName(json['topSize'] as String?),
-      streamingRegion: json['streamingRegion'] as String? ?? 'RU',
-      streamingLanguage: json['streamingLanguage'] as String? ?? 'ru',
-      listeningStatsEnabled: json['listeningStatsEnabled'] as bool? ?? true,
+      localMediaFolder: readString(json['localMediaFolder'], ''),
+      searchSource: readEnumByName(
+        json['searchSource'],
+        SearchSource.values,
+        SearchSource.online,
+      ),
+      hideExplicit: readBool(json['hideExplicit'], false),
+      hideVideo: readBool(json['hideVideo'], false),
+      topSize: readEnumByName(json['topSize'], TopSize.values, TopSize.fifty),
+      streamingRegion: readString(json['streamingRegion'], 'RU'),
+      streamingLanguage: readString(json['streamingLanguage'], 'ru'),
+      listeningStatsEnabled: readBool(json['listeningStatsEnabled'], true),
     );
   }
 }

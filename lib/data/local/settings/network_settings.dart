@@ -1,4 +1,5 @@
 import '../../../core/net/anti_dpi.dart';
+import 'json_read.dart';
 
 /// Сеть: режим экономии трафика и обход блокировок.
 class NetworkSettings {
@@ -47,11 +48,23 @@ class NetworkSettings {
 
   factory NetworkSettings.fromJson(Map<String, dynamic> json) {
     return NetworkSettings(
-      lowDataMode: json['lowDataMode'] as bool? ?? false,
-      bypass: json['bypass'] is Map<String, dynamic>
-          ? AntiDpiConfig.fromJson(json['bypass'] as Map<String, dynamic>)
-          : const AntiDpiConfig(),
-      autoDetectProxy: json['autoDetectProxy'] as bool? ?? true,
+      lowDataMode: readBool(json['lowDataMode'], false),
+      bypass: _parseBypass(json['bypass']),
+      autoDetectProxy: readBool(json['autoDetectProxy'], true),
     );
+  }
+
+  /// Разбор обхода DPI без падения.
+  ///
+  /// Внутри `AntiDpiConfig.fromJson` остались `as bool?`, поэтому неверный тип
+  /// во вложенном объекте ловим здесь: один испорченный `bypass` не должен
+  /// стоить всех настроек.
+  static AntiDpiConfig _parseBypass(Object? value) {
+    if (value is! Map) return const AntiDpiConfig();
+    try {
+      return AntiDpiConfig.fromJson(Map<String, dynamic>.from(value));
+    } on Object {
+      return const AntiDpiConfig();
+    }
   }
 }

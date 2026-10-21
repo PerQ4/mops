@@ -1,4 +1,5 @@
 import '../../../core/theme/seed_colors.dart';
+import 'json_read.dart';
 
 /// Стиль палитры Material 3.
 ///
@@ -403,50 +404,76 @@ class AppearanceSettings {
 
   factory AppearanceSettings.fromJson(Map<String, dynamic> json) {
     return AppearanceSettings(
-      themeMode: ThemeModePreference.fromName(json['themeMode'] as String?),
-      colorSource: ColorSource.fromName(json['colorSource'] as String?),
-      seedColorIndex: (json['seedColorIndex'] as num?)?.toInt() ?? 0,
-      useMaterialExpressive: json['useMaterialExpressive'] as bool? ?? true,
-      pureBlack: json['pureBlack'] as bool? ?? false,
-      paletteStyle: PaletteStylePreference.fromName(
-        json['paletteStyle'] as String?,
+      themeMode: readEnumByName(
+        json['themeMode'],
+        ThemeModePreference.values,
+        ThemeModePreference.system,
       ),
-      fontPreference: FontPreference.fromName(
-        json['fontPreference'] as String?,
+      colorSource: readEnumByName(
+        json['colorSource'],
+        ColorSource.values,
+        ColorSource.seed,
       ),
-      customFontPath: json['customFontPath'] as String? ?? '',
-      disableAnimations: json['disableAnimations'] as bool? ?? false,
-      forceHighRefreshRate: json['forceHighRefreshRate'] as bool? ?? false,
-      uiScale: (json['uiScale'] as num?)?.toDouble() ?? 0.0,
-      compactRows: json['compactRows'] as bool? ?? false,
-      progressBarStyle: ProgressBarStyle.fromName(
-        json['progressBarStyle'] as String?,
+      seedColorIndex: readInt(json['seedColorIndex'], 0),
+      useMaterialExpressive: readBool(json['useMaterialExpressive'], true),
+      pureBlack: readBool(json['pureBlack'], false),
+      paletteStyle: readEnumByName(
+        json['paletteStyle'],
+        PaletteStylePreference.values,
+        PaletteStylePreference.tonal,
       ),
-      volumeSliderStyle: ProgressBarStyle.fromName(
-        json['volumeSliderStyle'] as String?,
+      fontPreference: readEnumByName(
+        json['fontPreference'],
+        FontPreference.values,
+        FontPreference.poppins,
       ),
-      miniPlayerBackgroundStyle: MiniPlayerBackgroundStyle.fromName(
-        json['miniPlayerBackgroundStyle'] as String?,
+      customFontPath: readString(json['customFontPath'], ''),
+      disableAnimations: readBool(json['disableAnimations'], false),
+      forceHighRefreshRate: readBool(json['forceHighRefreshRate'], false),
+      uiScale: readDouble(json['uiScale'], 0.0),
+      compactRows: readBool(json['compactRows'], false),
+      progressBarStyle: readEnumByName(
+        json['progressBarStyle'],
+        ProgressBarStyle.values,
+        ProgressBarStyle.standard,
       ),
-      playerBackgroundStyle: PlayerBackgroundStyle.fromName(
-        json['playerBackgroundStyle'] as String?,
+      volumeSliderStyle: readEnumByName(
+        json['volumeSliderStyle'],
+        ProgressBarStyle.values,
+        ProgressBarStyle.standard,
       ),
-      liquidSpeed: (json['liquidSpeed'] as num?)?.toDouble() ?? 1.0,
-      liquidScale: (json['liquidScale'] as num?)?.toDouble() ?? 1.0,
-      liquidSaturation: (json['liquidSaturation'] as num?)?.toDouble() ?? 1.0,
-      liquidColorSource: LiquidColorSource.fromName(
-        json['liquidColorSource'] as String?,
+      miniPlayerBackgroundStyle: readEnumByName(
+        json['miniPlayerBackgroundStyle'],
+        MiniPlayerBackgroundStyle.values,
+        MiniPlayerBackgroundStyle.theme,
       ),
-      disableBlur: json['disableBlur'] as bool? ?? false,
-      blurRadius: (json['blurRadius'] as num?)?.toDouble() ?? 48,
-      visualizerEnabled: json['visualizerEnabled'] as bool? ?? false,
-      visualizerStyle: VisualizerStyle.fromName(
-        json['visualizerStyle'] as String?,
+      playerBackgroundStyle: readEnumByName(
+        json['playerBackgroundStyle'],
+        PlayerBackgroundStyle.values,
+        PlayerBackgroundStyle.gradient,
       ),
-      liveCoverEnabled: json['liveCoverEnabled'] as bool? ?? false,
-      titleBarCentered: json['titleBarCentered'] as bool? ?? true,
-      titleBarMatchesBackground:
-          json['titleBarMatchesBackground'] as bool? ?? false,
+      liquidSpeed: readDouble(json['liquidSpeed'], 1.0),
+      liquidScale: readDouble(json['liquidScale'], 1.0),
+      liquidSaturation: readDouble(json['liquidSaturation'], 1.0),
+      liquidColorSource: readEnumByName(
+        json['liquidColorSource'],
+        LiquidColorSource.values,
+        LiquidColorSource.artwork,
+      ),
+      disableBlur: readBool(json['disableBlur'], false),
+      blurRadius: readDouble(json['blurRadius'], 48),
+      visualizerEnabled: readBool(json['visualizerEnabled'], false),
+      visualizerStyle: readEnumByName(
+        json['visualizerStyle'],
+        VisualizerStyle.values,
+        VisualizerStyle.halo,
+      ),
+      liveCoverEnabled: readBool(json['liveCoverEnabled'], false),
+      titleBarCentered: readBool(json['titleBarCentered'], true),
+      titleBarMatchesBackground: readBool(
+        json['titleBarMatchesBackground'],
+        false,
+      ),
     );
   }
 }

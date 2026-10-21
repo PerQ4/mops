@@ -1,3 +1,5 @@
+import 'json_read.dart';
+
 /// Режим правой панели плеера.
 ///
 /// Это два разных способа пользоваться одной панелью, поэтому выбор
@@ -153,20 +155,26 @@ class LayoutSettings {
 
   factory LayoutSettings.fromJson(Map<String, dynamic> json) {
     return LayoutSettings(
-      playerPanelWidth: (json['playerPanelWidth'] as num?)?.toDouble() ?? 280,
-      playerPanelMode: RightPanelMode.fromName(
-        json['playerPanelMode'] as String?,
+      playerPanelWidth: readDouble(json['playerPanelWidth'], 280),
+      playerPanelMode: readEnumByName(
+        json['playerPanelMode'],
+        RightPanelMode.values,
+        RightPanelMode.queue,
       ),
-      sidebarWidth: (json['sidebarWidth'] as num?)?.toDouble() ?? 280,
-      miniSwipeSensitivity: SwipeSensitivity.fromName(
-        json['miniSwipeSensitivity'] as String?,
+      sidebarWidth: readDouble(json['sidebarWidth'], 280),
+      miniSwipeSensitivity: readEnumByName(
+        json['miniSwipeSensitivity'],
+        SwipeSensitivity.values,
+        SwipeSensitivity.normal,
       ),
-      trackSwipeAction: TrackSwipeAction.fromName(
-        json['trackSwipeAction'] as String?,
+      trackSwipeAction: readEnumByName(
+        json['trackSwipeAction'],
+        TrackSwipeAction.values,
+        TrackSwipeAction.off,
       ),
-      sidebarCollapsed: json['sidebarCollapsed'] as bool? ?? false,
-      sidebarNavigation: json['sidebarNavigation'] as bool? ?? false,
-      playerPanelEnabled: json['playerPanelEnabled'] as bool? ?? true,
+      sidebarCollapsed: readBool(json['sidebarCollapsed'], false),
+      sidebarNavigation: readBool(json['sidebarNavigation'], false),
+      playerPanelEnabled: readBool(json['playerPanelEnabled'], true),
     );
   }
 }

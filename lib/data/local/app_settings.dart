@@ -514,12 +514,16 @@ class AppSettings {
   }
 
   factory AppSettings.decode(String? raw) {
+    // Пустая строка и `null` — это «настроек ещё нет», а не ошибка: дефолты
+    // здесь и есть норма.
     if (raw == null || raw.isEmpty) return const AppSettings();
     try {
       final dynamic decoded = jsonDecode(raw);
       if (decoded is Map<String, dynamic>) return AppSettings.fromJson(decoded);
-    } on FormatException {
-      // Битый JSON — откатываемся на значения по умолчанию.
+    } on Object {
+      // Настройки не должны мешать запуску: не JSON, не объект, любое
+      // исключение при разборе полей — откат на дефолты, а не падение
+      // из `main()` до `runApp`.
     }
     return const AppSettings();
   }

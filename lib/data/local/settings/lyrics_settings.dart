@@ -1,3 +1,5 @@
+import 'json_read.dart';
+
 /// Откуда брать текст песни.
 ///
 /// Как в ArchiveTune, источников несколько: сервисы с синхронизацией (TTML и
@@ -134,26 +136,22 @@ const List<LyricsSource> kDefaultLyricsOrder = <LyricsSource>[
 /// Имена, которых больше нет в [LyricsSource] (например, удалённые источники),
 /// молча пропускаются: у пользователя в сохранённых настройках они могут
 /// остаться, и это не должно ни ронять разбор, ни терять остальные.
-List<LyricsSource> _parseSourceNames(String? raw) {
-  if (raw == null || raw.trim().isEmpty) return const <LyricsSource>[];
+/// `null` — значения нет или тип не тот, поэтому список пуст.
+List<LyricsSource> _parseSourceNames(List<String>? names) {
+  if (names == null) return const <LyricsSource>[];
   final List<LyricsSource> parsed = <LyricsSource>[];
-  for (final String name in raw.split(',')) {
-    final String trimmed = name.trim();
-    if (trimmed.isEmpty) continue;
+  for (final String name in names) {
     final LyricsSource? source = LyricsSource.values
         .cast<LyricsSource?>()
-        .firstWhere(
-          (LyricsSource? v) => v?.name == trimmed,
-          orElse: () => null,
-        );
+        .firstWhere((LyricsSource? v) => v?.name == name, orElse: () => null);
     if (source != null && !parsed.contains(source)) parsed.add(source);
   }
   return parsed;
 }
 
 /// Разбирает сохранённый порядок источников; при мусоре — порядок по умолчанию.
-List<LyricsSource> _parseLyricsOrder(String? raw) {
-  final List<LyricsSource> parsed = _parseSourceNames(raw);
+List<LyricsSource> _parseLyricsOrder(List<String>? names) {
+  final List<LyricsSource> parsed = _parseSourceNames(names);
   return parsed.isEmpty ? kDefaultLyricsOrder : parsed;
 }
 
@@ -326,30 +324,39 @@ class LyricsSettings {
 
   factory LyricsSettings.fromJson(Map<String, dynamic> json) {
     return LyricsSettings(
-      lyricsSource: LyricsSource.fromName(json['lyricsSource'] as String?),
-      showLyricsInPlayer: json['showLyricsInPlayer'] as bool? ?? true,
-      lyricsTextScale: (json['lyricsTextScale'] as num?)?.toDouble() ?? 1.0,
-      lyricsLineSpacing:
-          (json['lyricsLineSpacing'] as num?)?.toDouble() ?? 1.35,
-      lyricsLineBlur: json['lyricsLineBlur'] as bool? ?? true,
-      lyricsMode: LyricsMode.fromName(json['lyricsMode'] as String?),
-      lyricsAnimationStyle: LyricsAnimationStyle.fromName(
-        json['lyricsAnimationStyle'] as String?,
+      lyricsSource: readEnumByName(
+        json['lyricsSource'],
+        LyricsSource.values,
+        LyricsSource.auto,
+      ),
+      showLyricsInPlayer: readBool(json['showLyricsInPlayer'], true),
+      lyricsTextScale: readDouble(json['lyricsTextScale'], 1.0),
+      lyricsLineSpacing: readDouble(json['lyricsLineSpacing'], 1.35),
+      lyricsLineBlur: readBool(json['lyricsLineBlur'], true),
+      lyricsMode: readEnumByName(
+        json['lyricsMode'],
+        LyricsMode.values,
+        LyricsMode.classic,
+      ),
+      lyricsAnimationStyle: readEnumByName(
+        json['lyricsAnimationStyle'],
+        LyricsAnimationStyle.values,
+        LyricsAnimationStyle.fade,
       ),
       lyricsProviderOrder: _parseLyricsOrder(
-        json['lyricsProviderOrder'] as String?,
+        readStringList(json['lyricsProviderOrder']),
       ),
       lyricsDisabledProviders: _parseSourceNames(
-        json['lyricsDisabledProviders'] as String?,
+        readStringList(json['lyricsDisabledProviders']),
       ),
-      paxsenixAppleMusic: json['paxsenixAppleMusic'] as bool? ?? true,
-      paxsenixSpotify: json['paxsenixSpotify'] as bool? ?? true,
-      paxsenixMusixmatch: json['paxsenixMusixmatch'] as bool? ?? true,
-      romanizeJapanese: json['romanizeJapanese'] as bool? ?? true,
-      romanizeKorean: json['romanizeKorean'] as bool? ?? true,
-      romanizeChinese: json['romanizeChinese'] as bool? ?? true,
-      romanizeHindi: json['romanizeHindi'] as bool? ?? true,
-      romanizeOther: json['romanizeOther'] as bool? ?? true,
+      paxsenixAppleMusic: readBool(json['paxsenixAppleMusic'], true),
+      paxsenixSpotify: readBool(json['paxsenixSpotify'], true),
+      paxsenixMusixmatch: readBool(json['paxsenixMusixmatch'], true),
+      romanizeJapanese: readBool(json['romanizeJapanese'], true),
+      romanizeKorean: readBool(json['romanizeKorean'], true),
+      romanizeChinese: readBool(json['romanizeChinese'], true),
+      romanizeHindi: readBool(json['romanizeHindi'], true),
+      romanizeOther: readBool(json['romanizeOther'], true),
     );
   }
 }

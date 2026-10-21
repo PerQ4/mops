@@ -1,4 +1,5 @@
 import '../../../core/audio/audio_equalizer.dart';
+import 'json_read.dart';
 
 /// Качество аудио. YouTube отдаёт свободным клиентам только part-качество
 /// (до ~160 kbps Opus / 128 kbps AAC), поэтому «Максимум» — это лучший
@@ -60,13 +61,12 @@ enum StreamSource {
 ///
 /// Набор неверной длины или с мусором откатывается к плоскому: применить
 /// «половину» настроек хуже, чем вернуть эквалайзер к нулю.
-List<double> _parseEqualizerBands(String? raw) {
-  if (raw == null || raw.trim().isEmpty) return kEqualizerFlatBands;
-  final List<String> parts = raw.split(',');
+List<double> _parseEqualizerBands(List<String>? parts) {
+  if (parts == null || parts.isEmpty) return kEqualizerFlatBands;
   if (parts.length != kEqualizerBandCount) return kEqualizerFlatBands;
   final List<double> bands = <double>[];
   for (final String part in parts) {
-    final double? value = double.tryParse(part.trim());
+    final double? value = double.tryParse(part);
     if (value == null) return kEqualizerFlatBands;
     bands.add(value.clamp(-kEqualizerMaxGainDb, kEqualizerMaxGainDb));
   }
@@ -197,19 +197,29 @@ class PlaybackSettings {
 
   factory PlaybackSettings.fromJson(Map<String, dynamic> json) {
     return PlaybackSettings(
-      audioQuality: AudioQuality.fromName(json['audioQuality'] as String?),
-      streamClient: StreamSource.fromName(json['streamClient'] as String?),
-      autoPlayNext: json['autoPlayNext'] as bool? ?? true,
-      restoreQueue: json['restoreQueue'] as bool? ?? true,
-      preloadNextTrack: json['preloadNextTrack'] as bool? ?? true,
-      lastVolume: (json['lastVolume'] as num?)?.toDouble() ?? 1.0,
-      lastSpeed: (json['lastSpeed'] as num?)?.toDouble() ?? 1.0,
-      equalizerEnabled: json['equalizerEnabled'] as bool? ?? false,
-      equalizerBands: _parseEqualizerBands(json['equalizerBands'] as String?),
-      equalizerPresetId: json['equalizerPresetId'] as String? ?? 'flat',
-      skipSilence: json['skipSilence'] as bool? ?? false,
-      audioNormalization: json['audioNormalization'] as bool? ?? false,
-      pauseOnDeviceMute: json['pauseOnDeviceMute'] as bool? ?? true,
+      audioQuality: readEnumByName(
+        json['audioQuality'],
+        AudioQuality.values,
+        AudioQuality.high,
+      ),
+      streamClient: readEnumByName(
+        json['streamClient'],
+        StreamSource.values,
+        StreamSource.auto,
+      ),
+      autoPlayNext: readBool(json['autoPlayNext'], true),
+      restoreQueue: readBool(json['restoreQueue'], true),
+      preloadNextTrack: readBool(json['preloadNextTrack'], true),
+      lastVolume: readDouble(json['lastVolume'], 1.0),
+      lastSpeed: readDouble(json['lastSpeed'], 1.0),
+      equalizerEnabled: readBool(json['equalizerEnabled'], false),
+      equalizerBands: _parseEqualizerBands(
+        readStringList(json['equalizerBands']),
+      ),
+      equalizerPresetId: readString(json['equalizerPresetId'], 'flat'),
+      skipSilence: readBool(json['skipSilence'], false),
+      audioNormalization: readBool(json['audioNormalization'], false),
+      pauseOnDeviceMute: readBool(json['pauseOnDeviceMute'], true),
     );
   }
 }

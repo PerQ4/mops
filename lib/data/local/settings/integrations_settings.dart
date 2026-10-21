@@ -1,16 +1,17 @@
 import '../../sources/sponsorblock.dart';
+import 'json_read.dart';
 
 /// Разбирает сохранённый набор категорий SponsorBlock.
 ///
 /// `null` — ключа в файле нет (настройки с прошлой версии): берём набор по
 /// умолчанию. Пустая строка — пользователь снял все галочки: это осознанный
 /// выбор «ничего не пропускать», и подменять его умолчанием нельзя.
-List<SponsorBlockCategory> _parseSponsorCategories(String? raw) {
-  if (raw == null) return kDefaultSponsorBlockCategories;
+List<SponsorBlockCategory> _parseSponsorCategories(List<String>? names) {
+  if (names == null) return kDefaultSponsorBlockCategories;
   final List<SponsorBlockCategory> parsed = <SponsorBlockCategory>[];
-  for (final String name in raw.split(',')) {
+  for (final String name in names) {
     final SponsorBlockCategory? category = SponsorBlockCategory.fromApiName(
-      name.trim(),
+      name,
     );
     if (category != null && !parsed.contains(category)) parsed.add(category);
   }
@@ -87,16 +88,16 @@ class IntegrationsSettings {
 
   factory IntegrationsSettings.fromJson(Map<String, dynamic> json) {
     return IntegrationsSettings(
-      oauthClientId: json['oauthClientId'] as String? ?? '',
-      oauthClientSecret: json['oauthClientSecret'] as String? ?? '',
-      musixmatchApiKey: json['musixmatchApiKey'] as String? ?? '',
-      discordRichPresence: json['discordRichPresence'] as bool? ?? false,
-      discordApplicationId: json['discordApplicationId'] as String? ?? '',
-      sponsorBlockEnabled: json['sponsorBlockEnabled'] as bool? ?? false,
+      oauthClientId: readString(json['oauthClientId'], ''),
+      oauthClientSecret: readString(json['oauthClientSecret'], ''),
+      musixmatchApiKey: readString(json['musixmatchApiKey'], ''),
+      discordRichPresence: readBool(json['discordRichPresence'], false),
+      discordApplicationId: readString(json['discordApplicationId'], ''),
+      sponsorBlockEnabled: readBool(json['sponsorBlockEnabled'], false),
       // Отсутствующий ключ (`null`) — настройки с прошлой версии, набор по
       // умолчанию; пустая строка — пользователь снял все категории.
       sponsorBlockCategories: _parseSponsorCategories(
-        json['sponsorBlockCategories'] as String?,
+        readStringList(json['sponsorBlockCategories']),
       ),
     );
   }
