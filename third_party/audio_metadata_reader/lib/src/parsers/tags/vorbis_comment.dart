@@ -13,10 +13,13 @@ void parseVorbisComment(
   int i = 0;
   final commentBytes = <int>[];
 
-  while (bytes[i] != 0x3D) {
+  while (i < bytes.length && bytes[i] != 0x3D) {
     commentBytes.add(bytes[i]);
     i += 1;
   }
+  // Комментарий без '=' — не тег, а мусор. Раньше цикл уходил за конец
+  // массива, RangeError ронял разбор файла целиком вместе с длительностью.
+  if (i >= bytes.length) return;
   i += 1;
 
   final commentName = decodeTagText(commentBytes);
