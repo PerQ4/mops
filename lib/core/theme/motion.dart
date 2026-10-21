@@ -421,6 +421,30 @@ abstract final class AppMotion {
     reverseCurve: MotionCurve.emphasizedAccelerate,
   );
 
+  // ------------------------------------------------------------ визуализатор
+
+  /// Полосы визуализатора догоняют уровень звука.
+  ///
+  /// Монитор отдаёт значения тридцать раз в секунду, а рисуется экран чаще —
+  /// без этого перехода полосы шли бы шагами по 33 мс. Пространственная
+  /// expressive-кривая даёт мягкую пружинную подачу: атака быстрая, спад
+  /// догоняет без рывка.
+  static MotionTransition get spectrumFollow => _motion(_spectrumFollow);
+  static const MotionTransition _spectrumFollow = MotionTransition(
+    duration: MotionDuration.short4,
+    curve: MotionCurve.expressiveSpatial,
+  );
+
+  /// Свечение за обложкой дышит по общему уровню.
+  ///
+  /// Медленнее полос и без перелёта: свет не должен повторять каждую долю
+  /// секунды, иначе он читается как мигание, а не как дыхание.
+  static MotionTransition get spectrumBreath => _motion(_spectrumBreath);
+  static const MotionTransition _spectrumBreath = MotionTransition(
+    duration: MotionDuration.medium1,
+    curve: MotionCurve.expressiveEffects,
+  );
+
   // --------------------------------------------------------------- таймеры
 
   /// Такт жидкого фона плеера — ~30 кадров в секунду: чаще незаметно, реже

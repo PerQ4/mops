@@ -600,7 +600,7 @@ class _ArtworkStage extends StatelessWidget {
 
   /// Зазор под гало: и отступ кольца от обложки, и место, которое обложка
   /// уступает визуализатору.
-  static const double _kHaloInset = 18;
+  static const double _kHaloInset = 26;
 
   /// Радиус скругления обложки — как `Thumbnail` в ArchiveTune (16).
   static const double _kArtworkRadius = 16;
