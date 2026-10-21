@@ -181,6 +181,19 @@ class SettingsScreen extends ConsumerWidget {
                     subtitle: _liquidSummary(settings),
                     onTap: () => _editLiquidSettings(context, settings),
                   ),
+                // Фон мини-плеера — отдельная от полноэкранного настройка:
+                // островок виден всегда, и его вид не обязан повторять фон
+                // большого плеера.
+                SettingsRow(
+                  icon: Icons.crop_16_9,
+                  title: 'Фон мини-плеера',
+                  subtitle: settings.miniPlayerBackgroundStyle.label,
+                  onTap: () => _pickMiniPlayerBackgroundStyle(
+                    context,
+                    controller,
+                    settings,
+                  ),
+                ),
                 // Визуализатор — отдельная настройка, а не часть стиля фона:
                 // гало живёт поверх любой подложки. Уровень берётся у libmpv,
                 // поэтому там, где такого фильтра нет, гало честно скажет,
@@ -366,6 +379,17 @@ class SettingsScreen extends ConsumerWidget {
                       subtitleMaxLines: 2,
                       value: settings.audioNormalization,
                       onChanged: controller.setAudioNormalization,
+                    ),
+                    // Выдернутые наушники и пропавший Bluetooth — звук не
+                    // должен продолжаться «в тишину».
+                    SettingsSwitchRow(
+                      icon: Icons.headphones_outlined,
+                      title: 'Пауза при отключении устройства',
+                      subtitle: 'Останавливать трек, если пропало устройство, '
+                          'в которое шёл звук',
+                      subtitleMaxLines: 2,
+                      value: settings.pauseOnDeviceMute,
+                      onChanged: controller.setPauseOnDeviceMute,
                     ),
                     SettingsSwitchRow(
                       icon: Icons.play_circle_outline,
@@ -711,8 +735,30 @@ class SettingsScreen extends ConsumerWidget {
       current: settings.playerBackgroundStyle,
       values: PlayerBackgroundStyle.values,
       label: (PlayerBackgroundStyle v) => v.label,
+      // Подпись объясняет, чем стиль отличается, — по названию это неочевидно.
+      description: (PlayerBackgroundStyle v) => v.description,
     );
     if (result != null) await controller.setPlayerBackgroundStyle(result);
+  }
+
+  /// Фон мини-плеера — только островок, не полноэкранный плеер.
+  Future<void> _pickMiniPlayerBackgroundStyle(
+    BuildContext context,
+    SettingsController controller,
+    AppSettings settings,
+  ) async {
+    final MiniPlayerBackgroundStyle? result =
+        await _showChoice<MiniPlayerBackgroundStyle>(
+      context,
+      title: 'Фон мини-плеера',
+      current: settings.miniPlayerBackgroundStyle,
+      values: MiniPlayerBackgroundStyle.values,
+      label: (MiniPlayerBackgroundStyle v) => v.label,
+      description: (MiniPlayerBackgroundStyle v) => v.description,
+    );
+    if (result != null) {
+      await controller.setMiniPlayerBackgroundStyle(result);
+    }
   }
 
   /// Подпись строки «Настройки жидкости»: текущие значения всех четырёх
@@ -1476,6 +1522,7 @@ class SettingsScreen extends ConsumerWidget {
     required T current,
     required List<T> values,
     required String Function(T value) label,
+    String Function(T value)? description,
   }) {
     return showDialog<T>(
       context: context,
@@ -1487,6 +1534,10 @@ class SettingsScreen extends ConsumerWidget {
             for (final T value in values)
               ListTile(
                 title: Text(label(value)),
+                // Описание — только там, где сам выбор неочевиден по названию
+                // (например, стили фона). Остальным спискам вторая строка не
+                // нужна.
+                subtitle: description == null ? null : Text(description(value)),
                 selected: value == current,
                 trailing: value == current
                     ? Icon(Icons.check, color: scheme.primary)

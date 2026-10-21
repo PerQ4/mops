@@ -73,7 +73,8 @@ class _NowPlayingScreenState extends ConsumerState<NowPlayingScreen> {
           ? _Empty(onClose: () => Navigator.maybePop(context))
           : Stack(
               children: <Widget>[
-                // Фон: стиль из настроек (градиент или размытая обложка).
+                // Фон: стиль из настроек (градиент, обложка, свечение,
+                // окрашивание или «жидкость»).
                 Positioned.fill(
                   child: _ArtworkBackdrop(
                     track: track,
@@ -390,6 +391,12 @@ class _ArtworkBackdropState extends State<_ArtworkBackdrop> {
         animate: widget.animate,
       );
     }
+    if (widget.style == PlayerBackgroundStyle.glow) {
+      return _GlowBackdrop(scheme: scheme, palette: palette);
+    }
+    if (widget.style == PlayerBackgroundStyle.coloring) {
+      return _ColoringBackdrop(scheme: scheme, palette: palette);
+    }
     return _GradientBackdrop(scheme: scheme, palette: palette);
   }
 }
@@ -473,6 +480,89 @@ class _GradientBackdrop extends StatelessWidget {
             ),
           ),
         ),
+        ColoredBox(color: scrim.withValues(alpha: 0.18)),
+      ],
+    );
+  }
+}
+
+/// Стиль «Свечение»: мягкие пятна цветов обложки по краям.
+///
+/// В отличие от градиента, который заливает фон сверху вниз, здесь основу
+/// остаётся поверхность темы: текст и управление читаются в любом месте, а
+/// цвет обложки живёт по краям — тремя радиальными пятнами. Пятна плавно
+/// гаснут к центру, поэтому границы не видно.
+class _GlowBackdrop extends StatelessWidget {
+  const _GlowBackdrop({required this.scheme, required this.palette});
+
+  /// Схема темы — основа фона.
+  final ColorScheme scheme;
+
+  /// Палитра из обложки; совпадает с [scheme], пока обложка не разобрана.
+  final ColorScheme palette;
+
+  @override
+  Widget build(BuildContext context) {
+    final List<Color> colors = _backdropColors(palette);
+    return Stack(
+      fit: StackFit.expand,
+      children: <Widget>[
+        ColoredBox(color: scheme.surface),
+        _halo(colors[0], const Alignment(-1.0, -1.0), 1.15),
+        _halo(colors[2], const Alignment(1.0, -0.55), 0.95),
+        _halo(colors[1], const Alignment(0.0, 1.15), 1.1),
+      ],
+    );
+  }
+
+  /// Одно пятно: цвет у края, прозрачность к центру.
+  Widget _halo(Color color, Alignment center, double radius) {
+    return AnimatedContainer(
+      duration: AppMotion.backdropShift.duration,
+      curve: AppMotion.backdropShift.curve,
+      decoration: BoxDecoration(
+        gradient: RadialGradient(
+          center: center,
+          radius: radius,
+          colors: <Color>[
+            color.withValues(alpha: 0.62),
+            color.withValues(alpha: 0),
+          ],
+          stops: const <double>[0.0, 1.0],
+        ),
+      ),
+    );
+  }
+}
+
+/// Стиль «Окрашивание»: фон залит одним цветом обложки.
+///
+/// Никакого перехода нет — весь экран одного тона. Это самый спокойный из
+/// стилей: обложка задаёт оттенок, но не спорит с текстом и обложкой.
+class _ColoringBackdrop extends StatelessWidget {
+  const _ColoringBackdrop({required this.scheme, required this.palette});
+
+  /// Схема темы — ориентир по яркости и подложка.
+  final ColorScheme scheme;
+
+  /// Палитра из обложки; совпадает с [scheme], пока обложка не разобрана.
+  final ColorScheme palette;
+
+  @override
+  Widget build(BuildContext context) {
+    final Color scrim = scheme.brightness == Brightness.dark
+        ? Colors.black
+        : scheme.surface;
+    return Stack(
+      fit: StackFit.expand,
+      children: <Widget>[
+        AnimatedContainer(
+          duration: AppMotion.backdropShift.duration,
+          curve: AppMotion.backdropShift.curve,
+          color: _backdropColors(palette).first,
+        ),
+        // Подложка та же, что у градиента: плоский цвет без неё был бы
+        // светлее, и текст терял бы контраст.
         ColoredBox(color: scrim.withValues(alpha: 0.18)),
       ],
     );

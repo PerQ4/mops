@@ -6,6 +6,7 @@ import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 
 import '../core/audio/audio_engine.dart';
+import '../core/audio/media_kit_engine.dart';
 import '../core/scrobbling/scrobbler.dart';
 import '../data/local/queue_snapshot.dart';
 import '../data/models/models.dart';
@@ -174,6 +175,9 @@ class PlayerController extends Notifier<PlayerUiState> {
 
   StreamSubscription<PlaybackState>? _engineSub;
   StreamSubscription<List<AudioOutputDevice>>? _devicesSub;
+
+  /// Пропажа устройства вывода: только [MediaKitEngine] умеет её заметить.
+  StreamSubscription<AudioOutputDevice>? _deviceLossSub;
   final Random _random = Random();
 
   /// История проигранных индексов — нужна для «назад» при перемешивании.
@@ -286,6 +290,15 @@ class PlayerController extends Notifier<PlayerUiState> {
       },
     );
 
+    // Пропажа устройства вывода. Поток есть только у движка, который умеет её
+    // отличать от смены устройства пользователем; у прочих здесь ничего нет.
+    _deviceLossSub?.cancel();
+    _deviceLossSub = null;
+    final AudioEngine engine = _engine;
+    if (engine is MediaKitEngine) {
+      _deviceLossSub = engine.lostAudioDeviceStream.listen(_onAudioDeviceLost);
+    }
+
     // Позицию сохраняем по таймеру, а не на каждое её обновление: движок шлёт
     // её несколько раз в секунду, и столько же записей на диск было бы лишним.
     _snapshotTimer?.cancel();
@@ -299,6 +312,8 @@ class PlayerController extends Notifier<PlayerUiState> {
       _engineSub = null;
       _devicesSub?.cancel();
       _devicesSub = null;
+      _deviceLossSub?.cancel();
+      _deviceLossSub = null;
       _snapshotTimer?.cancel();
       _snapshotTimer = null;
       _cancelSleepTimer();
@@ -645,6 +660,31 @@ class PlayerController extends Notifier<PlayerUiState> {
   Future<void> setAudioDevice(String name) async {
     state = state.copyWith(audioDeviceName: name);
     await _engine.setAudioDevice(name);
+  }
+
+  /// Устройство, в которое шёл звук, исчезло (выдернули наушники, отвалился
+  /// Bluetooth).
+  ///
+  /// Возвращать выбор к «Системному» нужно в любом случае: прежнего устройства
+  /// больше нет, и отметка в списке указывала бы в пустоту. Пауза же — по
+  /// настройке: иначе трек продолжался бы в тишину.
+  void _onAudioDeviceLost(AudioOutputDevice device) {
+    // Возвращать выбор к «Системному» нужно и в движке, а не только в
+    // состоянии: иначе mpv остался бы на исчезнувшем устройстве, и звук после
+    // снятия с паузы мог не вернуться.
+    if (state.audioDeviceName != 'auto') {
+      unawaited(
+        setAudioDevice('auto').catchError((Object error) {
+          // Устройство могли отключить в момент закрытия окна: сбой здесь
+          // не должен превращаться в необработанную ошибку.
+          debugPrint('Не удалось вернуть системное устройство: $error');
+        }),
+      );
+    }
+    if (!state.playback.isPlaying) return;
+    if (!ref.read(settingsControllerProvider).pauseOnDeviceMute) return;
+    debugPrint('Устройство вывода пропало (${device.description}) — пауза');
+    unawaited(pause());
   }
 
   void toggleShuffle() {

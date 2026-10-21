@@ -247,8 +247,10 @@ enum ProgressBarStyle {
 /// градиент из цветов обложки, размытая обложка и «жидкий» шейдер (задача 10.2,
 /// идея — из `LiquidBackdrop.qml` у shredos67/swiftify).
 enum PlayerBackgroundStyle {
-  gradient('Градиент', 'Градиент из цветов обложки'),
+  gradient('Градиент', 'Плавный переход из трёх цветов обложки сверху вниз'),
   blur('Размытая обложка', 'Обложка трека, размытая и затемнённая'),
+  glow('Свечение', 'Цветные пятна обложки по краям, центр затемнён'),
+  coloring('Окрашивание', 'Весь фон залит одним цветом обложки, без перехода'),
   liquid('Жидкость', 'Медленно текущий шейдер из цветов обложки');
 
   const PlayerBackgroundStyle(this.label, this.description);
@@ -260,6 +262,30 @@ enum PlayerBackgroundStyle {
       PlayerBackgroundStyle.values.firstWhere(
         (PlayerBackgroundStyle v) => v.name == name,
         orElse: () => PlayerBackgroundStyle.gradient,
+      );
+}
+
+/// Фон мини-плеера — островка внизу экрана.
+///
+/// Меняется только заливка внутри островка: кромки, радиусы и стык с
+/// навигацией остаются прежними (см. `floating_dock.dart`).
+enum MiniPlayerBackgroundStyle {
+  theme('Тема', 'Плотная поверхность темы — как было'),
+  gradient('Градиент', 'Переход из акцентных цветов темы'),
+  glow(
+    'Свечение',
+    'Мягкое цветное пятно, гаснущее к правому краю островка',
+  );
+
+  const MiniPlayerBackgroundStyle(this.label, this.description);
+
+  final String label;
+  final String description;
+
+  static MiniPlayerBackgroundStyle fromName(String? name) =>
+      MiniPlayerBackgroundStyle.values.firstWhere(
+        (MiniPlayerBackgroundStyle v) => v.name == name,
+        orElse: () => MiniPlayerBackgroundStyle.theme,
       );
 }
 
@@ -496,7 +522,9 @@ class AppSettings {
     // настройка по умолчанию.
     this.skipSilence = false,
     this.audioNormalization = false,
+    this.pauseOnDeviceMute = true,
     this.volumeSliderStyle = ProgressBarStyle.standard,
+    this.miniPlayerBackgroundStyle = MiniPlayerBackgroundStyle.theme,
     this.titleBarCentered = true,
     this.titleBarMatchesBackground = false,
   });
@@ -735,8 +763,17 @@ class AppSettings {
   /// Выравнивать громкость между тихими и громкими местами.
   final bool audioNormalization;
 
+  /// Ставить воспроизведение на паузу, когда пропадает устройство вывода,
+  /// в которое шёл звук (выдернули наушники, отвалился Bluetooth).
+  ///
+  /// По умолчанию включено: играть «в тишину» — худший из вариантов.
+  final bool pauseOnDeviceMute;
+
   /// Стиль ползунка громкости — тот же набор, что у полосы перемотки.
   final ProgressBarStyle volumeSliderStyle;
+
+  /// Фон мини-плеера: тема, градиент или свечение.
+  final MiniPlayerBackgroundStyle miniPlayerBackgroundStyle;
 
   /// Заголовок окна по центру (иначе — слева, у логотипа). Только Windows.
   final bool titleBarCentered;
@@ -839,7 +876,9 @@ class AppSettings {
     String? equalizerPresetId,
     bool? skipSilence,
     bool? audioNormalization,
+    bool? pauseOnDeviceMute,
     ProgressBarStyle? volumeSliderStyle,
+    MiniPlayerBackgroundStyle? miniPlayerBackgroundStyle,
     bool? titleBarCentered,
     bool? titleBarMatchesBackground,
   }) {
@@ -914,7 +953,10 @@ class AppSettings {
       equalizerPresetId: equalizerPresetId ?? this.equalizerPresetId,
       skipSilence: skipSilence ?? this.skipSilence,
       audioNormalization: audioNormalization ?? this.audioNormalization,
+      pauseOnDeviceMute: pauseOnDeviceMute ?? this.pauseOnDeviceMute,
       volumeSliderStyle: volumeSliderStyle ?? this.volumeSliderStyle,
+      miniPlayerBackgroundStyle:
+          miniPlayerBackgroundStyle ?? this.miniPlayerBackgroundStyle,
       titleBarCentered: titleBarCentered ?? this.titleBarCentered,
       titleBarMatchesBackground:
           titleBarMatchesBackground ?? this.titleBarMatchesBackground,
@@ -992,7 +1034,9 @@ class AppSettings {
         'equalizerPresetId': equalizerPresetId,
         'skipSilence': skipSilence,
         'audioNormalization': audioNormalization,
+        'pauseOnDeviceMute': pauseOnDeviceMute,
         'volumeSliderStyle': volumeSliderStyle.name,
+        'miniPlayerBackgroundStyle': miniPlayerBackgroundStyle.name,
         'titleBarCentered': titleBarCentered,
         'titleBarMatchesBackground': titleBarMatchesBackground,
       };
@@ -1084,8 +1128,12 @@ class AppSettings {
       equalizerPresetId: json['equalizerPresetId'] as String? ?? 'flat',
       skipSilence: json['skipSilence'] as bool? ?? false,
       audioNormalization: json['audioNormalization'] as bool? ?? false,
+      pauseOnDeviceMute: json['pauseOnDeviceMute'] as bool? ?? true,
       volumeSliderStyle: ProgressBarStyle.fromName(
         json['volumeSliderStyle'] as String?,
+      ),
+      miniPlayerBackgroundStyle: MiniPlayerBackgroundStyle.fromName(
+        json['miniPlayerBackgroundStyle'] as String?,
       ),
       titleBarCentered: json['titleBarCentered'] as bool? ?? true,
       titleBarMatchesBackground:

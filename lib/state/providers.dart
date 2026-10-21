@@ -281,6 +281,14 @@ class SettingsController extends Notifier<AppSettings> {
   Future<void> setAudioNormalization(bool value) =>
       update((AppSettings s) => s.copyWith(audioNormalization: value));
 
+  /// Ставить на паузу, когда пропадает устройство вывода.
+  Future<void> setPauseOnDeviceMute(bool value) =>
+      update((AppSettings s) => s.copyWith(pauseOnDeviceMute: value));
+
+  /// Фон мини-плеера: тема, градиент или свечение.
+  Future<void> setMiniPlayerBackgroundStyle(MiniPlayerBackgroundStyle style) =>
+      update((AppSettings s) => s.copyWith(miniPlayerBackgroundStyle: style));
+
   /// Стиль ползунка громкости.
   Future<void> setVolumeSliderStyle(ProgressBarStyle style) =>
       update((AppSettings s) => s.copyWith(volumeSliderStyle: style));

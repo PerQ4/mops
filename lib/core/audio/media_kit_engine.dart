@@ -37,6 +37,11 @@ class MediaKitEngine implements AudioEngine {
       StreamController<PlaybackState>.broadcast();
   final StreamController<List<AudioOutputDevice>> _devices =
       StreamController<List<AudioOutputDevice>>.broadcast();
+
+  /// Пропажи устройства, в которое шёл звук. Отдельный поток, а не часть
+  /// [stateStream]: пауза по настройке — решение контроллера, а не движка.
+  final StreamController<AudioOutputDevice> _deviceLoss =
+      StreamController<AudioOutputDevice>.broadcast();
   final List<StreamSubscription<dynamic>> _subs =
       <StreamSubscription<dynamic>>[];
 
@@ -92,6 +97,43 @@ class MediaKitEngine implements AudioEngine {
   /// Отказы фильтров — словами mpv. `null` — все запрошенные эффекты приняты.
   final ValueNotifier<String?> _effectIssue = ValueNotifier<String?>(null);
 
+  /// Устройство, которое mpv реально использует (`audio-out-detected-device`).
+  ///
+  /// При выборе «Системное» (`auto`) сам `audio-device` остаётся `auto`, и по
+  /// списку устройств не видно, в какое из них идёт звук. Это свойство отдаёт
+  /// физическое устройство, поэтому пропажу наушников видно и в режиме «авто».
+  String? _detectedDevice;
+
+  /// Последний полученный список устройств — нужен, чтобы отличить пропажу
+  /// от смены устройства пользователем.
+  List<AudioOutputDevice> _lastDevices = const <AudioOutputDevice>[];
+
+  /// О пропаже уже сообщили: не повторяем, пока устройство не вернётся.
+  bool _deviceLossReported = false;
+
+  /// Имена устройств, которые когда-либо были в списке mpv.
+  ///
+  /// `audio-out-detected-device` и `audio-device-list` могут называть одно и
+  /// то же устройство по-разному (у драйвера свой формат). Сравнивать имеет
+  /// смысл только с тем, что список действительно показывал: иначе первое же
+  /// переключение выглядело бы как пропажа, и музыка встала бы на паузу.
+  final Set<String> _knownDeviceNames = <String>{};
+
+  /// Устройство, которое было активно до последней смены обнаруженного.
+  ///
+  /// mpv может сообщить о новом устройстве раньше, чем обновит список, — тогда
+  /// пропажу подтверждаем по следующему списку, а не спешим с паузой.
+  String? _pendingDeviceLoss;
+  Timer? _pendingDeviceLossTimer;
+
+  /// Громкость до смены устройства и таймер её проверки.
+  ///
+  /// Системный микшер при переключении устройства иногда оставляет ноль.
+  /// Запоминаем прежнюю громкость до переключения и через мгновение сверяем:
+  /// если звук обнулился сам, возвращаем его.
+  double? _volumeBeforeDeviceChange;
+  Timer? _volumeRecoveryTimer;
+
   /// Пересборки `af` идут по очереди: параллельные чтение и запись одного
   /// свойства дали бы гонку — цепочка собиралась бы из устаревшего состояния.
   Future<void>? _chainQueue;
@@ -143,6 +185,52 @@ class MediaKitEngine implements AudioEngine {
       _player.stream.audioParams.listen(_onAudioParams),
       _player.stream.audioBitrate.listen(_onAudioBitrate),
     ]);
+    // «Системное» устройство: узнаём, какое физическое выбрано на самом деле.
+    unawaited(_observeDetectedDevice());
+  }
+
+  /// Слушает свойство mpv «обнаруженное устройство вывода».
+  ///
+  /// Свойство есть не у каждого аудиодрайвера (на Windows — у `wasapi`);
+  /// неизвестное свойство mpv просто игнорирует, и тогда остаётся сверка
+  /// выбранного устройства со списком (см. [_checkDeviceLoss]).
+  Future<void> _observeDetectedDevice() async {
+    final NativePlayer? native = _native;
+    if (native == null) return;
+    try {
+      await native.observeProperty('audio-out-detected-device', (String value) async {
+        final String name = value.trim();
+        if (name.isEmpty || name == _detectedDevice) return;
+        final String previous = _detectedDevice ?? '';
+        _detectedDevice = name;
+        _watchVolumeAfterDeviceChange();
+        // Прежнее устройство могло исчезнуть: mpv просто перешёл на следующее.
+        // Список к этому моменту бывает ещё старым, поэтому не спешим — ждём
+        // подтверждения от [_onAudioDevices], если оно вообще нужно.
+        if (previous.isNotEmpty &&
+            previous != 'auto' &&
+            _knownDeviceNames.contains(previous)) {
+          _pendingDeviceLoss = previous;
+          if (!_lastDevices.any((AudioOutputDevice d) => d.name == previous)) {
+            _pendingDeviceLoss = null;
+            _reportDeviceLoss(previous);
+          } else {
+            // Список ещё старый. Даём ему обновиться; пользовательская смена
+            // устройства список не трогает, поэтому по таймеру просто снимаем
+            // ожидание — паузы не будет.
+            _pendingDeviceLossTimer?.cancel();
+            _pendingDeviceLossTimer = Timer(
+              const Duration(seconds: 2),
+              () => _pendingDeviceLoss = null,
+            );
+          }
+        }
+        _checkDeviceLoss(_lastDevices);
+      });
+    } on Object catch (error) {
+      // Драйвер без такого свойства — не повод что-то менять в звуке.
+      debugPrint('Устройство вывода не отслеживается: $error');
+    }
   }
 
   /// Разбирает состав потока: кодек и параметры выбранной аудиодорожки.
@@ -192,8 +280,60 @@ class MediaKitEngine implements AudioEngine {
   }
 
   void _onAudioDevices(List<AudioDevice> devices) {
+    final List<AudioOutputDevice> mapped = _mapDevices(devices);
+    _lastDevices = mapped;
+    for (final AudioOutputDevice device in mapped) {
+      _knownDeviceNames.add(device.name);
+    }
+    _confirmPendingDeviceLoss(mapped);
+    _checkDeviceLoss(mapped);
     if (_devices.isClosed) return;
-    _devices.add(_mapDevices(devices));
+    _devices.add(mapped);
+  }
+
+  /// Подтверждает пропажу по свежему списку устройств.
+  ///
+  /// Пока список пуст, судить не о чем. Если прежнее устройство в списке
+  /// осталось — это была смена по выбору пользователя, а не пропажа.
+  void _confirmPendingDeviceLoss(List<AudioOutputDevice> devices) {
+    final String? pending = _pendingDeviceLoss;
+    if (pending == null || devices.isEmpty) return;
+    _pendingDeviceLossTimer?.cancel();
+    _pendingDeviceLossTimer = null;
+    _pendingDeviceLoss = null;
+    if (devices.any((AudioOutputDevice d) => d.name == pending)) return;
+    _reportDeviceLoss(pending);
+  }
+
+  /// Проверяет, не исчезло ли устройство, в которое идёт звук.
+  ///
+  /// Активное устройство — выбранное пользователем, а при «Системном» — то,
+  /// что mpv реально обнаружил. Пустой список — это ещё не перечисленные
+  /// устройства, а не пропажа: иначе пауза срабатывала бы при старте.
+  void _checkDeviceLoss(List<AudioOutputDevice> devices) {
+    if (devices.isEmpty) return;
+    final String selected = _player.state.audioDevice.name;
+    final String active = selected == 'auto' || selected.isEmpty
+        ? (_detectedDevice ?? '')
+        : selected;
+    if (active.isEmpty || active == 'auto') return;
+    if (devices.any((AudioOutputDevice d) => d.name == active)) {
+      _deviceLossReported = false;
+      return;
+    }
+    // Если такого имени список никогда не показывал, это разный формат имён,
+    // а не пропажа: молчим, чтобы не поставить паузу на ровном месте.
+    if (!_knownDeviceNames.contains(active)) return;
+    _reportDeviceLoss(active);
+  }
+
+  /// Сообщает о пропаже устройства один раз, пока оно не вернётся.
+  void _reportDeviceLoss(String name) {
+    if (_deviceLossReported) return;
+    _deviceLossReported = true;
+    if (!_deviceLoss.isClosed) {
+      _deviceLoss.add(AudioOutputDevice(name: name, description: name));
+    }
   }
 
   List<AudioOutputDevice> _mapDevices(List<AudioDevice> devices) => devices
@@ -210,6 +350,13 @@ class MediaKitEngine implements AudioEngine {
   @override
   Stream<List<AudioOutputDevice>> get audioDevicesStream => _devices.stream;
 
+  /// Пропало устройство, в которое шёл звук.
+  ///
+  /// Намеренно не часть [AudioEngine]: движок не решает, ставить ли паузу, —
+  /// это настройка приложения. Контроллер подписывается на поток, если движок
+  /// умеет отличать пропажу (см. `player_controller.dart`).
+  Stream<AudioOutputDevice> get lostAudioDeviceStream => _deviceLoss.stream;
+
   @override
   Future<void> setAudioDevice(String name) async {
     final List<AudioDevice> list = _player.state.audioDevices;
@@ -217,6 +364,7 @@ class MediaKitEngine implements AudioEngine {
       (AudioDevice d) => d.name == name,
       orElse: () => AudioDevice(name, ''),
     );
+    _watchVolumeAfterDeviceChange();
     await _player.setAudioDevice(device);
   }
 
@@ -518,6 +666,36 @@ class MediaKitEngine implements AudioEngine {
     _emit(_state.copyWith(volume: clamped));
   }
 
+  /// Запоминает громкость перед сменой устройства и проверяет её после.
+  ///
+  /// Системный микшер иногда оставляет на новом устройстве ноль. Проверяем не
+  /// сразу, а через мгновение: драйвер выставляет громкость не мгновенно, и
+  /// слишком ранняя проверка увидела бы ещё прежнее значение.
+  void _watchVolumeAfterDeviceChange() {
+    final double target = _state.volume;
+    // Ноль выставил пользователь — «восстанавливать» его обратно нельзя.
+    if (target <= 0.01) return;
+    _volumeBeforeDeviceChange = target;
+    _volumeRecoveryTimer?.cancel();
+    _volumeRecoveryTimer = Timer(
+      const Duration(milliseconds: 700),
+      () => unawaited(_restoreVolumeAfterDeviceChange()),
+    );
+  }
+
+  Future<void> _restoreVolumeAfterDeviceChange() async {
+    final double? target = _volumeBeforeDeviceChange;
+    _volumeBeforeDeviceChange = null;
+    if (target == null || _disposed) return;
+    // Пользователь успел выставить другую громкость — его выбор важнее.
+    if ((_state.volume - target).abs() > 0.01) return;
+    // `volume` у media_kit — проценты: ноль означает «звука нет».
+    if (_player.state.volume > 0.5) return;
+    await _player.setVolume(target * 100.0);
+    _emit(_state.copyWith(volume: target));
+    debugPrint('Громкость восстановлена после смены устройства вывода');
+  }
+
   @override
   Future<void> setSpeed(double speed) async {
     final double clamped = speed.clamp(0.5, 2.0);
@@ -771,12 +949,17 @@ class MediaKitEngine implements AudioEngine {
     _disposed = true;
     _seekSafetyTimer?.cancel();
     _seekSafetyTimer = null;
+    _volumeRecoveryTimer?.cancel();
+    _volumeRecoveryTimer = null;
+    _pendingDeviceLossTimer?.cancel();
+    _pendingDeviceLossTimer = null;
     for (final StreamSubscription<dynamic> sub in _subs) {
       await sub.cancel();
     }
     _subs.clear();
     await _controller.close();
     await _devices.close();
+    await _deviceLoss.close();
     _effectIssue.dispose();
     try {
       await _player.dispose();

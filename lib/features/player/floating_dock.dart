@@ -439,6 +439,13 @@ class _PlayerIslandState extends ConsumerState<_PlayerIsland> {
     );
     final Track track = current!;
     final bool wide = context.isExpandedLayout;
+    // Фон островка — отдельная настройка: меняется только заливка, кромки и
+    // стык с навигацией остаются прежними.
+    final MiniPlayerBackgroundStyle backgroundStyle = ref.watch(
+      settingsControllerProvider.select(
+        (AppSettings s) => s.miniPlayerBackgroundStyle,
+      ),
+    );
 
     // Насколько жест набран: подмешиваем акцент к поверхности островка, чтобы
     // свайп было видно. Раньше островок на движение не отвечал никак.
@@ -477,6 +484,7 @@ class _PlayerIslandState extends ConsumerState<_PlayerIsland> {
         radius: radius,
         elevation: 0,
         tint: tint,
+        backgroundStyle: backgroundStyle,
         child: SizedBox(
           height: FloatingDock.playerIslandHeight,
           child: Row(
@@ -1063,6 +1071,7 @@ class _DockSurface extends StatelessWidget {
     required this.radius,
     this.elevation = 8,
     this.tint = 0,
+    this.backgroundStyle = MiniPlayerBackgroundStyle.theme,
   });
 
   final Widget child;
@@ -1073,16 +1082,51 @@ class _DockSurface extends StatelessWidget {
   /// Нужен как отклик на свайп: раньше островок на жест не отвечал вовсе.
   final double tint;
 
+  /// Заливка островка. По умолчанию — прежняя поверхность темы; градиент и
+  /// свечение задаются настройкой и меняют только цвет внутри островка.
+  final MiniPlayerBackgroundStyle backgroundStyle;
+
   @override
   Widget build(BuildContext context) {
     final ColorScheme scheme = Theme.of(context).colorScheme;
+    final Color base = Color.lerp(
+      scheme.surfaceContainerHigh,
+      scheme.primaryContainer,
+      tint * 0.5,
+    )!;
+
+    // Градиенты собраны из ролей темы, а не из отдельного разбора обложки:
+    // палитра приложения и так строится по обложке, когда выбран такой
+    // источник цвета, — и островок живёт в том же тоне, что и остальное.
+    final Gradient? gradient = switch (backgroundStyle) {
+      MiniPlayerBackgroundStyle.theme => null,
+      MiniPlayerBackgroundStyle.gradient => LinearGradient(
+          begin: Alignment.topLeft,
+          end: Alignment.bottomRight,
+          colors: <Color>[
+            Color.lerp(base, scheme.primaryContainer, 0.8)!,
+            Color.lerp(base, scheme.tertiaryContainer, 0.7)!,
+          ],
+        ),
+      // Пятно со стороны обложки гаснет к правому краю, чтобы не спорить с
+      // подписями и кнопками. Кромки и стык с навигацией задаёт прежний
+      // ClipRRect — здесь меняется только заливка.
+      MiniPlayerBackgroundStyle.glow => RadialGradient(
+          center: const Alignment(-0.85, -0.6),
+          radius: 1.35,
+          colors: <Color>[
+            Color.lerp(base, scheme.primaryContainer, 0.95)!,
+            Color.lerp(base, scheme.secondaryContainer, 0.4)!,
+            base,
+          ],
+          stops: const <double>[0.0, 0.55, 1.0],
+        ),
+    };
+
     return DecoratedBox(
       decoration: BoxDecoration(
-        color: Color.lerp(
-          scheme.surfaceContainerHigh,
-          scheme.primaryContainer,
-          tint * 0.5,
-        ),
+        color: gradient == null ? base : null,
+        gradient: gradient,
         borderRadius: radius,
         // Тени нет: островок отделяется от фона только тональным цветом
         // поверхности, как в ArchiveTune.
