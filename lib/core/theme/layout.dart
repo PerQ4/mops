@@ -31,16 +31,8 @@ abstract final class AppLayout {
 
   // ------------------------------------------------------------- общие размеры
 
-  /// Ширина боковой навигации. Фиксированная — иначе панель «прыгает».
-  static const double railWidth = 96;
-  static const double railExtendedWidth = 232;
-
   /// Ширина панели плеера на широких экранах.
   static const double playerPanelWidth = 400;
-
-  /// Высота нижней навигации и панели плеера в компактной раскладке.
-  static const double bottomNavHeight = 72;
-  static const double miniPlayerHeight = 72;
 
   // ---------------------------------------------------- размеры ArchiveTune
   //
@@ -50,17 +42,8 @@ abstract final class AppLayout {
   /// Ширина панели навигации на широком экране.
   static const double navBarMaxWidth = 420;
 
-  /// Высота строки списка (трек, альбом, исполнитель).
-  static const double listItemHeight = 72;
-
-  /// Обложка в строке списка.
-  static const double listThumbnailSize = 56;
-
   /// Обложка в сетке.
   static const double gridThumbnailHeight = 128;
-
-  /// Крупная обложка альбома.
-  static const double albumThumbnailSize = 144;
 
   /// Радиус обложки в списке и в сетке.
   static const double thumbnailRadius = 10;
@@ -137,9 +120,6 @@ abstract final class AppLayout {
 
   /// Карточки в каруселях (альбомы, исполнители, плейлисты).
   static const double cardWidth = 160;
-  static const double cardArtworkRadius = 18;
-  /// Высота карточки целиком: обложка + две строки подписи.
-  static const double cardHeight = cardWidth + 62;
 
   /// Круглые аватары исполнителей.
   static const double artistAvatar = 136;

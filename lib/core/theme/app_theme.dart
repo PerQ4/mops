@@ -2,6 +2,7 @@ import 'package:flutter/material.dart';
 
 import '../../data/local/app_settings.dart';
 import 'custom_font.dart';
+import 'expressive_shape.dart';
 
 // Кривые и длительности живут в `motion.dart` — там весь словарь движений,
 // а здесь только тема. Реэкспорт оставлен для тех, кто импортирует тему:
@@ -118,11 +119,19 @@ class AppTheme {
   /// прежними, а подложка становится абсолютно чёрной (удобно на OLED).
   static ColorScheme pureBlack(ColorScheme scheme) {
     if (scheme.brightness != Brightness.dark) return scheme;
+    // Перекрываем все роли поверхности, а не только нижние уровни: диалоги,
+    // палитра команд и поля поиска берут `surfaceContainerHigh` и
+    // `surfaceContainerHighest`; без них на чёрном фоне оставались серые
+    // прямоугольники.
     return scheme.copyWith(
       surface: Colors.black,
+      surfaceDim: Colors.black,
+      surfaceBright: Colors.black,
       surfaceContainerLowest: Colors.black,
       surfaceContainerLow: Colors.black,
       surfaceContainer: Colors.black,
+      surfaceContainerHigh: Colors.black,
+      surfaceContainerHighest: Colors.black,
     );
   }
 
@@ -339,17 +348,7 @@ class AppTheme {
         }),
       ),
       extensions: <ThemeExtension<dynamic>>[
-        PlayerTheme(
-          heroRadius: BorderRadius.circular(expressive ? 36 : 20),
-          tileRadius: BorderRadius.circular(expressive ? 20 : 12),
-          // Тень обложки убрана: интерфейс плоский, обложка отделяется
-          // размером и скруглением.
-          artworkShadow: const BoxShadow(
-            color: Colors.transparent,
-            blurRadius: 0,
-            offset: Offset.zero,
-          ),
-        ),
+        ExpressiveShape(superellipse: expressive),
       ],
     );
   }
@@ -392,43 +391,6 @@ class AppTheme {
       bodyMedium: base.bodyMedium?.copyWith(color: scheme.onSurfaceVariant),
       bodySmall: base.bodySmall?.copyWith(color: scheme.onSurfaceVariant),
       labelLarge: base.labelLarge?.copyWith(fontWeight: FontWeight.w600),
-    );
-  }
-}
-
-/// Дополнительные параметры темы, которых нет в [ColorScheme].
-@immutable
-class PlayerTheme extends ThemeExtension<PlayerTheme> {
-  const PlayerTheme({
-    required this.heroRadius,
-    required this.tileRadius,
-    required this.artworkShadow,
-  });
-
-  final BorderRadius heroRadius;
-  final BorderRadius tileRadius;
-  final BoxShadow artworkShadow;
-
-  @override
-  PlayerTheme copyWith({
-    BorderRadius? heroRadius,
-    BorderRadius? tileRadius,
-    BoxShadow? artworkShadow,
-  }) {
-    return PlayerTheme(
-      heroRadius: heroRadius ?? this.heroRadius,
-      tileRadius: tileRadius ?? this.tileRadius,
-      artworkShadow: artworkShadow ?? this.artworkShadow,
-    );
-  }
-
-  @override
-  PlayerTheme lerp(covariant PlayerTheme? other, double t) {
-    if (other == null) return this;
-    return PlayerTheme(
-      heroRadius: BorderRadius.lerp(heroRadius, other.heroRadius, t)!,
-      tileRadius: BorderRadius.lerp(tileRadius, other.tileRadius, t)!,
-      artworkShadow: BoxShadow.lerp(artworkShadow, other.artworkShadow, t)!,
     );
   }
 }

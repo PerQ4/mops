@@ -3,6 +3,7 @@ import 'dart:io';
 import 'package:cached_network_image/cached_network_image.dart';
 import 'package:flutter/material.dart';
 
+import '../core/theme/expressive_shape.dart';
 import '../core/theme/motion.dart';
 import '../core/utils/artwork_urls.dart';
 
@@ -83,6 +84,18 @@ class _ArtworkState extends State<Artwork> {
   }
 
   Widget _build(BuildContext context) {
+    // Без `heroTag` обложка мелкая (строка, карточка, панель): ей форма
+    // крупной обложки не нужна, и лишний `LayoutBuilder` в дереве не нужен.
+    if (widget.heroTag == null) return _buildImage(context, null);
+    // Ограничения нужны, чтобы отличить крупную обложку от круглой миниатюры
+    // островка: у миниатюры радиус равен половине стороны.
+    return LayoutBuilder(
+      builder: (BuildContext context, BoxConstraints constraints) =>
+          _buildImage(context, constraints),
+    );
+  }
+
+  Widget _buildImage(BuildContext context, BoxConstraints? constraints) {
     final ColorScheme scheme = Theme.of(context).colorScheme;
     final BorderRadius shape =
         widget.radius ?? BorderRadius.circular(12);
@@ -129,7 +142,11 @@ class _ArtworkState extends State<Artwork> {
         // Ссылки нет вовсе — это не «битая картинка», а обычная заглушка.
         : _placeholder(scheme);
 
-    Widget image = ClipRRect(borderRadius: shape, child: content);
+    Widget image = _ArtworkClip(
+      radius: shape,
+      superellipse: _useSuperellipse(context, shape, constraints),
+      child: content,
+    );
 
     if (widget.heroTag != null) {
       image = Hero(
@@ -144,6 +161,24 @@ class _ArtworkState extends State<Artwork> {
     return image;
   }
 
+  /// Рисовать ли обложку суперэллипсом.
+  ///
+  /// Только крупная обложка: она перелетает в полноэкранный плеер, и форма
+  /// видна именно на ней. Круглая миниатюра островка остаётся круглой — её
+  /// радиус равен половине стороны, а суперэллипс такого радиуса — уже не круг.
+  bool _useSuperellipse(
+    BuildContext context,
+    BorderRadius radius,
+    BoxConstraints? constraints,
+  ) {
+    if (widget.heroTag == null) return false;
+    final ExpressiveShape? shape =
+        Theme.of(context).extension<ExpressiveShape>();
+    if (shape == null || !shape.superellipse) return false;
+    final double side = constraints?.biggest.shortestSide ?? double.infinity;
+    return radius.topLeft.x * 2 < side && radius.topLeft.y * 2 < side;
+  }
+
   /// «Летящая» обложка: содержимое целевого `Hero` в скруглении,
   /// промежуточном между миниатюрой плеера и полноэкранной картинкой.
   Widget _flightShuttle(
@@ -153,42 +188,45 @@ class _ArtworkState extends State<Artwork> {
     BuildContext fromHeroContext,
     BuildContext toHeroContext,
   ) {
-    final BorderRadius from = _heroRadius(fromHeroContext);
-    final BorderRadius to = _heroRadius(toHeroContext);
+    final _ArtworkClip? fromClip = _heroClip(fromHeroContext);
+    final _ArtworkClip? toClip = _heroClip(toHeroContext);
+    final BorderRadius from = fromClip?.radius ?? BorderRadius.circular(12);
+    final BorderRadius to = toClip?.radius ?? BorderRadius.circular(12);
     // Содержимое без скругления берём у целевого `Hero` (он летит), при
     // отсутствии — у исходного.
-    final Widget? content =
-        _heroContent(toHeroContext) ?? _heroContent(fromHeroContext);
+    final Widget? content = toClip?.child ?? fromClip?.child;
     // Скругление идёт по кривой перелёта, а не линейно, как анимация маршрута:
     // иначе углы «плывут» ровно и картинка выглядит вклеенной.
     final Animation<double> flight =
         animation.drive(AppMotion.heroFlight.tween);
+    // Промежуточный кадр остаётся суперэллипсом, если им является хотя бы
+    // один конец: иначе на последнем кадре форма скачком сменилась бы с
+    // суперэллипса на обычное скругление.
+    final bool superellipse =
+        (fromClip?.superellipse ?? false) || (toClip?.superellipse ?? false);
     return AnimatedBuilder(
       animation: flight,
       child: content,
-      builder: (BuildContext context, Widget? child) => ClipRRect(
-        borderRadius: BorderRadius.lerp(from, to, flight.value)!,
-        child: child,
-      ),
+      builder: (BuildContext context, Widget? child) {
+        final BorderRadius radius = BorderRadius.lerp(from, to, flight.value)!;
+        if (!superellipse) {
+          return ClipRRect(borderRadius: radius, child: child);
+        }
+        return ClipPath(
+          clipper: ShapeBorderClipper(
+            shape: RoundedSuperellipseBorder(borderRadius: radius),
+          ),
+          child: child,
+        );
+      },
     );
   }
 
-  /// Скругление, с которым обложка лежит в дереве указанного `Hero`.
-  static BorderRadius _heroRadius(BuildContext heroContext) {
+  /// Обрезка обложки в указанном `Hero`: форма и радиус.
+  static _ArtworkClip? _heroClip(BuildContext heroContext) {
     final Widget hero = heroContext.widget;
-    if (hero is Hero && hero.child is ClipRRect) {
-      final BorderRadiusGeometry radius =
-          (hero.child as ClipRRect).borderRadius;
-      return radius.resolve(Directionality.of(heroContext));
-    }
-    return BorderRadius.circular(12);
-  }
-
-  /// Содержимое обложки без скругления — то, что лежит внутри `ClipRRect`.
-  static Widget? _heroContent(BuildContext heroContext) {
-    final Widget hero = heroContext.widget;
-    if (hero is Hero && hero.child is ClipRRect) {
-      return (hero.child as ClipRRect).child;
+    if (hero is Hero && hero.child is _ArtworkClip) {
+      return hero.child as _ArtworkClip;
     }
     return null;
   }
@@ -205,6 +243,36 @@ class _ArtworkState extends State<Artwork> {
         size: side * 0.36,
         color: scheme.onSurfaceVariant,
       ),
+    );
+  }
+}
+
+/// Обложка, обрезанная по форме, вместе с описанием этой формы.
+///
+/// Отдельный виджет, а не голый `ClipRRect`: перелёт `Hero` должен знать
+/// радиус и вид обрезки явно, не разбирая дерево виджетов. Суперэллипс
+/// через `ClipRRect` не выражается — ему нужен путь.
+class _ArtworkClip extends StatelessWidget {
+  const _ArtworkClip({
+    required this.radius,
+    required this.superellipse,
+    required this.child,
+  });
+
+  final BorderRadius radius;
+  final bool superellipse;
+  final Widget child;
+
+  @override
+  Widget build(BuildContext context) {
+    if (!superellipse) {
+      return ClipRRect(borderRadius: radius, child: child);
+    }
+    return ClipPath(
+      clipper: ShapeBorderClipper(
+        shape: RoundedSuperellipseBorder(borderRadius: radius),
+      ),
+      child: child,
     );
   }
 }
