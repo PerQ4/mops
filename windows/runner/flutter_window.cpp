@@ -109,6 +109,15 @@ bool FlutterWindow::OnCreate() {
           result->Success();
         } else if (method == "isMaximized") {
           result->Success(flutter::EncodableValue(IsZoomed(hwnd) != 0));
+        } else if (method == "snap") {
+          const std::string* side = std::get_if<std::string>(call.arguments());
+          if (side == nullptr) {
+            result->Error("bad_arguments",
+                          "snap expects \"left\", \"right\" or \"max\"");
+            return;
+          }
+          SnapWindow(*side);
+          result->Success();
         } else if (method == "startDrag") {
           // Тянем окно за свою шапку: отдаём системе нативный перетаскиватель.
           ReleaseCapture();
@@ -195,6 +204,47 @@ bool FlutterWindow::HandleMediaCommand(MediaCommand command) {
       "mediaKey", std::make_unique<flutter::EncodableValue>(
                       std::string(MediaCommandName(command))));
   return true;
+}
+
+void FlutterWindow::SnapWindow(const std::string& side) {
+  HWND hwnd = GetHandle();
+  if (hwnd == nullptr) return;
+
+  // «Весь экран» — это обычный разворот: его границы уже ограничены рабочей
+  // областью в WM_GETMINMAXINFO (см. win32_window.cpp), поэтому панель задач
+  // остаётся видна.
+  if (side == "max") {
+    ShowWindow(hwnd, SW_MAXIMIZE);
+    return;
+  }
+
+  const bool left = side == "left";
+  const bool right = side == "right";
+  if (!left && !right) return;
+
+  // У развёрнутого окна SetWindowPos меняет только размер восстановления:
+  // сначала возвращаем окно в обычное состояние.
+  if (IsZoomed(hwnd) || IsIconic(hwnd)) {
+    ShowWindow(hwnd, SW_RESTORE);
+  }
+
+  // Рабочая область монитора — без панели задач. Координаты здесь физические:
+  // процесс объявлен PerMonitorV2 (runner.exe.manifest), поэтому rcWork и
+  // SetWindowPos живут в одних и тех же пикселях и масштаб DPI применять не
+  // нужно — умножение на него уехало бы мимо края экрана.
+  MONITORINFO info = {};
+  info.cbSize = sizeof(info);
+  if (!GetMonitorInfo(MonitorFromWindow(hwnd, MONITOR_DEFAULTTONEAREST),
+                      &info)) {
+    return;
+  }
+
+  const RECT work = info.rcWork;
+  const int width = (work.right - work.left) / 2;
+  const int x = left ? work.left : work.right - width;
+
+  SetWindowPos(hwnd, nullptr, x, work.top, width, work.bottom - work.top,
+               SWP_NOZORDER | SWP_NOACTIVATE);
 }
 
 void FlutterWindow::NotifyMaximizedChanged() {

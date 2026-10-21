@@ -1,6 +1,10 @@
 import 'package:flutter/foundation.dart';
 import 'package:flutter/services.dart';
 
+/// Куда положить окно. Имена значений — это аргумент команды `snap`:
+/// нативная сторона разбирает ровно эти строки.
+enum SnapSide { left, right, max }
+
 /// Канал окна `mops/window` — общая точка для своей шапки на Windows.
 ///
 /// Нативная сторона не только принимает команды, но и сообщает состояние
@@ -38,9 +42,14 @@ class WindowChannel {
     }
   }
 
+  /// Положить окно в половину рабочей области монитора или развернуть его.
+  ///
+  /// Своя раскладка, а не системный Snap: см. `snap_layout_panel.dart`.
+  static void snap(SnapSide side) => invoke('snap', side.name);
+
   /// Выполнить команду окна. Ошибку не показываем: окно могло уже закрыться.
-  static void invoke(String method) {
-    _channel.invokeMethod<void>(method).catchError((Object _) {});
+  static void invoke(String method, [Object? arguments]) {
+    _channel.invokeMethod<void>(method, arguments).catchError((Object _) {});
   }
 
   static Future<void> _onMethodCall(MethodCall call) async {

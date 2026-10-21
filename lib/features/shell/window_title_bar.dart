@@ -1,3 +1,4 @@
+import 'dart:async';
 import 'dart:io';
 
 import 'package:flutter/gestures.dart';
@@ -10,6 +11,7 @@ import '../../state/player_controller.dart';
 import '../../state/providers.dart';
 import '../../state/shell.dart';
 import 'destinations.dart';
+import 'snap_layout_panel.dart';
 import 'window_channel.dart';
 
 /// Есть ли у окна своя заголовочная панель (только Windows).
@@ -30,12 +32,119 @@ class WindowTitleBar extends ConsumerStatefulWidget {
 }
 
 class _WindowTitleBarState extends ConsumerState<WindowTitleBar> {
+  /// Панель раскладок живёт в `Overlay` шапки, а не в её дереве.
+  ///
+  /// Вся шапка — это полоса высотой 34: всё нарисованное за её нижним краем
+  /// не получает ни наведения, ни кликов, потому что попадание считается по
+  /// границам виджета. Оверлей же занимает всё окно — там панели есть куда
+  /// расти.
+  OverlayEntry? _snapPanel;
+
+  Timer? _snapShowTimer;
+  Timer? _snapHideTimer;
+
+  /// Задержка перед показом: раскладки не должны вспыхивать, когда курсор
+  /// просто проходит через «Развернуть» по пути к «Закрыть».
+  static const Duration _snapShowDelay = Duration(milliseconds: 350);
+
+  /// Запас на путь от кнопки до панели: между ними несколько пикселей, и без
+  /// него панель исчезала бы раньше, чем до неё дотянется курсор.
+  static const Duration _snapHideDelay = Duration(milliseconds: 220);
+
   @override
   void initState() {
     super.initState();
     // Подписываемся на нативные события и спрашиваем текущее состояние: окно
     // могло быть развёрнуто ещё до появления шапки.
     WindowChannel.attach();
+  }
+
+  @override
+  void dispose() {
+    _snapShowTimer?.cancel();
+    _snapHideTimer?.cancel();
+    _snapPanel?.remove();
+    _snapPanel = null;
+    super.dispose();
+  }
+
+  /// Курсор над кнопкой «Развернуть».
+  void _onMaximizeHover(bool hovered) {
+    if (hovered) {
+      _snapHideTimer?.cancel();
+      _snapHideTimer = null;
+      _snapShowTimer ??= Timer(_snapShowDelay, _showSnapPanel);
+    } else {
+      _snapShowTimer?.cancel();
+      _snapShowTimer = null;
+      _scheduleSnapHide();
+    }
+  }
+
+  /// Курсор над самой панелью: пока он там, прятать нечего.
+  void _onPanelHover(bool hovered) {
+    if (hovered) {
+      _snapHideTimer?.cancel();
+      _snapHideTimer = null;
+    } else {
+      _scheduleSnapHide();
+    }
+  }
+
+  void _scheduleSnapHide() {
+    _snapHideTimer?.cancel();
+    _snapHideTimer = Timer(_snapHideDelay, _hideSnapPanel);
+  }
+
+  void _showSnapPanel() {
+    _snapShowTimer = null;
+    // Шапка могла исчезнуть, пока тикал таймер (полноэкранный клип её гасит).
+    if (!mounted || _snapPanel != null) return;
+
+    final OverlayState? overlay = Overlay.maybeOf(context);
+    // Без оверлея панель некуда положить. Кнопка при этом работает как
+    // обычно, поэтому молча выходим.
+    if (overlay == null) return;
+
+    _snapPanel = OverlayEntry(
+      builder: (BuildContext context) {
+        // Запись оверлея растягивается на всё окно, поэтому панель
+        // прижимается к правому верхнему углу. Мышь ловит только она сама:
+        // полноэкранная выкладка прозрачна для кликов, и всё, что мимо
+        // плиток, уходит в содержимое окна.
+        return Align(
+          alignment: Alignment.topRight,
+          child: Padding(
+            // Под шапкой и с отступом от правого края — рядом с кнопками,
+            // но не поверх них: полоса шапки остаётся зоной перетаскивания.
+            padding: EdgeInsets.only(top: widget.height + 6, right: 8),
+            child: SnapLayoutPanel(
+              onHoverChanged: _onPanelHover,
+              onSelected: _onSnapSelected,
+            ),
+          ),
+        );
+      },
+    );
+    overlay.insert(_snapPanel!);
+    // Перестраиваем шапку только ради подсказки кнопки (см. `tooltip` ниже).
+    setState(() {});
+  }
+
+  void _onSnapSelected(SnapSide side) {
+    WindowChannel.snap(side);
+    _hideSnapPanel();
+  }
+
+  void _hideSnapPanel() {
+    final bool wasShown = _snapPanel != null;
+    _snapShowTimer?.cancel();
+    _snapShowTimer = null;
+    _snapHideTimer?.cancel();
+    _snapHideTimer = null;
+    _snapPanel?.remove();
+    _snapPanel = null;
+    if (wasShown && mounted) setState(() {});
   }
 
   @override
@@ -97,7 +206,10 @@ class _WindowTitleBarState extends ConsumerState<WindowTitleBar> {
                   behavior: HitTestBehavior.opaque,
                   // Состояние после двойного клика придёт событием WM_SIZE,
                   // отдельно спрашивать его не нужно.
-                  onDoubleTap: () => WindowChannel.invoke('toggleMaximize'),
+                  onDoubleTap: () {
+                    _hideSnapPanel();
+                    WindowChannel.invoke('toggleMaximize');
+                  },
                 ),
               ),
             ),
@@ -154,10 +266,27 @@ class _WindowTitleBarState extends ConsumerState<WindowTitleBar> {
                   ValueListenableBuilder<bool>(
                     valueListenable: WindowChannel.maximized,
                     builder: (BuildContext context, bool maximized, Widget? _) {
-                      return _CircleButton(
-                        icon: maximized ? Icons.filter_none : Icons.crop_square,
-                        label: maximized ? 'Восстановить' : 'Развернуть',
-                        onTap: () => WindowChannel.invoke('toggleMaximize'),
+                      // Наведение кнопка отдаёт наружу явным `MouseRegion`, а
+                      // не через `onShowHoverHighlight`: тот выключен, пока
+                      // система считает ввод «касанием», и панель тогда не
+                      // появилась бы вовсе.
+                      return MouseRegion(
+                        onEnter: (PointerEnterEvent _) =>
+                            _onMaximizeHover(true),
+                        onExit: (PointerExitEvent _) => _onMaximizeHover(false),
+                        child: _CircleButton(
+                          icon:
+                              maximized ? Icons.filter_none : Icons.crop_square,
+                          label: maximized ? 'Восстановить' : 'Развернуть',
+                          // Пока панель раскладок открыта, подсказку прячем:
+                          // она всплывает мгновенно и легла бы ровно на
+                          // плитки — панель и так подписана.
+                          tooltip: _snapPanel == null,
+                          onTap: () {
+                            _hideSnapPanel();
+                            WindowChannel.invoke('toggleMaximize');
+                          },
+                        ),
                       );
                     },
                   ),
@@ -191,6 +320,7 @@ class _CircleButton extends StatefulWidget {
     required this.icon,
     required this.label,
     required this.onTap,
+    this.tooltip = true,
     this.danger = false,
   });
 
@@ -199,6 +329,9 @@ class _CircleButton extends StatefulWidget {
   /// Доступное имя кнопки для экранного диктора.
   final String label;
   final VoidCallback onTap;
+
+  /// Показывать ли всплывающую подсказку.
+  final bool tooltip;
   final bool danger;
 
   @override
@@ -225,7 +358,7 @@ class _CircleButtonState extends State<_CircleButton> {
     // `Tooltip` требует предка `Overlay`, а шапка висит в `MaterialApp.builder`
     // выше навигатора. Свой оверлей ей даёт `app.dart`; проверка оставлена
     // страховкой: без оверлея `Tooltip` падает с «No Overlay widget found».
-    final bool canShowHint = Overlay.maybeOf(context) != null;
+    final bool canShowHint = widget.tooltip && Overlay.maybeOf(context) != null;
 
     final Widget button = Semantics(
       button: true,

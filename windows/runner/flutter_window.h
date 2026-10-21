@@ -8,6 +8,7 @@
 
 #include <memory>
 #include <optional>
+#include <string>
 
 #include "media_session.h"
 #include "win32_window.h"
@@ -30,6 +31,10 @@ class FlutterWindow : public Win32Window {
   // Сообщает Dart, развёрнуто окно или нет. Событие уходит только при
   // изменении состояния.
   void NotifyMaximizedChanged();
+
+  // Кладёт окно в половину рабочей области монитора или разворачивает его на
+  // весь экран. |side| — "left", "right" или "max".
+  void SnapWindow(const std::string& side);
 
   // Отдаёт действие в Dart событием `mediaKey`. true — событие отправлено
   // (или это дубль уже обработанного).
