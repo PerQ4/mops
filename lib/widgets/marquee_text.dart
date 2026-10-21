@@ -2,6 +2,8 @@ import 'dart:math' as math;
 
 import 'package:flutter/material.dart';
 
+import '../core/theme/motion.dart';
+
 /// Однострочный текст, который плавно прокручивается, если не влезает.
 ///
 /// Прокрутка включается только при реальном переполнении: измеряем строку
@@ -178,7 +180,7 @@ class _MarqueeTextState extends State<MarqueeText>
             ),
             TweenSequenceItem<double>(
               tween: Tween<double>(begin: 0, end: 1)
-                  .chain(CurveTween(curve: Curves.easeInOut)),
+                  .chain(CurveTween(curve: MotionCurve.easeInOut)),
               weight: moveWeight,
             ),
             TweenSequenceItem<double>(
@@ -187,7 +189,7 @@ class _MarqueeTextState extends State<MarqueeText>
             ),
             TweenSequenceItem<double>(
               tween: Tween<double>(begin: 1, end: 0)
-                  .chain(CurveTween(curve: Curves.easeInOut)),
+                  .chain(CurveTween(curve: MotionCurve.easeInOut)),
               weight: moveWeight,
             ),
           ]),

@@ -4,6 +4,7 @@ import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 
 import '../../core/theme/layout.dart';
+import '../../core/theme/motion.dart';
 import '../../data/local/playlist_tags.dart';
 import '../../data/models/models.dart';
 import '../../state/auth_controller.dart';
@@ -184,8 +185,8 @@ class _FilterCapsuleState extends State<_FilterCapsule> {
 
     return AnimatedScale(
       scale: scale,
-      duration: const Duration(milliseconds: 180),
-      curve: Curves.easeOut,
+      duration: AppMotion.chipPress.duration,
+      curve: AppMotion.chipPress.curve,
       child: Material(
         color: background,
         shape: const StadiumBorder(),

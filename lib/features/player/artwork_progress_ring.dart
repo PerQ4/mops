@@ -4,6 +4,7 @@ import 'dart:ui' show PathMetric, Tangent;
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 
+import '../../core/theme/motion.dart';
 import '../../state/player_controller.dart';
 
 /// Кольцо прогресса вокруг обложки — волнистое, как
@@ -178,7 +179,7 @@ class _WavyRingState extends State<_WavyRing>
   /// не крутит: волна у него стоит.
   late final AnimationController _controller = AnimationController(
     vsync: this,
-    duration: const Duration(seconds: 1),
+    duration: AppMotion.progressSpin,
   );
 
   @override

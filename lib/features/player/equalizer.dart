@@ -1,5 +1,6 @@
 import 'dart:async';
 
+import 'package:flutter/foundation.dart' show ValueListenable, ValueNotifier;
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 
@@ -86,6 +87,13 @@ class _EqualizerDialogState extends ConsumerState<_EqualizerDialog> {
   late List<double> _bands;
   late String _presetId;
 
+  /// Значения полос для графика АЧХ.
+  ///
+  /// Отдельный notifier, а не `setState`: кривая подписана на него через
+  /// `CustomPainter(repaint:)`, поэтому перетаскивание слайдера перерисовывает
+  /// только painter, а не весь диалог с десятью слайдерами и пресетами.
+  late final ValueNotifier<List<double>> _curve;
+
   /// Отложенное применение к движку: слайдер шлёт значения десятками в
   /// секунду, и пересобирать цепочку `af` на каждый тик незачем.
   Timer? _applyTimer;
@@ -97,12 +105,19 @@ class _EqualizerDialogState extends ConsumerState<_EqualizerDialog> {
     _enabled = settings.equalizerEnabled;
     _bands = List<double>.of(settings.equalizerBands);
     _presetId = settings.equalizerPresetId;
+    _curve = ValueNotifier<List<double>>(List<double>.unmodifiable(_bands));
   }
 
   @override
   void dispose() {
     _applyTimer?.cancel();
+    _curve.dispose();
     super.dispose();
+  }
+
+  /// Отдаёт графику снимок полос: сам `_bands` дальше ещё меняется.
+  void _publishCurve() {
+    _curve.value = List<double>.unmodifiable(_bands);
   }
 
   /// Применяет текущее состояние к движку (звучит сразу).
@@ -143,6 +158,7 @@ class _EqualizerDialogState extends ConsumerState<_EqualizerDialog> {
       _bands = List<double>.of(preset.bands);
       if (preset.id != 'flat') _enabled = true;
     });
+    _publishCurve();
     _applyToEngine();
     _persist();
   }
@@ -153,6 +169,7 @@ class _EqualizerDialogState extends ConsumerState<_EqualizerDialog> {
       _bands = List<double>.of(kEqualizerFlatBands);
       _presetId = 'flat';
     });
+    _publishCurve();
     _applyToEngine();
     _persist();
   }
@@ -163,6 +180,7 @@ class _EqualizerDialogState extends ConsumerState<_EqualizerDialog> {
       // Ручная правка ломает соответствие пресету — дальше это «свой» набор.
       _presetId = 'custom';
     });
+    _publishCurve();
     _scheduleEngineApply();
   }
 
@@ -207,6 +225,7 @@ class _EqualizerDialogState extends ConsumerState<_EqualizerDialog> {
                 ],
               ),
               const SizedBox(height: 8),
+              _EqualizerCurve(bands: _curve, enabled: _enabled),
               for (int i = 0; i < kEqualizerBandCount; i++)
                 _BandSlider(
                   frequency: kEqualizerBandFrequencies[i],
@@ -297,4 +316,237 @@ class _BandSlider extends StatelessWidget {
       ],
     );
   }
+}
+
+/// График АЧХ по тем же десяти полосам, что и слайдеры.
+///
+/// Подписан на [bands] как на `repaint`: при перетаскивании слайдера
+/// перерисовывается только painter, а `RepaintBoundary` не даёт этой
+/// перерисовке задеть остальное содержимое диалога.
+class _EqualizerCurve extends StatelessWidget {
+  const _EqualizerCurve({required this.bands, required this.enabled});
+
+  /// Текущие усиления полос, дБ.
+  final ValueListenable<List<double>> bands;
+
+  /// Выключенный эквалайзер рисует кривую приглушённой: слайдеры в это время
+  /// тоже недоступны, и яркая кривая обещала бы звук, которого нет.
+  final bool enabled;
+
+  @override
+  Widget build(BuildContext context) {
+    final ThemeData theme = Theme.of(context);
+    final ColorScheme scheme = theme.colorScheme;
+    return RepaintBoundary(
+      child: SizedBox(
+        height: 148,
+        width: double.infinity,
+        child: CustomPaint(
+          painter: _EqualizerCurvePainter(
+            bands: bands,
+            enabled: enabled,
+            curveColor: scheme.primary,
+            gridColor: scheme.outline,
+            labelColor: scheme.onSurfaceVariant,
+            labelStyle:
+                (theme.textTheme.labelSmall ?? const TextStyle())
+                    .copyWith(fontSize: 9),
+            textDirection: Directionality.of(context),
+          ),
+        ),
+      ),
+    );
+  }
+}
+
+class _EqualizerCurvePainter extends CustomPainter {
+  _EqualizerCurvePainter({
+    required this.bands,
+    required this.enabled,
+    required this.curveColor,
+    required this.gridColor,
+    required this.labelColor,
+    required this.labelStyle,
+    required this.textDirection,
+  }) : super(repaint: bands);
+
+  final ValueListenable<List<double>> bands;
+  final bool enabled;
+  final Color curveColor;
+  final Color gridColor;
+  final Color labelColor;
+  final TextStyle labelStyle;
+  final TextDirection textDirection;
+
+  /// Поля вокруг области графика: слева — подписи дБ, снизу — частоты.
+  static const double _left = 28;
+
+  /// Справа поле шире обычного: подпись «16 кГц» должна поместиться по центру
+  /// последней полосы, иначе её пришлось бы сдвинуть на соседнюю.
+  static const double _right = 20;
+
+  static const double _top = 6;
+  static const double _bottom = 16;
+
+  @override
+  void paint(Canvas canvas, Size size) {
+    final Rect plot = Rect.fromLTRB(
+      _left,
+      _top,
+      size.width - _right,
+      size.height - _bottom,
+    );
+    final List<double> gains = bands.value;
+    if (plot.width <= 0 || plot.height <= 0 || gains.isEmpty) return;
+
+    final int count = gains.length;
+    final double stepX = count > 1 ? plot.width / (count - 1) : 0;
+
+    // Сетка: горизонтали по ±12, ±6 и 0 дБ, вертикали по полосам. Ноль
+    // заметнее остальных — по нему видно, где усиления нет.
+    for (final double db in <double>[
+      kEqualizerMaxGainDb,
+      kEqualizerMaxGainDb / 2,
+      0,
+      -kEqualizerMaxGainDb / 2,
+      -kEqualizerMaxGainDb,
+    ]) {
+      final double y = _yFor(db, plot);
+      canvas.drawLine(
+        Offset(plot.left, y),
+        Offset(plot.right, y),
+        Paint()
+          ..color = gridColor.withValues(alpha: db == 0 ? 0.55 : 0.28)
+          ..strokeWidth = 1,
+      );
+    }
+    final Paint vertical = Paint()
+      ..color = gridColor.withValues(alpha: 0.18)
+      ..strokeWidth = 1;
+    for (int i = 0; i < count; i++) {
+      final double x = plot.left + stepX * i;
+      canvas.drawLine(Offset(x, plot.top), Offset(x, plot.bottom), vertical);
+    }
+
+    // Точки кривой — по центрам полос, как у слайдеров ниже.
+    final List<Offset> points = <Offset>[
+      for (int i = 0; i < count; i++)
+        Offset(
+          plot.left + stepX * i,
+          _yFor(
+            gains[i].clamp(-kEqualizerMaxGainDb, kEqualizerMaxGainDb),
+            plot,
+          ),
+        ),
+    ];
+
+    // Сглаживание — кубики через середины между соседними точками: кривая
+    // проходит ровно по значениям полос и не «выстреливает» между ними.
+    final Path line = Path()..moveTo(points.first.dx, points.first.dy);
+    for (int i = 1; i < points.length; i++) {
+      final Offset previous = points[i - 1];
+      final Offset point = points[i];
+      final double midX = (previous.dx + point.dx) / 2;
+      line.cubicTo(midX, previous.dy, midX, point.dy, point.dx, point.dy);
+    }
+
+    final double curveAlpha = enabled ? 1 : 0.4;
+    // Заливка под кривой — та же primary с малой альфой: показывает знак
+    // усиления, не споря с линией.
+    final Path fill = Path.from(line)
+      ..lineTo(points.last.dx, plot.bottom)
+      ..lineTo(points.first.dx, plot.bottom)
+      ..close();
+    canvas.drawPath(
+      fill,
+      Paint()
+        ..style = PaintingStyle.fill
+        ..color = curveColor.withValues(alpha: enabled ? 0.14 : 0.06),
+    );
+
+    final Paint stroke = Paint()
+      ..style = PaintingStyle.stroke
+      ..strokeWidth = 2
+      ..strokeCap = StrokeCap.round
+      ..strokeJoin = StrokeJoin.round
+      ..isAntiAlias = true
+      ..color = curveColor.withValues(alpha: curveAlpha);
+    canvas.drawPath(line, stroke);
+
+    final Paint dot = Paint()..color = curveColor.withValues(alpha: curveAlpha);
+    for (final Offset point in points) {
+      canvas.drawCircle(point, 2.5, dot);
+    }
+
+    _paintDbLabels(canvas, plot);
+    _paintFrequencyLabels(canvas, size, plot, stepX, count);
+  }
+
+  /// Y усиления [db] в области [plot]: +12 дБ сверху, −12 снизу.
+  static double _yFor(double db, Rect plot) {
+    return plot.top +
+        (kEqualizerMaxGainDb - db) / (2 * kEqualizerMaxGainDb) * plot.height;
+  }
+
+  void _paintDbLabels(Canvas canvas, Rect plot) {
+    for (final double db in <double>[
+      kEqualizerMaxGainDb,
+      0,
+      -kEqualizerMaxGainDb,
+    ]) {
+      final double width = plot.left - 4;
+      final TextPainter painter = _textPainter(
+        db == 0 ? '0' : '${db > 0 ? '+' : '−'}${db.abs().round()}',
+        TextAlign.right,
+      )..layout(minWidth: width, maxWidth: width);
+      painter.paint(canvas, Offset(0, _yFor(db, plot) - painter.height / 2));
+      painter.dispose();
+    }
+  }
+
+  void _paintFrequencyLabels(
+    Canvas canvas,
+    Size size,
+    Rect plot,
+    double stepX,
+    int count,
+  ) {
+    for (int i = 0; i < count; i++) {
+      if (i >= kEqualizerBandFrequencies.length) break;
+      final TextPainter painter = _textPainter(
+        equalizerBandLabel(kEqualizerBandFrequencies[i]),
+        TextAlign.center,
+      )..layout();
+      // Крайние подписи прижимаем к краю, чтобы «31 Гц» и «16 кГц» не
+      // вылезали за график.
+      final double x = (plot.left + stepX * i - painter.width / 2)
+          .clamp(0.0, size.width - painter.width);
+      painter.paint(canvas, Offset(x, plot.bottom + 2));
+      painter.dispose();
+    }
+  }
+
+  TextPainter _textPainter(String text, TextAlign align) {
+    return TextPainter(
+      text: TextSpan(
+        text: text,
+        style: labelStyle.copyWith(color: labelColor),
+      ),
+      textDirection: textDirection,
+      textAlign: align,
+      maxLines: 1,
+    );
+  }
+
+  @override
+  bool shouldRepaint(_EqualizerCurvePainter old) =>
+      // Значения полос приходят через `repaint`-notifier, поэтому здесь их
+      // сравнивать не нужно: painter уже перерисован уведомлением.
+      old.bands != bands ||
+      old.enabled != enabled ||
+      old.curveColor != curveColor ||
+      old.gridColor != gridColor ||
+      old.labelColor != labelColor ||
+      old.labelStyle != labelStyle ||
+      old.textDirection != textDirection;
 }

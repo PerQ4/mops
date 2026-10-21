@@ -150,6 +150,10 @@ abstract final class MotionCurve {
 
   /// Плавное начало и торможение — ступенчатые переходы строки текста песни.
   static const Curve fastOutSlowIn = Curves.fastOutSlowIn;
+
+  /// Мягкий разгон и торможение — прокрутка бегущей строки: текст трогается
+  /// и останавливается без рывка.
+  static const Curve easeInOut = Curves.easeInOut;
 }
 
 /// Именованный переход: длительность и кривая одним значением.
@@ -417,7 +421,31 @@ abstract final class AppMotion {
     reverseCurve: MotionCurve.emphasizedAccelerate,
   );
 
+  // --------------------------------------------------------------- таймеры
+
+  /// Такт жидкого фона плеера — ~30 кадров в секунду: чаще незаметно, реже
+  /// заметно дёргается.
+  ///
+  /// Не геттер и не обнуляется настройкой «Отключить анимации»: это не
+  /// переход интерфейса, а шаг `Timer.periodic`, и нулевой шаг гнал бы
+  /// таймер без паузы. Фон останавливают пауза трека и `TickerMode`.
+  static const Duration backdropFrame = Duration(milliseconds: 33);
+
+  /// Оборот неопределённого кольца вокруг обложки — круг в секунду.
+  ///
+  /// Тоже не обнуляется: `AnimationController.repeat` с нулевым периодом
+  /// делит на ноль, а неопределённый прогресс без движения теряет смысл.
+  static const Duration progressSpin = MotionDuration.extraLong4;
+
   // --------------------------------------------------------------- нажатия
+
+  /// Нажатие капсулы-фильтра: она сжимается под курсором и отпускается.
+  /// Отдача здесь была бы лишней — капсула мелкая.
+  static MotionTransition get chipPress => _motion(_chipPress);
+  static const MotionTransition _chipPress = MotionTransition(
+    duration: Duration(milliseconds: 180),
+    curve: MotionCurve.easeOut,
+  );
 
   /// Нажатие с отдачей: строка «проседает» под пальцем и пружинит обратно.
   static MotionTransition get clickBounce => _motion(_clickBounce);

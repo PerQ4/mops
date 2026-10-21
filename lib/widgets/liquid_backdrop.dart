@@ -5,6 +5,7 @@ import 'package:flutter/foundation.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 
+import '../core/theme/motion.dart';
 import '../data/local/app_settings.dart';
 import '../state/providers.dart';
 
@@ -63,7 +64,9 @@ class LiquidBackdrop extends ConsumerWidget {
       colors: _liquidPalette(base, saturation),
       flowSpeed: speed,
       blobScale: scale,
-      animate: animate,
+      // Скрытая панель выключает тикер: фон не должен тикать впустую, пока
+      // его не видно.
+      animate: animate && TickerMode.valuesOf(context).enabled,
     );
   }
 }
@@ -103,7 +106,7 @@ class _LiquidPreviewState extends State<LiquidPreview> {
         colors: _liquidPalette(widget.colors, widget.saturation),
         flowSpeed: widget.speed,
         blobScale: widget.scale,
-        animate: true,
+        animate: TickerMode.valuesOf(context).enabled,
       );
 }
 
@@ -185,9 +188,6 @@ class _LiquidSurface extends StatefulWidget {
 class _LiquidSurfaceState extends State<_LiquidSurface> {
   static const String _asset = 'shaders/liquid_backdrop.frag';
 
-  /// Шаг анимации: ~30 кадров в секунду. Чаще незаметно, реже — заметно дёргается.
-  static const Duration _frame = Duration(milliseconds: 33);
-
   ui.FragmentShader? _shader;
 
   /// Шейдер не загрузился: рисуем статичный градиент из тех же цветов.
@@ -238,7 +238,7 @@ class _LiquidSurfaceState extends State<_LiquidSurface> {
     if (widget.animate && _shader != null) {
       _clock.start();
       _timer ??= Timer.periodic(
-        _frame,
+        AppMotion.backdropFrame,
         (_) => _time.value = _clock.elapsedMicroseconds / 1000000.0,
       );
       return;
