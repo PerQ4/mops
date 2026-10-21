@@ -9,6 +9,7 @@ import '../../state/player_controller.dart';
 import '../../widgets/async_views.dart';
 import '../../widgets/track_tile.dart';
 import 'media_hero.dart';
+import 'media_page.dart';
 
 /// Страница альбома: обложка, метаданные и список треков.
 class AlbumScreen extends ConsumerWidget {
@@ -55,17 +56,21 @@ class _AlbumBody extends ConsumerWidget {
         current != null && album.tracks.any((Track t) => t.id == current.id);
     final bool hasTracks = album.tracks.isNotEmpty;
 
-    return CustomScrollView(
-      slivers: <Widget>[
-        SliverAppBar(
-          pinned: true,
-          expandedHeight: AppLayout.appBarHeight,
-          title: Text(album.title, maxLines: 1, overflow: TextOverflow.ellipsis),
-        ),
-        // Альбом без треков показывается без «героя»: в оригинале ветка
-        // `hasSongs == false` выводит только панель состояния, портрет альбома
-        // тогда не нужен (AlbumScreen.kt:495-511).
-        if (album.tracks.isEmpty)
+    // Альбом без треков показывается без «героя»: в оригинале ветка
+    // `hasSongs == false` выводит только панель состояния, портрет альбома
+    // тогда не нужен (AlbumScreen.kt:495-511).
+    if (!hasTracks) {
+      return CustomScrollView(
+        slivers: <Widget>[
+          SliverAppBar(
+            pinned: true,
+            expandedHeight: AppLayout.appBarHeight,
+            title: Text(
+              album.title,
+              maxLines: 1,
+              overflow: TextOverflow.ellipsis,
+            ),
+          ),
           const SliverFillRemaining(
             hasScrollBody: false,
             child: MediaDetailStatePanel(
@@ -74,91 +79,86 @@ class _AlbumBody extends ConsumerWidget {
               description:
                   'YouTube Music не вернул список треков для этого альбома.',
             ),
-          )
-        else ...<Widget>[
-          SliverToBoxAdapter(
-            child: MediaHero(
-              title: album.title,
-              // Исполнители шапки (`BrowseParser.pageArtists`) — кликабельной
-              // подписью, как ссылки в оригинале.
-              artists: album.artists,
-              meta: _metaLine(),
-              description: album.description,
-              imageUrl: album.thumbnails.sized(600),
-              fallbackIcon: Icons.album_outlined,
-              // Порядок действий как в ArchiveTune: перемешать, слушать,
-              // добавить (MediaDetailHero.kt:341-409).
-              actions: <Widget>[
-                HeroCircleButton(
-                  icon: Icons.shuffle,
-                  tooltip: 'Перемешать',
-                  size: 52,
-                  onPressed: hasTracks
-                      ? () => ref
-                          .read(playerControllerProvider.notifier)
-                          .playQueue(album.tracks, shuffle: true)
-                      : null,
-                ),
-                HeroPlayButton(
-                  label: isCurrentAlbum && playing ? 'Пауза' : 'Слушать',
-                  icon: isCurrentAlbum && playing
-                      ? Icons.pause
-                      : Icons.play_arrow,
-                  onPressed: !hasTracks
-                      ? null
-                      : () {
-                          final PlayerController controller =
-                              ref.read(playerControllerProvider.notifier);
-                          // На паузе нажимаем «продолжить», иначе запускаем
-                          // альбом заново — так иконка не расходится с делом.
-                          if (isCurrentAlbum && playing) {
-                            controller.togglePlayPause();
-                          } else {
-                            controller.playQueue(album.tracks);
-                          }
-                        },
-                ),
-                HeroCircleButton(
-                  icon: Icons.playlist_add,
-                  tooltip: 'В очередь',
-                  size: 52,
-                  onPressed: hasTracks ? () => _enqueueAll(ref) : null,
-                ),
-                // Сохранение в библиотеку: ключ состояния — browse-id
-                // страницы, а мутации нужен звуковой id плейлиста альбома.
-                HeroSaveButton(
-                  stateId: album.id,
-                  playlistId: album.audioPlaylistId,
-                ),
-              ],
-            ),
-          ),
-          // Заголовок списка треков — `NavigationTitle` из ArchiveTune
-          // (AlbumScreen.kt:403-407, NavigationTitle.kt:43-76).
-          const SliverToBoxAdapter(child: _SectionTitle('Треки')),
-          SliverList.builder(
-            itemCount: album.tracks.length,
-            itemBuilder: (BuildContext context, int index) {
-              final Track track = album.tracks[index];
-              final bool isCurrent = current?.id == track.id;
-              return TrackTile(
-                track: track,
-                leadingNumber: index + 1,
-                isCurrent: isCurrent,
-                isPlaying: isCurrent && playing,
-                showDuration: true,
-                // Подпись собирается кликабельной (исполнители — ссылки),
-                // поэтому `subtitleOverride` (простой текст) не передаём.
-                onTap: () => ref
-                    .read(playerControllerProvider.notifier)
-                    .playTrack(track, context: album.tracks),
-              );
-            },
           ),
         ],
-        const SliverToBoxAdapter(
-          // Отступ снизу: последние строки не уходят под плавающий островок.
-          child: SizedBox(height: AppLayout.floatingDockClearance),
+      );
+    }
+
+    return MediaPage(
+      title: album.title,
+      heroBuilder: (BuildContext context, bool wide) => MediaHero(
+        // На широком окне шапка стоит колонкой слева, а треки — справа.
+        column: wide,
+        title: album.title,
+        // Исполнители шапки (`BrowseParser.pageArtists`) — кликабельной
+        // подписью, как ссылки в оригинале.
+        artists: album.artists,
+        meta: _metaLine(),
+        description: album.description,
+        imageUrl: album.thumbnails.sized(600),
+        fallbackIcon: Icons.album_outlined,
+        // Порядок действий как в ArchiveTune: перемешать, слушать,
+        // добавить (MediaDetailHero.kt:341-409).
+        actions: <Widget>[
+          HeroCircleButton(
+            icon: Icons.shuffle,
+            tooltip: 'Перемешать',
+            size: 52,
+            onPressed: () => ref
+                .read(playerControllerProvider.notifier)
+                .playQueue(album.tracks, shuffle: true),
+          ),
+          HeroPlayButton(
+            label: isCurrentAlbum && playing ? 'Пауза' : 'Слушать',
+            icon: isCurrentAlbum && playing ? Icons.pause : Icons.play_arrow,
+            onPressed: () {
+              final PlayerController controller =
+                  ref.read(playerControllerProvider.notifier);
+              // На паузе нажимаем «продолжить», иначе запускаем
+              // альбом заново — так иконка не расходится с делом.
+              if (isCurrentAlbum && playing) {
+                controller.togglePlayPause();
+              } else {
+                controller.playQueue(album.tracks);
+              }
+            },
+          ),
+          HeroCircleButton(
+            icon: Icons.playlist_add,
+            tooltip: 'В очередь',
+            size: 52,
+            onPressed: () => _enqueueAll(ref),
+          ),
+          // Сохранение в библиотеку: ключ состояния — browse-id
+          // страницы, а мутации нужен звуковой id плейлиста альбома.
+          HeroSaveButton(
+            stateId: album.id,
+            playlistId: album.audioPlaylistId,
+          ),
+        ],
+      ),
+      slivers: <Widget>[
+        // Заголовок списка треков — `NavigationTitle` из ArchiveTune
+        // (AlbumScreen.kt:403-407, NavigationTitle.kt:43-76).
+        const SliverToBoxAdapter(child: _SectionTitle('Треки')),
+        SliverList.builder(
+          itemCount: album.tracks.length,
+          itemBuilder: (BuildContext context, int index) {
+            final Track track = album.tracks[index];
+            final bool isCurrent = current?.id == track.id;
+            return TrackTile(
+              track: track,
+              leadingNumber: index + 1,
+              isCurrent: isCurrent,
+              isPlaying: isCurrent && playing,
+              showDuration: true,
+              // Подпись собирается кликабельной (исполнители — ссылки),
+              // поэтому `subtitleOverride` (простой текст) не передаём.
+              onTap: () => ref
+                  .read(playerControllerProvider.notifier)
+                  .playTrack(track, context: album.tracks),
+            );
+          },
         ),
       ],
     );

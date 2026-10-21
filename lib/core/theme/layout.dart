@@ -166,6 +166,13 @@ abstract final class AppLayout {
   /// Обложка в шапке страницы (альбом/исполнитель/плейлист).
   static const double headerArtwork = 208;
 
+  /// Пределы ширины колонки героя на широком окне.
+  ///
+  /// Меньше 320 — обложка мельчает рядом с крупным списком; больше 360 —
+  /// колонка съедает место у треков, ради которых всё и раскладывается.
+  static const double heroColumnMinWidth = 320;
+  static const double heroColumnMaxWidth = 360;
+
   /// Скругления.
   static const double radiusS = 12;
   static const double radiusM = 18;
@@ -195,6 +202,16 @@ abstract final class AppLayout {
   /// Ширина содержимого с учётом максимальной ширины страницы.
   static double contentWidth(double available) =>
       available > contentMaxWidth ? contentMaxWidth : available;
+
+  /// Ширина колонки героя для доступной ширины страницы.
+  ///
+  /// Долю, а не фиксированное число: на границе широкой раскладки колонка не
+  /// должна занимать половину страницы, а на большом мониторе — растягиваться
+  /// в пустую полосу рядом с обложкой.
+  static double heroColumnWidth(double available) {
+    if (available <= 0) return heroColumnMinWidth;
+    return (available * 0.3).clamp(heroColumnMinWidth, heroColumnMaxWidth);
+  }
 
   /// Максимальная ширина развёрнутой панели библиотеки для окна [windowWidth].
   ///

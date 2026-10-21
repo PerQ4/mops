@@ -11,6 +11,7 @@ import '../../core/theme/motion.dart';
 import '../../core/webview/webview_environment.dart';
 import '../../data/models/models.dart';
 import '../../state/player_controller.dart';
+import '../../widgets/app_progress.dart';
 import '../shell/title_bar_visibility.dart';
 import 'clip_embed.dart';
 
@@ -275,7 +276,7 @@ class _ClipScreenState extends ConsumerState<ClipScreen> {
             });
           },
         ),
-        if (_loading) const Center(child: CircularProgressIndicator()),
+        if (_loading) const Center(child: AppProgress()),
       ],
     );
   }

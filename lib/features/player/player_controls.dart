@@ -13,6 +13,7 @@ import '../../core/utils/format.dart';
 import '../../data/local/app_settings.dart';
 import '../../state/player_controller.dart';
 import '../../state/providers.dart';
+import '../../widgets/app_progress.dart';
 import 'equalizer.dart';
 
 /// Альфы дорожки слайдера — из ArchiveTune
@@ -915,14 +916,7 @@ class _TransportPlayButton extends StatelessWidget {
               onTap: onPressed,
               child: Center(
                 child: loading
-                    ? SizedBox(
-                        width: 40,
-                        height: 40,
-                        child: CircularProgressIndicator(
-                          strokeWidth: 3,
-                          color: onFill,
-                        ),
-                      )
+                    ? AppProgress(size: 40, color: onFill)
                     : Icon(
                         playing ? Icons.pause_rounded : Icons.play_arrow_rounded,
                         // Иконка центральной кнопки — 44 dp.

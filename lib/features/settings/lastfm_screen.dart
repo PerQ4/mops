@@ -3,6 +3,7 @@ import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:url_launcher/url_launcher.dart';
 
 import '../../core/scrobbling/scrobbler.dart';
+import '../../widgets/app_progress.dart';
 
 /// Страница регистрации приложения Last.fm — отсюда берут API key и secret.
 const String _createAppUrl = 'https://www.last.fm/api/account/create';
@@ -269,11 +270,7 @@ class _LoginViewState extends ConsumerState<_LoginView> {
                     onPressed:
                         busy || !state.lastFmConfigured ? null : _startAuth,
                     icon: busy
-                        ? const SizedBox(
-                            width: 18,
-                            height: 18,
-                            child: CircularProgressIndicator(strokeWidth: 2),
-                          )
+                        ? const AppProgress(size: 24)
                         : const Icon(Icons.login),
                     label: Text(busy ? 'Ждём…' : 'Войти в Last.fm'),
                   )
@@ -369,11 +366,7 @@ class _ConfirmStep extends StatelessWidget {
             FilledButton.icon(
               onPressed: busy ? null : onConfirm,
               icon: busy
-                  ? const SizedBox(
-                      width: 18,
-                      height: 18,
-                      child: CircularProgressIndicator(strokeWidth: 2),
-                    )
+                  ? const AppProgress(size: 24)
                   : const Icon(Icons.check),
               label: Text(busy ? 'Проверяем…' : 'Я подтвердил вход'),
             ),

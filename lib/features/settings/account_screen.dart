@@ -10,6 +10,7 @@ import '../../core/auth/token_store.dart';
 import '../../state/auth_controller.dart';
 import '../../state/providers.dart';
 import '../../state/shell.dart';
+import '../../widgets/app_progress.dart';
 
 /// Вход в аккаунт YouTube Music.
 ///
@@ -250,11 +251,7 @@ class _SignedOutView extends ConsumerWidget {
                   FilledButton.icon(
                     onPressed: auth.busy ? null : controller.startOAuthLogin,
                     icon: auth.busy
-                        ? const SizedBox(
-                            width: 18,
-                            height: 18,
-                            child: CircularProgressIndicator(strokeWidth: 2),
-                          )
+                        ? const AppProgress(size: 24)
                         : const Icon(Icons.login),
                     label: const Text('Получить код для входа'),
                   )
@@ -469,11 +466,7 @@ class _DeviceCodeBlock extends StatelessWidget {
             FilledButton.icon(
               onPressed: waiting ? null : onConfirm,
               icon: waiting
-                  ? const SizedBox(
-                      width: 18,
-                      height: 18,
-                      child: CircularProgressIndicator(strokeWidth: 2),
-                    )
+                  ? const AppProgress(size: 24)
                   : const Icon(Icons.check),
               label: Text(waiting ? 'Ожидание…' : 'Я подтвердил вход'),
             ),
@@ -573,11 +566,7 @@ class _CookieLoginCardState extends ConsumerState<_CookieLoginCard> {
             FilledButton.icon(
               onPressed: _busy ? null : _submit,
               icon: _busy
-                  ? const SizedBox(
-                      width: 18,
-                      height: 18,
-                      child: CircularProgressIndicator(strokeWidth: 2),
-                    )
+                  ? const AppProgress(size: 24)
                   : const Icon(Icons.key),
               label: Text(_busy ? 'Проверяем…' : 'Войти по cookie'),
             ),
@@ -657,11 +646,7 @@ class _WebviewLoginCardState extends ConsumerState<_WebviewLoginCard> {
             FilledButton.icon(
               onPressed: _busy ? null : _login,
               icon: _busy
-                  ? const SizedBox(
-                      width: 18,
-                      height: 18,
-                      child: CircularProgressIndicator(strokeWidth: 2),
-                    )
+                  ? const AppProgress(size: 24)
                   : const Icon(Icons.open_in_browser),
               label: Text(_busy ? 'Ждём вход…' : 'Войти в браузере'),
             ),

@@ -5,6 +5,7 @@ import 'package:flutter_riverpod/flutter_riverpod.dart';
 
 import '../../core/theme/layout.dart';
 import '../../state/auth_controller.dart';
+import '../../widgets/app_progress.dart';
 import '../../widgets/async_views.dart';
 import '../../widgets/empty_state.dart';
 import '../../widgets/horizontal_list.dart';
@@ -324,13 +325,7 @@ class _InlineLoading extends StatelessWidget {
   Widget build(BuildContext context) {
     return const Padding(
       padding: EdgeInsets.symmetric(vertical: 32),
-      child: Center(
-        child: SizedBox(
-          width: 28,
-          height: 28,
-          child: CircularProgressIndicator(strokeWidth: 3),
-        ),
-      ),
+      child: Center(child: AppProgress(size: 28)),
     );
   }
 }

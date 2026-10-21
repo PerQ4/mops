@@ -4,6 +4,7 @@ import 'package:url_launcher/url_launcher.dart';
 
 import '../../core/scrobbling/listenbrainz.dart';
 import '../../core/scrobbling/scrobbler.dart';
+import '../../widgets/app_progress.dart';
 
 /// Экран ListenBrainz: токен, состояние подключения и переключатель отправки.
 class ListenBrainzScreen extends ConsumerStatefulWidget {
@@ -190,11 +191,7 @@ class _ConnectViewState extends ConsumerState<_ConnectView> {
                 FilledButton.icon(
                   onPressed: busy ? null : _connect,
                   icon: busy
-                      ? const SizedBox(
-                          width: 18,
-                          height: 18,
-                          child: CircularProgressIndicator(strokeWidth: 2),
-                        )
+                      ? const AppProgress(size: 24)
                       : const Icon(Icons.link),
                   label: Text(busy ? 'Проверяем…' : 'Подключить'),
                 ),

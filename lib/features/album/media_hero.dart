@@ -15,6 +15,9 @@ import '../../widgets/async_views.dart';
 /// ширину, поверх неё затемняющий градиент, а внизу по центру — название,
 /// подпись, описание, метаданные и действия. Порядок элементов и все размеры
 /// повторяют оригинал, чтобы три страницы не разъезжались по оформлению.
+///
+/// На широком окне шапка рисуется колонкой ([column]) и стоит слева от
+/// списка: полноэкранный блок на всю высоту уводил бы треки под сгиб.
 class MediaHero extends StatelessWidget {
   const MediaHero({
     super.key,
@@ -26,6 +29,7 @@ class MediaHero extends StatelessWidget {
     this.imageUrl,
     this.fallbackIcon,
     this.actions = const <Widget>[],
+    this.column = false,
   });
 
   final String title;
@@ -48,6 +52,13 @@ class MediaHero extends StatelessWidget {
   final IconData? fallbackIcon;
   final List<Widget> actions;
 
+  /// Рисовать шапку колонкой: обложка, подпись, действия сверху вниз.
+  ///
+  /// Так она выглядит на широком окне, где стоит слева от списка треков.
+  /// Полноэкранная обложка с градиентом там не нужна: страница должна
+  /// помещаться по высоте, а не уводить список под сгиб.
+  final bool column;
+
   /// Минимальная высота героя и ширина текстового блока — из
   /// `MediaDetailHero.kt` (`MediaDetailHeroMinHeight`, `MediaDetailContentMaxWidth`).
   static const double minHeight = 560;
@@ -65,6 +76,8 @@ class MediaHero extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
+    if (column) return _buildColumn(context);
+
     final TextTheme text = Theme.of(context).textTheme;
     final ColorScheme scheme = Theme.of(context).colorScheme;
     // В ArchiveTune цвет содержимого героя выбирается по яркости поверхности:
@@ -226,6 +239,102 @@ class MediaHero extends StatelessWidget {
             ),
           ),
         ),
+      ],
+    );
+  }
+
+  /// Шапка колонкой — для широкого окна.
+  ///
+  /// Цвета берутся обычные (`onSurface`/`onSurfaceVariant`), а не «цвет
+  /// содержимого героя»: под колонкой нет обложки с градиентом, и белый текст
+  /// на светлой теме был бы не виден. Кнопки при этом остаются прежними —
+  /// они уже рассчитаны на оба вида поверхности.
+  Widget _buildColumn(BuildContext context) {
+    final TextTheme text = Theme.of(context).textTheme;
+    final ColorScheme scheme = Theme.of(context).colorScheme;
+    final bool hasArtists = artists != null && artists!.isNotEmpty;
+    final bool hasSubtitle = subtitle != null && subtitle!.isNotEmpty;
+    final bool hasDescription =
+        description != null && description!.trim().isNotEmpty;
+
+    return Column(
+      mainAxisSize: MainAxisSize.min,
+      crossAxisAlignment: CrossAxisAlignment.start,
+      children: <Widget>[
+        AspectRatio(
+          aspectRatio: 1,
+          child: Artwork(
+            url: imageUrl,
+            // Размер нужен только иконке-заглушке: квадрат задаёт
+            // `AspectRatio`, и картинка заполняет его целиком.
+            size: AppLayout.heroColumnMinWidth,
+            radius: BorderRadius.circular(AppLayout.radiusM),
+            fit: BoxFit.cover,
+            icon: fallbackIcon,
+          ),
+        ),
+        const SizedBox(height: 20),
+        Text(
+          title,
+          maxLines: 3,
+          overflow: TextOverflow.ellipsis,
+          style: text.headlineSmall?.copyWith(
+            fontWeight: FontWeight.w700,
+            color: scheme.onSurface,
+          ),
+        ),
+        if (hasArtists) ...<Widget>[
+          const SizedBox(height: 6),
+          ArtistLine(
+            artists: artists!,
+            maxLines: 2,
+            style: text.titleMedium?.copyWith(color: scheme.onSurfaceVariant),
+          ),
+        ] else if (hasSubtitle) ...<Widget>[
+          const SizedBox(height: 6),
+          Text(
+            subtitle!,
+            maxLines: 2,
+            overflow: TextOverflow.ellipsis,
+            style: text.titleMedium?.copyWith(color: scheme.onSurfaceVariant),
+          ),
+        ],
+        if (meta != null && meta!.isNotEmpty) ...<Widget>[
+          const SizedBox(height: 12),
+          Text(
+            meta!,
+            maxLines: 2,
+            overflow: TextOverflow.ellipsis,
+            style: text.labelMedium?.copyWith(
+              fontWeight: FontWeight.w500,
+              color: scheme.onSurfaceVariant,
+            ),
+          ),
+        ],
+        if (actions.isNotEmpty) ...<Widget>[
+          const SizedBox(height: 16),
+          // Выравнивание по левому краю, а не по центру: колонка читается
+          // сверху вниз, и ряд кнопок не должен «висеть» в её середине.
+          Wrap(
+            spacing: 12,
+            runSpacing: 12,
+            crossAxisAlignment: WrapCrossAlignment.center,
+            children: actions,
+          ),
+        ],
+        // Описание — после действий: в колонке оно бывает длинным, а кнопки
+        // должны быть видны сразу, без прокрутки шапки.
+        if (hasDescription) ...<Widget>[
+          const SizedBox(height: 12),
+          Text(
+            description!.trim(),
+            // В узкой колонке строки короткие, поэтому строк больше, чем в
+            // полноширинной шапке: иначе описание обрывалось бы на полуслове.
+            maxLines: 5,
+            overflow: TextOverflow.ellipsis,
+            style: text.bodyMedium?.copyWith(color: scheme.onSurfaceVariant),
+          ),
+        ],
       ],
     );
   }

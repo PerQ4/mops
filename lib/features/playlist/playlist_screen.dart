@@ -4,7 +4,6 @@ import 'dart:typed_data';
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 
-import '../../core/theme/layout.dart';
 import '../../core/utils/format.dart';
 import '../../data/models/models.dart';
 import '../../data/sources/library_source.dart';
@@ -12,10 +11,12 @@ import '../../state/auth_controller.dart';
 import '../../state/catalog_providers.dart';
 import '../../state/library_providers.dart';
 import '../../state/player_controller.dart';
+import '../../widgets/app_progress.dart';
 import '../../widgets/async_views.dart';
 import '../../widgets/track_menu.dart';
 import '../../widgets/track_tile.dart';
 import '../album/media_hero.dart';
+import '../album/media_page.dart';
 import 'm3u_export.dart';
 import 'playlist_cover.dart';
 
@@ -86,84 +87,76 @@ class _PlaylistBody extends ConsumerWidget {
         current != null && playlist.tracks.any((Track t) => t.id == current.id);
     final bool hasTracks = playlist.tracks.isNotEmpty;
 
-    return CustomScrollView(
+    return MediaPage(
+      title: playlist.title,
+      actions: <Widget>[
+        // Действия над плейлистом — только после входа: без него сервер
+        // правку не примет. У гостя кнопки нет, а не «мертвая» кнопка.
+        if (signedIn)
+          IconButton(
+            tooltip: 'Действия с плейлистом',
+            icon: const Icon(Icons.more_vert),
+            onPressed: () => _openActions(context, canEdit: canEdit),
+          ),
+        const SizedBox(width: 4),
+      ],
+      heroBuilder: (BuildContext context, bool wide) => MediaHero(
+        // На широком окне шапка стоит колонкой слева, а треки — справа.
+        column: wide,
+        title: playlist.title,
+        subtitle: playlist.author,
+        meta: _metaLine(),
+        description: playlist.description,
+        imageUrl: playlist.thumbnails.sized(600),
+        fallbackIcon: Icons.queue_music,
+        // Порядок действий как в ArchiveTune: перемешать, слушать, добавить.
+        actions: <Widget>[
+          HeroCircleButton(
+            icon: Icons.shuffle,
+            tooltip: 'Перемешать',
+            size: 52,
+            onPressed: hasTracks
+                ? () => ref
+                    .read(playerControllerProvider.notifier)
+                    .playQueue(playlist.tracks, shuffle: true)
+                : null,
+          ),
+          HeroPlayButton(
+            label: isCurrentPlaylist && playing ? 'Пауза' : 'Слушать',
+            icon: isCurrentPlaylist && playing
+                ? Icons.pause
+                : Icons.play_arrow,
+            onPressed: !hasTracks
+                ? null
+                : () {
+                    final PlayerController controller =
+                        ref.read(playerControllerProvider.notifier);
+                    // Иконка «пауза» должна действительно ставить на
+                    // паузу, а не перезапускать плейлист с начала.
+                    if (isCurrentPlaylist && playing) {
+                      controller.togglePlayPause();
+                    } else {
+                      controller.playQueue(playlist.tracks);
+                    }
+                  },
+          ),
+          HeroCircleButton(
+            icon: Icons.playlist_add,
+            tooltip: 'В очередь',
+            size: 52,
+            onPressed: hasTracks ? () => _enqueueAll(ref) : null,
+          ),
+          // Сохранение в библиотеку. У плейлиста ключ состояния и id для
+          // мутации совпадают; «Мне нравится» сохранять нечего — это уже
+          // библиотека, поэтому кнопка неактивна.
+          HeroSaveButton(
+            stateId: playlist.id,
+            playlistId:
+                LibrarySource.isLikedPlaylist(playlist.id) ? null : playlist.id,
+          ),
+        ],
+      ),
       slivers: <Widget>[
-        SliverAppBar(
-          pinned: true,
-          expandedHeight: AppLayout.appBarHeight,
-          title: Text(
-            playlist.title,
-            maxLines: 1,
-            overflow: TextOverflow.ellipsis,
-          ),
-          actions: <Widget>[
-            // Действия над плейлистом — только после входа: без него сервер
-            // правку не примет. У гостя кнопки нет, а не «мертвая» кнопка.
-            if (signedIn)
-              IconButton(
-                tooltip: 'Действия с плейлистом',
-                icon: const Icon(Icons.more_vert),
-                onPressed: () => _openActions(context, canEdit: canEdit),
-              ),
-            const SizedBox(width: 4),
-          ],
-        ),
-        SliverToBoxAdapter(
-          child: MediaHero(
-            title: playlist.title,
-            subtitle: playlist.author,
-            meta: _metaLine(),
-            description: playlist.description,
-            imageUrl: playlist.thumbnails.sized(600),
-            fallbackIcon: Icons.queue_music,
-            // Порядок действий как в ArchiveTune: перемешать, слушать, добавить.
-            actions: <Widget>[
-              HeroCircleButton(
-                icon: Icons.shuffle,
-                tooltip: 'Перемешать',
-                size: 52,
-                onPressed: hasTracks
-                    ? () => ref
-                        .read(playerControllerProvider.notifier)
-                        .playQueue(playlist.tracks, shuffle: true)
-                    : null,
-              ),
-              HeroPlayButton(
-                label: isCurrentPlaylist && playing ? 'Пауза' : 'Слушать',
-                icon: isCurrentPlaylist && playing
-                    ? Icons.pause
-                    : Icons.play_arrow,
-                onPressed: !hasTracks
-                    ? null
-                    : () {
-                        final PlayerController controller =
-                            ref.read(playerControllerProvider.notifier);
-                        // Иконка «пауза» должна действительно ставить на
-                        // паузу, а не перезапускать плейлист с начала.
-                        if (isCurrentPlaylist && playing) {
-                          controller.togglePlayPause();
-                        } else {
-                          controller.playQueue(playlist.tracks);
-                        }
-                      },
-              ),
-              HeroCircleButton(
-                icon: Icons.playlist_add,
-                tooltip: 'В очередь',
-                size: 52,
-                onPressed: hasTracks ? () => _enqueueAll(ref) : null,
-              ),
-              // Сохранение в библиотеку. У плейлиста ключ состояния и id для
-              // мутации совпадают; «Мне нравится» сохранять нечего — это уже
-              // библиотека, поэтому кнопка неактивна.
-              HeroSaveButton(
-                stateId: playlist.id,
-                playlistId:
-                    LibrarySource.isLikedPlaylist(playlist.id) ? null : playlist.id,
-              ),
-            ],
-          ),
-        ),
         if (playlist.tracks.isEmpty)
           // Пустой плейлист — как `MediaDetailStatePanel` в `OnlinePlaylistScreen.kt`
           // (`fillMaxWidth().padding(horizontal = 24.dp, vertical = 32.dp)`).
@@ -216,10 +209,6 @@ class _PlaylistBody extends ConsumerWidget {
               );
             },
           ),
-        const SliverToBoxAdapter(
-          // Отступ снизу под плавающий островок плеера.
-          child: SizedBox(height: AppLayout.floatingDockClearance),
-        ),
       ],
     );
   }
@@ -597,11 +586,7 @@ class _PlaylistActionsSheet extends ConsumerWidget {
       builder: (BuildContext dialogContext) => const AlertDialog(
         content: Row(
           children: <Widget>[
-            SizedBox(
-              width: 24,
-              height: 24,
-              child: CircularProgressIndicator(strokeWidth: 3),
-            ),
+            AppProgress(size: 24),
             SizedBox(width: 20),
             Expanded(child: Text('Загружаем обложку…')),
           ],

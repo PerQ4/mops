@@ -1,5 +1,6 @@
 import 'package:flutter/material.dart';
 
+import '../../core/theme/layout.dart';
 import '../../data/models/models.dart';
 import '../../widgets/artwork.dart';
 import '../album/media_hero.dart';
@@ -18,6 +19,9 @@ import '../album/media_hero.dart';
 /// Обложка растянута на всю шапку, поверх неё — градиент из пяти остановок,
 /// содержимое прижато к низу по центру. Все числа совпадают с оригиналом:
 /// minHeight 560, боковой отступ 24, предельная ширина текста 720.
+///
+/// На широком окне шапка рисуется колонкой ([column]) и стоит слева от
+/// списка треков — тогда страница помещается по высоте.
 class ArtistHero extends StatelessWidget {
   const ArtistHero({
     super.key,
@@ -26,6 +30,7 @@ class ArtistHero extends StatelessWidget {
     this.imageUrl,
     this.audience,
     this.catalog,
+    this.column = false,
   });
 
   final String name;
@@ -41,6 +46,11 @@ class ArtistHero extends StatelessWidget {
   /// Строка каталога: «N треков  •  M альбомов» (`ArtistStatsUi.catalog`).
   final String? catalog;
 
+  /// Рисовать шапку колонкой: обложка, имя, метаданные, действия сверху вниз.
+  ///
+  /// Так она выглядит на широком окне, где стоит слева от списка треков.
+  final bool column;
+
   /// `ArtistHeroMinHeight` из `ArtistScreen.kt:1155`.
   static const double minHeight = 560;
 
@@ -52,6 +62,8 @@ class ArtistHero extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
+    if (column) return _buildColumn(context);
+
     final TextTheme text = Theme.of(context).textTheme;
     final ColorScheme scheme = Theme.of(context).colorScheme;
     // Цвет содержимого шапки — по яркости поверхности: на тёмной теме белый,
@@ -189,6 +201,93 @@ class ArtistHero extends StatelessWidget {
           ),
         ],
       ),
+    );
+  }
+
+  /// Шапка колонкой — для широкого окна.
+  ///
+  /// Содержимое идёт сверху вниз, как и в полноширинной шапке, но без
+  /// обложки на весь блок: под колонкой обычная поверхность страницы, поэтому
+  /// цвета берутся из темы, а не «цвета содержимого героя».
+  Widget _buildColumn(BuildContext context) {
+    final TextTheme text = Theme.of(context).textTheme;
+    final ColorScheme scheme = Theme.of(context).colorScheme;
+    final bool hasAudience = audience != null && audience!.isNotEmpty;
+    final bool hasCatalog = catalog != null && catalog!.isNotEmpty;
+
+    return Column(
+      mainAxisSize: MainAxisSize.min,
+      crossAxisAlignment: CrossAxisAlignment.start,
+      children: <Widget>[
+        AspectRatio(
+          aspectRatio: 1,
+          child: imageUrl == null || imageUrl!.isEmpty
+              // Заглушка без обложки — та же, что в полноширинной шапке.
+              ? DecoratedBox(
+                  decoration: BoxDecoration(
+                    color: scheme.surfaceContainerHigh,
+                    borderRadius: BorderRadius.circular(AppLayout.radiusM),
+                  ),
+                  child: Center(
+                    child: Icon(
+                      Icons.person,
+                      size: 96,
+                      color: scheme.onSurfaceVariant,
+                    ),
+                  ),
+                )
+              : Artwork(
+                  url: imageUrl,
+                  // Размер нужен только иконке-заглушке: квадрат задаёт
+                  // `AspectRatio`.
+                  size: AppLayout.heroColumnMinWidth,
+                  radius: BorderRadius.circular(AppLayout.radiusM),
+                  fit: BoxFit.cover,
+                ),
+        ),
+        const SizedBox(height: 20),
+        Text(
+          name,
+          maxLines: 3,
+          overflow: TextOverflow.ellipsis,
+          style: text.headlineSmall?.copyWith(
+            fontWeight: FontWeight.w700,
+            color: scheme.onSurface,
+          ),
+        ),
+        if (hasAudience) ...<Widget>[
+          const SizedBox(height: 12),
+          Text(
+            audience!,
+            maxLines: 2,
+            overflow: TextOverflow.ellipsis,
+            style: text.labelMedium?.copyWith(
+              fontWeight: FontWeight.w500,
+              color: scheme.onSurfaceVariant,
+            ),
+          ),
+        ],
+        if (hasCatalog) ...<Widget>[
+          SizedBox(height: hasAudience ? 4 : 12),
+          Text(
+            catalog!,
+            maxLines: 2,
+            overflow: TextOverflow.ellipsis,
+            style: text.labelMedium?.copyWith(
+              fontWeight: FontWeight.w500,
+              color: scheme.onSurfaceVariant,
+            ),
+          ),
+        ],
+        const SizedBox(height: 16),
+        // Ряд действий по левому краю: колонка читается сверху вниз.
+        Wrap(
+          spacing: 12,
+          runSpacing: 12,
+          crossAxisAlignment: WrapCrossAlignment.center,
+          children: actions,
+        ),
+      ],
     );
   }
 }

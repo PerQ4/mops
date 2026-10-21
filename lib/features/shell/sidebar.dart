@@ -13,6 +13,7 @@ import '../../state/library_providers.dart';
 import '../../state/player_controller.dart';
 import '../../state/providers.dart';
 import '../../state/shell.dart';
+import '../../widgets/app_progress.dart';
 import '../../widgets/artwork.dart';
 import '../../widgets/async_views.dart';
 import '../common/navigation.dart';
@@ -1030,11 +1031,8 @@ class _LibraryRowState extends ConsumerState<_LibraryRow> {
                                   ? const SizedBox(
                                       width: 32,
                                       height: 32,
-                                      child: Padding(
-                                        padding: EdgeInsets.all(6),
-                                        child: CircularProgressIndicator(
-                                          strokeWidth: 2,
-                                        ),
+                                      child: Center(
+                                        child: AppProgress(size: 24),
                                       ),
                                     )
                                   : IconButton(
@@ -1818,11 +1816,7 @@ Widget _loadingView(BuildContext context, {required bool compact}) {
   return Center(
     child: Padding(
       padding: EdgeInsets.all(compact ? 8 : 24),
-      child: SizedBox(
-        width: compact ? 20 : 32,
-        height: compact ? 20 : 32,
-        child: const CircularProgressIndicator(strokeWidth: 2),
-      ),
+      child: AppProgress(size: compact ? 24 : 32),
     ),
   );
 }

@@ -17,6 +17,7 @@ import '../../state/catalog_providers.dart';
 import '../../state/lyrics_edits.dart';
 import '../../state/player_controller.dart';
 import '../../state/providers.dart';
+import '../../widgets/app_progress.dart';
 import '../../widgets/async_views.dart';
 import '../../widgets/empty_state.dart';
 import 'lyrics_actions.dart';
@@ -535,7 +536,7 @@ class _LyricsViewState extends ConsumerState<LyricsView> {
               // Поиск ещё идёт и показывать нечего — честное ожидание вместо
               // пустого экрана: вариант может появиться в любой момент.
               if (resolved == null && value.loading) {
-                return const Center(child: CircularProgressIndicator());
+                return const Center(child: AppProgress());
               }
               final Lyrics lyricsValue = resolved ?? Lyrics.none;
               if (lyricsValue.isEmpty) {
@@ -584,7 +585,7 @@ class _LyricsViewState extends ConsumerState<LyricsView> {
                 ),
               );
             },
-            loading: () => const Center(child: CircularProgressIndicator()),
+            loading: () => const Center(child: AppProgress()),
             error: (Object error, StackTrace _) =>
                 ErrorState(message: describeError(error), compact: true),
           ),

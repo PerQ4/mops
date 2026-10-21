@@ -8,6 +8,7 @@ import '../../core/utils/format.dart';
 import '../../data/models/models.dart';
 import '../../state/auth_controller.dart';
 import '../../state/library_providers.dart';
+import '../../widgets/app_progress.dart';
 import '../../widgets/artwork.dart';
 
 /// Диалог «Добавить в плейлист»: свои плейлисты и строка «Новый плейлист».
@@ -78,7 +79,7 @@ class _AddToPlaylistDialogState extends ConsumerState<_AddToPlaylistDialog> {
               : playlists.when(
                   loading: () => const Padding(
                     padding: EdgeInsets.all(32),
-                    child: Center(child: CircularProgressIndicator()),
+                    child: Center(child: AppProgress()),
                   ),
                   error: (Object error, StackTrace _) =>
                       _Hint('Не удалось загрузить плейлисты.\n$error'),

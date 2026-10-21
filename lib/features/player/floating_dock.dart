@@ -13,6 +13,7 @@ import '../../state/library_providers.dart';
 import '../../state/player_controller.dart';
 import '../../state/player_panel.dart';
 import '../../state/providers.dart';
+import '../../widgets/app_progress.dart';
 import '../../widgets/artwork.dart';
 import '../../widgets/marquee_text.dart';
 import '../../widgets/track_menu.dart';
@@ -797,8 +798,8 @@ class _IslandControls extends ConsumerWidget {
           height: 40,
           child: isLoading
               ? const Padding(
-                  padding: EdgeInsets.all(9),
-                  child: CircularProgressIndicator(strokeWidth: 2.5),
+                  padding: EdgeInsets.all(8),
+                  child: AppProgress(size: 24),
                 )
               : IconButton.filled(
                   tooltip: isPlaying ? 'Пауза' : 'Играть',

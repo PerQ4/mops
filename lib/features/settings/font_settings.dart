@@ -4,6 +4,7 @@ import 'package:flutter_riverpod/flutter_riverpod.dart';
 import '../../core/theme/custom_font.dart';
 import '../../data/local/app_settings.dart';
 import '../../state/providers.dart';
+import '../../widgets/app_progress.dart';
 
 /// Диалог выбора шрифта интерфейса (задача 7.4).
 ///
@@ -147,11 +148,7 @@ class _FontDialogState extends ConsumerState<_FontDialog> {
                     OutlinedButton.icon(
                       onPressed: _checking ? null : _check,
                       icon: _checking
-                          ? const SizedBox(
-                              width: 16,
-                              height: 16,
-                              child: CircularProgressIndicator(strokeWidth: 2),
-                            )
+                          ? const AppProgress(size: 24)
                           : const Icon(Icons.font_download_outlined, size: 18),
                       label: Text(_checking ? 'Проверка…' : 'Проверить файл'),
                     ),

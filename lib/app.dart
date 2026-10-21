@@ -12,6 +12,7 @@ import 'core/net/anti_dpi.dart';
 import 'core/net/bypass.dart';
 import 'core/net/fronting.dart';
 import 'core/net/local_proxy.dart';
+import 'core/platform/media_keys.dart';
 import 'data/local/app_settings.dart';
 import 'features/shell/app_shell.dart';
 import 'features/shell/app_shortcuts.dart';
@@ -43,6 +44,9 @@ class _MopsAppState extends ConsumerState<MopsApp> {
     WidgetsBinding.instance.addPostFrameCallback((_) {
       unawaited(_configureAccess());
       unawaited(_initDiscordPresence());
+      // Медиаклавиши и системный оверлей: подписка живёт всё время работы
+      // приложения, поэтому создаём её один раз и никуда не сохраняем ссылку.
+      ref.read(mediaKeysProvider);
     });
   }
 

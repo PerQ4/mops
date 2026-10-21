@@ -13,6 +13,7 @@ import '../../widgets/async_views.dart';
 import '../../widgets/media_card.dart';
 import '../../widgets/track_tile.dart';
 import '../album/media_hero.dart';
+import '../album/media_page.dart';
 import '../common/navigation.dart';
 import '../../widgets/empty_state.dart';
 import 'artist_hero.dart';
@@ -253,66 +254,60 @@ class _ArtistBody extends ConsumerWidget {
 
     final String? description = artist.description?.trim();
 
-    return CustomScrollView(
-      slivers: <Widget>[
-        SliverAppBar(
-          pinned: true,
-          expandedHeight: AppLayout.appBarHeight,
-          title: Text(artist.name, maxLines: 1, overflow: TextOverflow.ellipsis),
-        ),
-        SliverToBoxAdapter(
-          child: ArtistHero(
-            name: artist.name,
-            // Крупная обложка: `ArtistHeroArtworkSizePx` = 1200
-            // (ArtistScreen.kt:1152).
-            imageUrl: artist.thumbnails.sized(1200),
-            audience: audience,
-            catalog: catalog,
-            // Порядок действий как в ArchiveTune: перемешать, слушать,
-            // добавить (`ArtistScreen.kt:504-585`, `MediaDetailHero.kt:341-409`).
-            actions: <Widget>[
-              HeroCircleButton(
-                icon: Icons.shuffle,
-                tooltip: 'Перемешать',
-                size: 52,
-                onPressed: hasTracks
-                    ? () => ref
-                        .read(playerControllerProvider.notifier)
-                        .playQueue(top, shuffle: true)
-                    : null,
-              ),
-              HeroPlayButton(
-                label: isCurrentArtist && playing ? 'Пауза' : 'Слушать',
-                icon: isCurrentArtist && playing
-                    ? Icons.pause
-                    : Icons.play_arrow,
-                onPressed: !hasTracks
-                    ? null
-                    : () {
-                        final PlayerController controller =
-                            ref.read(playerControllerProvider.notifier);
-                        if (isCurrentArtist && playing) {
-                          controller.togglePlayPause();
-                        } else {
-                          controller.playQueue(top);
-                        }
-                      },
-              ),
-              HeroCircleButton(
-                icon: Icons.playlist_add,
-                tooltip: 'В очередь',
-                size: 52,
-                onPressed: hasTracks ? () => _enqueueAll(ref, top) : null,
-              ),
-              // Подписка на канал — как кнопка «Подписаться» в YouTube Music.
-              _SubscribeButton(channelId: artist.id),
-              _BlockArtistButton(
-                artistId: artist.id,
-                artistName: artist.name,
-              ),
-            ],
+    return MediaPage(
+      title: artist.name,
+      heroBuilder: (BuildContext context, bool wide) => ArtistHero(
+        // На широком окне шапка стоит колонкой слева, а треки — справа.
+        column: wide,
+        name: artist.name,
+        // Крупная обложка: `ArtistHeroArtworkSizePx` = 1200
+        // (ArtistScreen.kt:1152).
+        imageUrl: artist.thumbnails.sized(1200),
+        audience: audience,
+        catalog: catalog,
+        // Порядок действий как в ArchiveTune: перемешать, слушать,
+        // добавить (`ArtistScreen.kt:504-585`, `MediaDetailHero.kt:341-409`).
+        actions: <Widget>[
+          HeroCircleButton(
+            icon: Icons.shuffle,
+            tooltip: 'Перемешать',
+            size: 52,
+            onPressed: hasTracks
+                ? () => ref
+                    .read(playerControllerProvider.notifier)
+                    .playQueue(top, shuffle: true)
+                : null,
           ),
-        ),
+          HeroPlayButton(
+            label: isCurrentArtist && playing ? 'Пауза' : 'Слушать',
+            icon: isCurrentArtist && playing ? Icons.pause : Icons.play_arrow,
+            onPressed: !hasTracks
+                ? null
+                : () {
+                    final PlayerController controller =
+                        ref.read(playerControllerProvider.notifier);
+                    if (isCurrentArtist && playing) {
+                      controller.togglePlayPause();
+                    } else {
+                      controller.playQueue(top);
+                    }
+                  },
+          ),
+          HeroCircleButton(
+            icon: Icons.playlist_add,
+            tooltip: 'В очередь',
+            size: 52,
+            onPressed: hasTracks ? () => _enqueueAll(ref, top) : null,
+          ),
+          // Подписка на канал — как кнопка «Подписаться» в YouTube Music.
+          _SubscribeButton(channelId: artist.id),
+          _BlockArtistButton(
+            artistId: artist.id,
+            artistName: artist.name,
+          ),
+        ],
+      ),
+      slivers: <Widget>[
         if (blocked)
           SliverToBoxAdapter(
             child: _BlockedBanner(
@@ -379,10 +374,6 @@ class _ArtistBody extends ConsumerWidget {
               ),
             ),
           ),
-        const SliverToBoxAdapter(
-          // Отступ снизу под плавающий островок плеера.
-          child: SizedBox(height: AppLayout.floatingDockClearance),
-        ),
       ],
     );
   }

@@ -1,12 +1,12 @@
 import 'package:cached_network_image/cached_network_image.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
-import 'package:material_3_expressive/material_3_expressive.dart' as m3e;
 
 import '../../core/theme/layout.dart';
 import '../../data/models/models.dart';
 import '../../state/auth_controller.dart';
 import '../../state/catalog_providers.dart';
+import '../../widgets/app_progress.dart';
 import '../../widgets/artwork.dart';
 import '../../widgets/horizontal_list.dart';
 import '../../widgets/async_views.dart';
@@ -159,7 +159,7 @@ class _LoadingMoreFooter extends StatelessWidget {
   Widget build(BuildContext context) {
     return const Padding(
       padding: EdgeInsets.all(32),
-      child: Center(child: m3e.M3ELoadingIndicator()),
+      child: Center(child: AppProgress()),
     );
   }
 }
@@ -168,15 +168,15 @@ class _LoadingMoreFooter extends StatelessWidget {
 /// (HomeScreen.kt:182-188, 248-249): экран целиком занят центрированным
 /// индикатором Material 3 Expressive.
 ///
-/// Индикатор берём из уже подключённого пакета `material_3_expressive`
-/// (`M3ELoadingIndicator` — порт `androidx.compose.material3.LoadingIndicator`),
-/// поэтому форма и размеры (48) совпадают с оригиналом.
+/// Индикатор берём из пакета `material_3_expressive` через общую обёртку
+/// [AppProgress] (порт `androidx.compose.material3.LoadingIndicator`), поэтому
+/// форма и размеры (48) совпадают с оригиналом и с остальными экранами.
 class _HomeLoadingPane extends StatelessWidget {
   const _HomeLoadingPane();
 
   @override
   Widget build(BuildContext context) {
-    return const Center(child: m3e.M3ELoadingIndicator());
+    return const Center(child: AppProgress());
   }
 }
 

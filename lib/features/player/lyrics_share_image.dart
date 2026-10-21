@@ -9,6 +9,8 @@ import 'package:flutter/rendering.dart';
 import 'package:path_provider/path_provider.dart';
 import 'package:url_launcher/url_launcher.dart';
 
+import '../../widgets/app_progress.dart';
+
 /// Сторона карточки в логических пикселях — она же размер готового PNG.
 ///
 /// Карточка верстается сразу в экспортном размере, а предпросмотр лишь ужимает
@@ -513,13 +515,7 @@ class _LyricsShareDialogState extends State<_LyricsShareDialog> {
                       FilledButton.icon(
                         onPressed: _busy ? null : () => unawaited(_save()),
                         icon: _busy
-                            ? const SizedBox(
-                                width: 18,
-                                height: 18,
-                                child: CircularProgressIndicator(
-                                  strokeWidth: 2,
-                                ),
-                              )
+                            ? const AppProgress(size: 24)
                             : const Icon(Icons.save_alt),
                         label: Text(_busy ? 'Сохраняем…' : 'Сохранить PNG'),
                       ),

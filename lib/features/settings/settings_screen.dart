@@ -23,6 +23,7 @@ import '../player/equalizer.dart';
 import '../player/player_controls.dart';
 import '../player/sleep_timer.dart';
 import '../../state/ui_scale.dart';
+import '../../widgets/app_progress.dart';
 import '../../widgets/liquid_backdrop.dart';
 import '../common/navigation.dart';
 import 'blocked_artists_screen.dart';
@@ -1337,11 +1338,7 @@ class SettingsScreen extends ConsumerWidget {
                     OutlinedButton.icon(
                       onPressed: checking ? null : runCheck,
                       icon: checking
-                          ? const SizedBox(
-                              width: 16,
-                              height: 16,
-                              child: CircularProgressIndicator(strokeWidth: 2),
-                            )
+                          ? const AppProgress(size: 24)
                           : const Icon(Icons.verified_outlined, size: 18),
                       label: Text(checking ? 'Проверка…' : 'Проверить ключ'),
                     ),

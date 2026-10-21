@@ -7,6 +7,7 @@ import '../../core/net/diagnostics.dart';
 import '../../core/net/local_proxy.dart';
 import '../../data/local/app_settings.dart';
 import '../../state/providers.dart';
+import '../../widgets/app_progress.dart';
 
 /// Настройки обхода блокировок провайдера.
 ///
@@ -142,11 +143,7 @@ class _BypassScreenState extends ConsumerState<BypassScreen> {
               child: FilledButton.tonalIcon(
                 onPressed: _searching ? null : () => _searchProxy(controller),
                 icon: _searching
-                    ? const SizedBox(
-                        width: 18,
-                        height: 18,
-                        child: CircularProgressIndicator(strokeWidth: 2),
-                      )
+                    ? const AppProgress(size: 24)
                     : const Icon(Icons.search),
                 label: Text(_searching ? 'Ищем…' : 'Найти прокси сейчас'),
               ),
@@ -295,11 +292,7 @@ class _BypassScreenState extends ConsumerState<BypassScreen> {
             child: FilledButton.icon(
               onPressed: _checking ? null : _runCheck,
               icon: _checking
-                  ? const SizedBox(
-                      width: 18,
-                      height: 18,
-                      child: CircularProgressIndicator(strokeWidth: 2),
-                    )
+                  ? const AppProgress(size: 24)
                   : const Icon(Icons.network_check),
               label: Text(_checking ? 'Проверяем…' : 'Проверить соединение'),
             ),

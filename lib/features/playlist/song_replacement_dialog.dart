@@ -5,6 +5,7 @@ import '../../core/utils/format.dart';
 import '../../data/models/models.dart';
 import '../../data/sources/song_replacement.dart';
 import '../../state/catalog_providers.dart';
+import '../../widgets/app_progress.dart';
 import '../../widgets/artwork.dart';
 import '../../widgets/async_views.dart';
 
@@ -82,7 +83,7 @@ class _SongReplacementDialogState
                     AsyncSnapshot<List<SongCandidate>> snapshot,
                   ) {
                     if (snapshot.connectionState != ConnectionState.done) {
-                      return const Center(child: CircularProgressIndicator());
+                      return const Center(child: AppProgress());
                     }
                     if (snapshot.hasError) {
                       return _ErrorState(

@@ -6,6 +6,7 @@ import '../../core/theme/layout.dart';
 import '../../core/updates/app_version.dart';
 import '../../core/updates/update_check.dart';
 import '../../state/providers.dart';
+import '../../widgets/app_progress.dart';
 
 /// «Обновления»: последний релиз с GitHub и его список изменений.
 ///
@@ -188,11 +189,7 @@ class _CheckingLine extends StatelessWidget {
     final ThemeData theme = Theme.of(context);
     return Row(
       children: <Widget>[
-        const SizedBox(
-          width: 16,
-          height: 16,
-          child: CircularProgressIndicator(strokeWidth: 2),
-        ),
+        const AppProgress(size: 24),
         const SizedBox(width: 10),
         Text(
           'Проверяем обновления…',

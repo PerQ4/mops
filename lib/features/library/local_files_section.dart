@@ -11,6 +11,7 @@ import '../../data/local/local_media.dart';
 import '../../data/models/models.dart';
 import '../../state/player_controller.dart';
 import '../../state/providers.dart';
+import '../../widgets/app_progress.dart';
 import '../../widgets/empty_state.dart';
 import '../common/navigation.dart';
 
@@ -147,11 +148,7 @@ class _ScanningPane extends StatelessWidget {
       child: Column(
         mainAxisSize: MainAxisSize.min,
         children: <Widget>[
-          const SizedBox(
-            width: 28,
-            height: 28,
-            child: CircularProgressIndicator(strokeWidth: 2.5),
-          ),
+          const AppProgress(size: 28),
           const SizedBox(height: 16),
           Text(
             'Сканируем папку…',
@@ -209,11 +206,7 @@ class _LocalHeader extends StatelessWidget {
               if (scanning)
                 const Padding(
                   padding: EdgeInsets.symmetric(horizontal: 12),
-                  child: SizedBox(
-                    width: 16,
-                    height: 16,
-                    child: CircularProgressIndicator(strokeWidth: 2),
-                  ),
+                  child: AppProgress(size: 24),
                 ),
               IconButton(
                 tooltip: 'Пересканировать',
@@ -448,11 +441,7 @@ class _LocalArtworkState extends State<_LocalArtwork> {
   Widget _placeholder(ColorScheme scheme, bool loading) {
     return Center(
       child: loading
-          ? const SizedBox(
-              width: 18,
-              height: 18,
-              child: CircularProgressIndicator(strokeWidth: 2),
-            )
+          ? const AppProgress(size: 24)
           : Icon(
               Icons.music_note,
               size: 24,

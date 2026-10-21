@@ -11,6 +11,7 @@ import '../../data/models/models.dart';
 import '../../data/sources/catalog_source.dart';
 import '../../state/catalog_providers.dart';
 import '../../state/player_controller.dart';
+import '../../widgets/app_progress.dart';
 import '../common/navigation.dart';
 import 'content_navigator.dart';
 
@@ -375,13 +376,7 @@ class _CommandPaletteState extends ConsumerState<_CommandPalette> {
     if (results.isLoading && !results.hasValue) {
       return const Padding(
         padding: EdgeInsets.symmetric(vertical: 40),
-        child: Center(
-          child: SizedBox(
-            width: 24,
-            height: 24,
-            child: CircularProgressIndicator(strokeWidth: 2.5),
-          ),
-        ),
+        child: Center(child: AppProgress(size: 24)),
       );
     }
     if (results.hasError && !results.hasValue) {

@@ -12,6 +12,7 @@ import '../../state/catalog_providers.dart';
 import '../../state/lyrics_edits.dart';
 import '../../state/player_controller.dart';
 import '../../state/providers.dart';
+import '../../widgets/app_progress.dart';
 import 'lyrics_share_image.dart';
 
 /// Кнопка меню текста песни — одно на все поверхности плеера.
@@ -532,13 +533,9 @@ class _SourcesPanelState extends State<_SourcesPanel> {
                 if (widget.loading)
                   Padding(
                     padding: const EdgeInsets.only(right: 12),
-                    child: SizedBox(
-                      width: 16,
-                      height: 16,
-                      child: CircularProgressIndicator(
-                        strokeWidth: 2,
-                        color: scheme.onSurfaceVariant,
-                      ),
+                    child: AppProgress(
+                      size: 24,
+                      color: scheme.onSurfaceVariant,
                     ),
                   ),
                 Icon(
@@ -950,13 +947,9 @@ class _SearchHeader extends StatelessWidget {
             if (searching)
               Padding(
                 padding: const EdgeInsets.symmetric(horizontal: 8),
-                child: SizedBox(
-                  width: 28,
-                  height: 28,
-                  child: CircularProgressIndicator(
-                    strokeWidth: 3,
-                    color: scheme.onPrimaryContainer,
-                  ),
+                child: AppProgress(
+                  size: 28,
+                  color: scheme.onPrimaryContainer,
                 ),
               ),
             if (onRefetch != null)
@@ -993,14 +986,7 @@ class _SearchFooterLoading extends StatelessWidget {
       child: Row(
         mainAxisAlignment: MainAxisAlignment.center,
         children: <Widget>[
-          SizedBox(
-            width: 20,
-            height: 20,
-            child: CircularProgressIndicator(
-              strokeWidth: 2,
-              color: scheme.onSurfaceVariant,
-            ),
-          ),
+          AppProgress(size: 24, color: scheme.onSurfaceVariant),
           const SizedBox(width: 12),
           Text(
             'Всё ещё ищем…',
@@ -1045,7 +1031,7 @@ class _SearchMessage extends StatelessWidget {
               child: spinner
                   ? const Padding(
                       padding: EdgeInsets.all(16),
-                      child: CircularProgressIndicator(strokeWidth: 3),
+                      child: AppProgress(size: 24),
                     )
                   : Icon(
                       icon,
@@ -1270,9 +1256,16 @@ class _TypeTile extends StatelessWidget {
         width: 48,
         height: 48,
         child: icon == null
-            ? const Padding(
-                padding: EdgeInsets.all(14),
-                child: CircularProgressIndicator(strokeWidth: 2),
+            // Цвет как у иконки на этом же месте: на выбранной плитке фон
+            // `primary`, и индикатор цвета `primary` растворялся в нём.
+            ? Padding(
+                padding: const EdgeInsets.all(12),
+                child: AppProgress(
+                  size: 24,
+                  color: expanded
+                      ? scheme.onPrimary
+                      : scheme.onTertiaryContainer,
+                ),
               )
             : Icon(
                 icon,

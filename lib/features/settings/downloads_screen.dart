@@ -7,6 +7,7 @@ import '../../data/local/downloads.dart';
 import '../../data/models/models.dart';
 import '../../state/player_controller.dart';
 import '../../state/providers.dart';
+import '../../widgets/app_progress.dart';
 import '../../widgets/track_menu.dart';
 import '../../widgets/track_tile.dart';
 
@@ -45,7 +46,7 @@ class DownloadsScreen extends ConsumerWidget {
       appBar: AppBar(title: const Text('Загрузки')),
       body: ContentWidth(
         child: !downloads.loaded
-            ? const Center(child: CircularProgressIndicator())
+            ? const Center(child: AppProgress())
             : ListView(
                 padding: const EdgeInsets.fromLTRB(16, 16, 16, 32),
                 children: <Widget>[
