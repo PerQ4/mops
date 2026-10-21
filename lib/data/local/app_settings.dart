@@ -305,6 +305,27 @@ enum ProgressBarStyle {
       );
 }
 
+/// Вид визуализатора у обложки (задача 10.8).
+///
+/// «Гало» — прежний вид: одно кольцо по общему уровню. «Полосы» — настоящий
+/// спектр частот из libmpv. Полосы требуют фильтра `lavfi` в сборке; если его
+/// нет, визуализатор честно показывает гало, а не выдуманное движение.
+enum VisualizerStyle {
+  halo('Гало', 'Кольцо вокруг обложки дышит по громкости'),
+  bars('Полосы', 'Спектр частот по краю обложки');
+
+  const VisualizerStyle(this.label, this.description);
+
+  final String label;
+  final String description;
+
+  static VisualizerStyle fromName(String? name) =>
+      VisualizerStyle.values.firstWhere(
+        (VisualizerStyle v) => v.name == name,
+        orElse: () => VisualizerStyle.halo,
+      );
+}
+
 /// Стиль фона полноэкранного плеера.
 ///
 /// Первый шаг переноса настроек внешнего вида ArchiveTune
@@ -579,6 +600,11 @@ class AppSettings {
     this.disableBlur = false,
     this.blurRadius = 48,
     this.visualizerEnabled = false,
+    this.visualizerStyle = VisualizerStyle.halo,
+    // Статистика прослушиваний — только на этом компьютере. Включена по
+    // умолчанию: без неё экран статистики всегда пуст, а данные никуда не
+    // уходят. Выключение останавливает запись, не стирая уже собранное.
+    this.listeningStatsEnabled = true,
     // Эквалайзер выключен и «плоский»: частоты не тронуты, а цепочка фильтров
     // не строится. Пресет хранится отдельно от полос, чтобы интерфейс мог
     // показать, какой набор выбран, даже когда пользователь подправил полосы.
@@ -823,6 +849,16 @@ class AppSettings {
   /// этом и не будет двигаться.
   final bool visualizerEnabled;
 
+  /// Вид визуализатора: гало по уровню или спектр полос (задача 10.8).
+  final VisualizerStyle visualizerStyle;
+
+  /// Считать ли прослушивания на этом компьютере (задача 8.1).
+  ///
+  /// Запись локальная: ни треки, ни время никуда не отправляются. Выключение
+  /// прекращает новые записи, а стереть уже собранное можно на экране
+  /// статистики — отдельной кнопкой, а не снятием галочки.
+  final bool listeningStatsEnabled;
+
   /// Включён ли эквалайзер. Отдельный флаг: «плоский, но включённый» — это
   /// рабочее состояние (пользователь двигает полосы от нуля), и выключать
   /// эквалайзер только потому, что все полосы пока в нуле, нельзя.
@@ -959,6 +995,8 @@ class AppSettings {
     bool? disableBlur,
     double? blurRadius,
     bool? visualizerEnabled,
+    VisualizerStyle? visualizerStyle,
+    bool? listeningStatsEnabled,
     bool? equalizerEnabled,
     List<double>? equalizerBands,
     String? equalizerPresetId,
@@ -1041,6 +1079,9 @@ class AppSettings {
       disableBlur: disableBlur ?? this.disableBlur,
       blurRadius: blurRadius ?? this.blurRadius,
       visualizerEnabled: visualizerEnabled ?? this.visualizerEnabled,
+      visualizerStyle: visualizerStyle ?? this.visualizerStyle,
+      listeningStatsEnabled:
+          listeningStatsEnabled ?? this.listeningStatsEnabled,
       equalizerEnabled: equalizerEnabled ?? this.equalizerEnabled,
       equalizerBands: equalizerBands ?? this.equalizerBands,
       equalizerPresetId: equalizerPresetId ?? this.equalizerPresetId,
@@ -1127,6 +1168,8 @@ class AppSettings {
         'disableBlur': disableBlur,
         'blurRadius': blurRadius,
         'visualizerEnabled': visualizerEnabled,
+        'visualizerStyle': visualizerStyle.name,
+        'listeningStatsEnabled': listeningStatsEnabled,
         'equalizerEnabled': equalizerEnabled,
         'equalizerBands': equalizerBands.join(','),
         'equalizerPresetId': equalizerPresetId,
@@ -1229,6 +1272,10 @@ class AppSettings {
       disableBlur: json['disableBlur'] as bool? ?? false,
       blurRadius: (json['blurRadius'] as num?)?.toDouble() ?? 48,
       visualizerEnabled: json['visualizerEnabled'] as bool? ?? false,
+      visualizerStyle: VisualizerStyle.fromName(
+        json['visualizerStyle'] as String?,
+      ),
+      listeningStatsEnabled: json['listeningStatsEnabled'] as bool? ?? true,
       equalizerEnabled: json['equalizerEnabled'] as bool? ?? false,
       equalizerBands: _parseEqualizerBands(json['equalizerBands'] as String?),
       equalizerPresetId: json['equalizerPresetId'] as String? ?? 'flat',

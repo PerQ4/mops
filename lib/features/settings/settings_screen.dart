@@ -28,6 +28,7 @@ import 'blocked_artists_screen.dart';
 import 'font_settings.dart';
 import 'lyrics_animation_screen.dart';
 import 'settings_components.dart';
+import 'stats_screen.dart';
 import 'updates_screen.dart';
 
 /// Настройки: внешний вид, воспроизведение, регион и аккаунт.
@@ -212,6 +213,16 @@ class SettingsScreen extends ConsumerWidget {
                   value: settings.visualizerEnabled,
                   onChanged: controller.setVisualizerEnabled,
                 ),
+                // Вид показываем только у включённого визуализатора: без него
+                // строка ничего не меняет и только загромождает список.
+                if (settings.visualizerEnabled)
+                  SettingsRow(
+                    icon: Icons.bar_chart,
+                    title: 'Вид визуализатора',
+                    subtitle: settings.visualizerStyle.label,
+                    onTap: () =>
+                        _pickVisualizerStyle(context, controller, settings),
+                  ),
                 SettingsSwitchRow(
                   icon: Icons.blur_off,
                   title: 'Отключить размытие',
@@ -642,6 +653,22 @@ class SettingsScreen extends ConsumerWidget {
                   subtitle: 'Занятое место и очистка кэша текстов',
                   onTap: () => AppRoutes.storage(context),
                 ),
+                // Статистика тоже про данные, но не про занятое место: журнал
+                // маленький, зато его можно выключить и стереть отдельно.
+                SettingsSwitchRow(
+                  icon: Icons.insights_outlined,
+                  title: 'Статистика прослушиваний',
+                  subtitle: 'Считать прослушивания на этом компьютере; '
+                      'данные никуда не отправляются',
+                  value: settings.listeningStatsEnabled,
+                  onChanged: controller.setListeningStatsEnabled,
+                ),
+                SettingsRow(
+                  icon: Icons.query_stats,
+                  title: 'Статистика',
+                  subtitle: 'Прослушивания, топ исполнителей, альбомов и треков',
+                  onTap: () => _openStats(context),
+                ),
               ],
             ),
             const SizedBox(height: SettingsDims.sectionSpacing),
@@ -754,6 +781,35 @@ class SettingsScreen extends ConsumerWidget {
           Animation<double> secondaryAnimation,
         ) =>
             const BlockedArtistsScreen(),
+        transitionsBuilder: (
+          BuildContext context,
+          Animation<double> animation,
+          Animation<double> secondaryAnimation,
+          Widget child,
+        ) =>
+            motion.routeTransition(
+          animation: animation,
+          begin: const Offset(0, 0.02),
+          child: child,
+        ),
+      ),
+    );
+  }
+
+  /// Экран статистики открывается так же, как «Заблокированные»: он относится
+  /// только к настройкам, общий словарь маршрутов не расширяем.
+  void _openStats(BuildContext context) {
+    final MotionTransition motion = AppMotion.pageEnter;
+    Navigator.of(context).push<void>(
+      PageRouteBuilder<void>(
+        transitionDuration: motion.duration,
+        reverseTransitionDuration: motion.reverseDuration ?? motion.duration,
+        pageBuilder: (
+          BuildContext context,
+          Animation<double> animation,
+          Animation<double> secondaryAnimation,
+        ) =>
+            const StatsScreen(),
         transitionsBuilder: (
           BuildContext context,
           Animation<double> animation,
@@ -1042,6 +1098,24 @@ class SettingsScreen extends ConsumerWidget {
       },
     );
     if (result != null) await controller.setProgressBarStyle(result);
+  }
+
+  /// Вид визуализатора: гало или полосы (задача 10.8). Описания показываем —
+  /// по названию не всем понятно, что «Полосы» требуют фильтра в libmpv.
+  Future<void> _pickVisualizerStyle(
+    BuildContext context,
+    SettingsController controller,
+    AppSettings settings,
+  ) async {
+    final VisualizerStyle? result = await _showChoice<VisualizerStyle>(
+      context,
+      title: 'Вид визуализатора',
+      current: settings.visualizerStyle,
+      values: VisualizerStyle.values,
+      label: (VisualizerStyle style) => style.label,
+      description: (VisualizerStyle style) => style.description,
+    );
+    if (result != null) await controller.setVisualizerStyle(result);
   }
 
   /// Ключ Paxsenix: через него работает источник Musixmatch.

@@ -8,6 +8,7 @@ import 'package:shared_preferences/shared_preferences.dart';
 import '../core/audio/audio_engine.dart';
 import '../core/audio/media_kit_engine.dart';
 import '../core/scrobbling/scrobbler.dart';
+import '../data/local/listening_stats.dart';
 import '../data/local/queue_snapshot.dart';
 import '../data/models/models.dart';
 import '../data/sources/sponsorblock.dart';
@@ -221,9 +222,18 @@ class PlayerController extends Notifier<PlayerUiState> {
   /// Последний записанный снимок — чтобы не писать на диск одно и то же.
   String? _lastSnapshot;
 
+  /// --------------------------- статистика прослушиваний (задача 8.1)
+  ///
+  /// Считаем только реально проигранные секунды: дельты позиции между тиками,
+  /// причём небольшие. Перемотка даёт скачок, и он в зачёт не идёт. Один трек
+  /// засчитывается один раз за проигрывание — когда набралось достаточно.
+  String? _listenTrackId;
+  double _listenSeconds = 0;
+  double _listenPosition = 0;
+  bool _listenRecorded = false;
+
   /// Вставки текущего трека по данным SponsorBlock.
   List<SponsorSegment> _sponsorSegments = const <SponsorSegment>[];
-
   /// Трек, для которого получены [_sponsorSegments].
   String? _sponsorTrackId;
 
@@ -278,6 +288,10 @@ class PlayerController extends Notifier<PlayerUiState> {
           !_handlingEnd &&
           !playback.hasError;
       _scrobblePlayback(playback, completed: acceptedEnd);
+
+      // Статистика прослушиваний — рядом со скробблингом и по тем же тикам:
+      // здесь известна настоящая позиция, а не та, что показывает интерфейс.
+      _countListening(playback);
 
       // На ошибке и во время перемотки вперёд не идём: «конец трека» здесь
       // ложный, а настоящее завершение придёт без этих условий.
@@ -1118,6 +1132,83 @@ class PlayerController extends Notifier<PlayerUiState> {
       duration: playback.duration,
       isPlaying: playback.isPlaying,
       completed: completed,
+    );
+  }
+
+  /// Считает прослушанное и зачитывает трек, когда набралось достаточно.
+  ///
+  /// Порог — четыре минуты или половина трека, что меньше: короткий трек
+  /// засчитывается после половины, длинный — после четырёх минут. В журнал
+  /// попадает только реально проигранное время: паузы, перемотки и «просто
+  /// открытый плеер» его не добавляют.
+  void _countListening(PlaybackState playback) {
+    final Track? track = state.current;
+    if (track == null) {
+      _listenTrackId = null;
+      _listenSeconds = 0;
+      _listenPosition = 0;
+      _listenRecorded = false;
+      return;
+    }
+
+    final double position = playback.position.inMilliseconds / 1000.0;
+    if (track.id != _listenTrackId) {
+      // Новый трек: начинаем счёт с его текущей позиции (она может быть не
+      // нулевой после восстановления очереди).
+      _listenTrackId = track.id;
+      _listenSeconds = 0;
+      _listenPosition = position;
+      _listenRecorded = false;
+      return;
+    }
+
+    final double delta = position - _listenPosition;
+    _listenPosition = position;
+
+    // Возврат к началу — это новое прослушивание (повтор трека), а не
+    // продолжение прежнего: иначе второй раз не засчитался бы никогда.
+    if (delta < -2 && position < 3) {
+      _listenSeconds = 0;
+      _listenRecorded = false;
+      return;
+    }
+    // Скачок больше двух секунд — перемотка или подвисание, не прослушивание.
+    if (playback.isPlaying && delta > 0 && delta <= 2) {
+      _listenSeconds += delta;
+    }
+    if (_listenRecorded) return;
+
+    final Duration total = playback.duration > Duration.zero
+        ? playback.duration
+        : track.duration;
+    final double threshold = total > Duration.zero
+        ? min(240.0, total.inMilliseconds / 2000.0)
+        : 240.0;
+    if (_listenSeconds < threshold) return;
+
+    // Запись могли выключить уже после начала трека — тогда журнал не трогаем.
+    final settings = ref.read(settingsControllerProvider);
+    if (!settings.listeningStatsEnabled) return;
+
+    _listenRecorded = true;
+    final int seconds = total > Duration.zero
+        ? _listenSeconds
+            .clamp(0, total.inMilliseconds / 1000.0)
+            .round()
+        : _listenSeconds.round();
+    unawaited(
+      ref.read(listeningStatsProvider.notifier).add(
+            ListenEvent(
+              trackId: track.id,
+              title: track.title,
+              artists: <String>[
+                for (final ArtistRef artist in track.artists) artist.name,
+              ],
+              album: track.album?.name,
+              at: DateTime.now(),
+              seconds: max(1, seconds),
+            ),
+          ),
     );
   }
 

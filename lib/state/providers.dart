@@ -1,5 +1,6 @@
 import 'dart:async';
 
+import 'package:flutter/foundation.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:media_kit/media_kit.dart';
 import 'package:shared_preferences/shared_preferences.dart';
@@ -17,6 +18,7 @@ import '../core/theme/ui_scaler.dart';
 import '../core/updates/update_check.dart';
 import '../core/utils/artwork_urls.dart';
 import '../data/local/app_settings.dart';
+import '../data/local/listening_stats.dart';
 import '../data/sources/catalog_source.dart';
 import '../data/sources/paxsenix_source.dart';
 import '../data/sources/romanization.dart';
@@ -257,6 +259,15 @@ class SettingsController extends Notifier<AppSettings> {
   /// «Гало» вокруг обложки по уровню звука.
   Future<void> setVisualizerEnabled(bool value) =>
       update((AppSettings s) => s.copyWith(visualizerEnabled: value));
+
+  /// Вид визуализатора: гало или спектр полос (задача 10.8).
+  Future<void> setVisualizerStyle(VisualizerStyle style) =>
+      update((AppSettings s) => s.copyWith(visualizerStyle: style));
+
+  /// Запись статистики прослушиваний (задача 8.1). Выключение не стирает уже
+  /// собранное — стереть можно на экране статистики.
+  Future<void> setListeningStatsEnabled(bool value) =>
+      update((AppSettings s) => s.copyWith(listeningStatsEnabled: value));
 
   /// Эквалайзер одним изменением: включение, полосы и имя пресета.
   ///
@@ -803,3 +814,59 @@ final Provider<AudioLevelMonitor> audioLevelMonitorProvider =
   ref.onDispose(monitor.dispose);
   return monitor;
 });
+
+/// Хранилище статистики прослушиваний — одно на приложение.
+final Provider<ListeningStatsStore> listeningStatsStoreProvider =
+    Provider<ListeningStatsStore>((Ref ref) => ListeningStatsStore());
+
+/// Журнал зачтённых прослушиваний (задача 8.1).
+///
+/// События читаются с диска один раз и дальше живут в памяти. Запись идёт
+/// очередью в хранилище, поэтому зачёты на границе трека не теряются. Провайдер
+/// ленивый: пока контроллер плеера не зачтёт первое прослушивание, файл не
+/// читается — в тестах с заглушкой движка этого не происходит вовсе.
+class ListeningStats extends Notifier<List<ListenEvent>> {
+  Future<void>? _ready;
+
+  @override
+  List<ListenEvent> build() {
+    _ready = _load(ref.watch(listeningStatsStoreProvider));
+    return const <ListenEvent>[];
+  }
+
+  Future<void> _load(ListeningStatsStore store) async {
+    List<ListenEvent> loaded = const <ListenEvent>[];
+    try {
+      loaded = await store.readAll();
+    } on Object catch (error) {
+      debugPrint('Статистика: журнал не прочитан — $error');
+    }
+    if (!ref.mounted) return;
+    state = List<ListenEvent>.unmodifiable(loaded);
+  }
+
+  /// Записывает зачётное прослушивание и сохраняет его на диск.
+  ///
+  /// Ждём загрузку: иначе первая же запись перетёрла бы прочитанный журнал.
+  Future<void> add(ListenEvent event) async {
+    final Future<void>? ready = _ready;
+    if (ready != null) await ready;
+    if (!ref.mounted) return;
+    final List<ListenEvent> next = <ListenEvent>[...state, event];
+    state = List<ListenEvent>.unmodifiable(next);
+    await ref.read(listeningStatsStoreProvider).writeAll(next);
+  }
+
+  /// Стирает журнал целиком — и в памяти, и на диске.
+  Future<void> clear() async {
+    final Future<void>? ready = _ready;
+    if (ready != null) await ready;
+    if (!ref.mounted) return;
+    state = const <ListenEvent>[];
+    await ref.read(listeningStatsStoreProvider).clear();
+  }
+}
+
+final NotifierProvider<ListeningStats, List<ListenEvent>>
+    listeningStatsProvider =
+    NotifierProvider<ListeningStats, List<ListenEvent>>(ListeningStats.new);
