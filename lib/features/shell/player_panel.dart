@@ -308,12 +308,18 @@ class _PanelArtwork extends StatelessWidget {
               SizedBox(
                 width: side,
                 height: side,
-                child: Artwork(
-                  url: variants.isEmpty ? null : variants.first,
-                  fallbacks: variants.length > 1
-                      ? variants.sublist(1)
-                      : const <String>[],
-                  radius: shape,
+                // Правый клик по обложке — то же меню, что у «…» в строке:
+                // на крупной обложке это самая очевидная цель.
+                child: GestureDetector(
+                  behavior: HitTestBehavior.opaque,
+                  onSecondaryTap: () => showTrackMenu(context, track),
+                  child: Artwork(
+                    url: variants.isEmpty ? null : variants.first,
+                    fallbacks: variants.length > 1
+                        ? variants.sublist(1)
+                        : const <String>[],
+                    radius: shape,
+                  ),
                 ),
               ),
             ],
@@ -450,17 +456,22 @@ class _PanelTrackRow extends ConsumerWidget {
         child: Row(
           children: <Widget>[
             if (showArtwork) ...<Widget>[
-              ClipRRect(
-                borderRadius: BorderRadius.circular(10),
-                child: SizedBox(
-                  width: 56,
-                  height: 56,
-                  child: Artwork(
-                    url: variants.isEmpty ? null : variants.first,
-                    fallbacks: variants.length > 1
-                        ? variants.sublist(1)
-                        : const <String>[],
-                    radius: BorderRadius.circular(10),
+              // Правый клик по миниатюре — то же меню трека, что у «…».
+              GestureDetector(
+                behavior: HitTestBehavior.opaque,
+                onSecondaryTap: () => showTrackMenu(context, track),
+                child: ClipRRect(
+                  borderRadius: BorderRadius.circular(10),
+                  child: SizedBox(
+                    width: 56,
+                    height: 56,
+                    child: Artwork(
+                      url: variants.isEmpty ? null : variants.first,
+                      fallbacks: variants.length > 1
+                          ? variants.sublist(1)
+                          : const <String>[],
+                      radius: BorderRadius.circular(10),
+                    ),
                   ),
                 ),
               ),
@@ -471,12 +482,18 @@ class _PanelTrackRow extends ConsumerWidget {
                 mainAxisAlignment: MainAxisAlignment.center,
                 crossAxisAlignment: CrossAxisAlignment.start,
                 children: <Widget>[
-                  MarqueeText(
-                    track.title,
-                    // Прокрутка стоит на паузе вместе с треком.
-                    playing: player.isPlaying,
-                    style: text.titleMedium?.copyWith(
-                      fontWeight: FontWeight.w700,
+                  // Название — тоже цель для правого клика: это подпись
+                  // играющего трека, и меню здесь ждут в первую очередь.
+                  GestureDetector(
+                    behavior: HitTestBehavior.opaque,
+                    onSecondaryTap: () => showTrackMenu(context, track),
+                    child: MarqueeText(
+                      track.title,
+                      // Прокрутка стоит на паузе вместе с треком.
+                      playing: player.isPlaying,
+                      style: text.titleMedium?.copyWith(
+                        fontWeight: FontWeight.w700,
+                      ),
                     ),
                   ),
                   const SizedBox(height: 2),

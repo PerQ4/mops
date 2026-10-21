@@ -942,6 +942,11 @@ class _LibraryRowState extends State<_LibraryRow> {
         child: InkWell(
           onTap: widget.onTap,
           onFocusChange: (bool focused) => setState(() => _focused = focused),
+          // Правый клик — то же меню, что у «…», но у курсора: кнопка
+          // появляется только при наведении и фокусе, и целиться в неё после
+          // клика не нужно.
+          onSecondaryTapUp: (TapUpDetails details) =>
+              _openMenuAt(details.globalPosition),
           child: Container(
             decoration: widget.active
                 ? BoxDecoration(
@@ -1039,30 +1044,7 @@ class _LibraryRowState extends State<_LibraryRow> {
                               icon: const Icon(Icons.more_vert),
                               onSelected: widget.onMenu,
                               itemBuilder: (BuildContext context) =>
-                                  <PopupMenuEntry<_EntryAction>>[
-                                for (final _MenuEntry entry in widget.menu)
-                                  PopupMenuItem<_EntryAction>(
-                                    value: entry.action,
-                                    child: Row(
-                                      children: <Widget>[
-                                        Icon(
-                                          entry.icon,
-                                          size: 18,
-                                          color: entry.destructive
-                                              ? scheme.error
-                                              : null,
-                                        ),
-                                        const SizedBox(width: 12),
-                                        Text(
-                                          entry.label,
-                                          style: entry.destructive
-                                              ? TextStyle(color: scheme.error)
-                                              : null,
-                                        ),
-                                      ],
-                                    ),
-                                  ),
-                              ],
+                                  _menuItems(scheme),
                             ),
                           ],
                         )
@@ -1074,6 +1056,53 @@ class _LibraryRowState extends State<_LibraryRow> {
         ),
       ),
     );
+  }
+
+  /// Пункты меню — один список на кнопку «…» и на правый клик: иначе
+  /// действия рано или поздно разошлись бы.
+  List<PopupMenuEntry<_EntryAction>> _menuItems(ColorScheme scheme) {
+    return <PopupMenuEntry<_EntryAction>>[
+      for (final _MenuEntry entry in widget.menu)
+        PopupMenuItem<_EntryAction>(
+          value: entry.action,
+          child: Row(
+            children: <Widget>[
+              Icon(
+                entry.icon,
+                size: 18,
+                color: entry.destructive ? scheme.error : null,
+              ),
+              const SizedBox(width: 12),
+              Text(
+                entry.label,
+                style: entry.destructive ? TextStyle(color: scheme.error) : null,
+              ),
+            ],
+          ),
+        ),
+    ];
+  }
+
+  /// Меню строки у курсора.
+  ///
+  /// Позиция считается от оверлея, а не от строки: так меню не уезжает за
+  /// край панели, когда строка стоит у нижней границы окна.
+  Future<void> _openMenuAt(Offset globalPosition) async {
+    final RenderBox? overlay =
+        Overlay.of(context).context.findRenderObject() as RenderBox?;
+    if (overlay == null) return;
+    final _EntryAction? action = await showMenu<_EntryAction>(
+      context: context,
+      position: RelativeRect.fromRect(
+        globalPosition & Size.zero,
+        Offset.zero & overlay.size,
+      ),
+      items: _menuItems(Theme.of(context).colorScheme),
+    );
+    // Строка могла уйти из списка, пока меню было открыто (обновилась
+    // библиотека) — тогда обработчик уже ни к чему.
+    if (action == null || !mounted) return;
+    widget.onMenu(action);
   }
 
   /// Запуск с индикатором: пока идёт загрузка треков, кнопка показывает

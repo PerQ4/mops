@@ -7,6 +7,7 @@ import '../../data/local/downloads.dart';
 import '../../data/models/models.dart';
 import '../../state/player_controller.dart';
 import '../../state/providers.dart';
+import '../../widgets/track_menu.dart';
 import '../../widgets/track_tile.dart';
 
 /// Экран «Загрузки»: что скачано, сколько это занимает и как это убрать.
@@ -347,7 +348,7 @@ class _ActiveDownloadTile extends StatelessWidget {
     final int? total = task.total;
     final bool failed = task.failed;
 
-    return ListTile(
+    final Widget tile = ListTile(
       contentPadding: EdgeInsets.zero,
       leading: SizedBox(
         width: 32,
@@ -413,6 +414,15 @@ class _ActiveDownloadTile extends StatelessWidget {
               ],
             )
           : null,
+    );
+
+    // Правый клик — общее меню трека: в нём уже есть состояние загрузки,
+    // повтор для неудачной и удаление файла. Своё меню у строки не рисуем,
+    // чтобы не дублировать кнопки «Повторить» и «Скрыть».
+    return GestureDetector(
+      behavior: HitTestBehavior.opaque,
+      onSecondaryTap: () => showTrackMenu(context, task.track),
+      child: tile,
     );
   }
 }

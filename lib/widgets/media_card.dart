@@ -4,6 +4,7 @@ import '../core/theme/layout.dart';
 import '../data/models/models.dart';
 import 'artist_line.dart';
 import 'artwork.dart';
+import 'track_menu.dart';
 
 /// videoId, спрятанный в адресе обложки (`i.ytimg.com/vi/<id>/…`).
 ///
@@ -50,6 +51,7 @@ class MediaCard extends StatelessWidget {
     this.showPlay = false,
     this.onPlay,
     this.subtitleArtists,
+    this.onSecondaryTap,
   });
 
   final String title;
@@ -80,6 +82,13 @@ class MediaCard extends StatelessWidget {
   /// «запускать» нечего (например, исполнители в поиске), ничего не теряют.
   final VoidCallback? onPlay;
 
+  /// Контекстное меню — правый клик по карточке.
+  ///
+  /// Сама карточка не знает, что за сущность показывает; действие задаёт
+  /// [BrowseItemCard]. Нажатия и свайпы не затрагиваются: жест только
+  /// вторичный.
+  final VoidCallback? onSecondaryTap;
+
   @override
   Widget build(BuildContext context) {
     final TextTheme text = Theme.of(context).textTheme;
@@ -90,7 +99,7 @@ class MediaCard extends StatelessWidget {
     // Две зоны нажатия вместо одной: обложка запускает, подпись открывает
     // страницу. Раньше нажатие в любом месте открывало страницу, и запустить
     // карточку из ленты было нельзя.
-    return SizedBox(
+    final Widget card = SizedBox(
       width: width,
       child: Column(
         crossAxisAlignment: CrossAxisAlignment.start,
@@ -159,6 +168,15 @@ class MediaCard extends StatelessWidget {
           ),
         ],
       ),
+    );
+
+    // Обёртка нужна только ради вторичного жеста: обычные нажатия она не
+    // перехватывает и в арене распознавателей не участвует.
+    if (onSecondaryTap == null) return card;
+    return GestureDetector(
+      behavior: HitTestBehavior.opaque,
+      onSecondaryTap: onSecondaryTap,
+      child: card,
     );
   }
 }
@@ -261,6 +279,13 @@ class BrowseItemCard extends StatelessWidget {
       subtitleArtists: subtitleArtists,
       onTap: () => onTap(item),
       onPlay: onPlay == null ? null : () => onPlay!(item),
+      // Меню по правой кнопке есть только у трека: оно уже собрано и общее
+      // для списков. У альбома, исполнителя и плейлиста своего меню нет —
+      // их действия живут кнопками на странице, а не в карточке.
+      onSecondaryTap: switch (item) {
+        TrackItem(:final Track track) => () => showTrackMenu(context, track),
+        _ => null,
+      },
     );
   }
 }

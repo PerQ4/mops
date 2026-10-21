@@ -661,14 +661,25 @@ class _ArtworkStage extends StatelessWidget {
     double side,
     AudioLevelMonitor? monitor,
   ) {
-    final Widget artwork = Artwork(
-      url: variants.isEmpty ? null : variants.first,
-      fallbacks:
-          variants.length > 1 ? variants.sublist(1) : const <String>[],
-      // Общий тег с миниатюрой островка: обложка перелетает и растёт
-      // из мини-плеера в полный экран (и обратно).
-      heroTag: kPlayerArtworkHeroTag,
-      radius: BorderRadius.circular(_kArtworkRadius),
+    // Правый клик по обложке — то же меню, что у «…»: меню трека лежит в
+    // корневом навигаторе, потому что сам плеер открыт там же.
+    final Widget artwork = GestureDetector(
+      behavior: HitTestBehavior.opaque,
+      onSecondaryTap: () => showTrackMenu(
+        context,
+        track,
+        rootNavigator: true,
+        onMediaInfo: () => showMediaInfoDialog(context),
+      ),
+      child: Artwork(
+        url: variants.isEmpty ? null : variants.first,
+        fallbacks:
+            variants.length > 1 ? variants.sublist(1) : const <String>[],
+        // Общий тег с миниатюрой островка: обложка перелетает и растёт
+        // из мини-плеера в полный экран (и обратно).
+        heroTag: kPlayerArtworkHeroTag,
+        radius: BorderRadius.circular(_kArtworkRadius),
+      ),
     );
     if (monitor == null) {
       return SizedBox(width: side, height: side, child: artwork);
@@ -771,6 +782,16 @@ class _InfoRow extends ConsumerWidget {
     final PlayerController controller =
         ref.read(playerControllerProvider.notifier);
 
+    // Одно меню на «…» и правый клик по названию: так действия не разойдутся.
+    void openMenu() => showTrackMenu(
+          context,
+          track,
+          rootNavigator: true,
+          // Параметры играющего потока — в том же меню, что и действия над
+          // треком: второй «⋮» на экране только путал бы.
+          onMediaInfo: () => showMediaInfoDialog(context),
+        );
+
     return Padding(
       // Название и действия — с боковым отступом 32, как
       // `PlayerHorizontalPadding` в `PlayerControlsContent`.
@@ -782,13 +803,17 @@ class _InfoRow extends ConsumerWidget {
             child: Column(
               crossAxisAlignment: CrossAxisAlignment.start,
               children: <Widget>[
-                Text(
-                  track.title,
-                  maxLines: 1,
-                  overflow: TextOverflow.ellipsis,
-                  // `PlayerTitleSection`: titleLarge, жирный.
-                  style: text.titleLarge?.copyWith(
-                    fontWeight: FontWeight.bold,
+                GestureDetector(
+                  behavior: HitTestBehavior.opaque,
+                  onSecondaryTap: openMenu,
+                  child: Text(
+                    track.title,
+                    maxLines: 1,
+                    overflow: TextOverflow.ellipsis,
+                    // `PlayerTitleSection`: titleLarge, жирный.
+                    style: text.titleLarge?.copyWith(
+                      fontWeight: FontWeight.bold,
+                    ),
                   ),
                 ),
                 const SizedBox(height: 6),
@@ -857,14 +882,7 @@ class _InfoRow extends ConsumerWidget {
           _PlayerActionButton(
             tooltip: 'Действия',
             icon: Icons.more_vert,
-            onPressed: () => showTrackMenu(
-              context,
-              track,
-              rootNavigator: true,
-              // Параметры играющего потока — в том же меню, что и действия
-              // над треком: второй «⋮» на экране только путал бы.
-              onMediaInfo: () => showMediaInfoDialog(context),
-            ),
+            onPressed: openMenu,
           ),
           const SizedBox(width: 10),
           _PlayerActionButton(
