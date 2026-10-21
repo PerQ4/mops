@@ -15,6 +15,7 @@ import '../features/playlist/song_replacement_dialog.dart';
 import '../state/auth_controller.dart';
 import '../state/library_providers.dart';
 import '../state/player_controller.dart';
+import '../state/providers.dart';
 import 'artwork.dart';
 import 'async_views.dart';
 
@@ -108,6 +109,19 @@ class _TrackMenuSheet extends ConsumerWidget {
     final bool unavailable = ref.watch(
       playerControllerProvider.select(
         (PlayerUiState s) => s.unavailableIds.contains(track.id),
+      ),
+    );
+
+    // Загрузка трека: пункт меню и прогресс берутся из одного контроллера,
+    // поэтому скачивание, начатое на экране «Загрузки», видно и здесь.
+    final DownloadTask? download = ref.watch(
+      downloadsControllerProvider.select(
+        (DownloadsState s) => s.taskFor(track.id),
+      ),
+    );
+    final bool downloaded = ref.watch(
+      downloadsControllerProvider.select(
+        (DownloadsState s) => s.isDownloaded(track.id),
       ),
     );
 
@@ -218,6 +232,37 @@ class _TrackMenuSheet extends ConsumerWidget {
                 },
               ),
             ],
+            // Загрузка рядом с очередью: это действие над самим треком, а не
+            // над тем, где он играет. Прогресс показывается и в островке —
+            // им управляет контроллер плеера по тому же состоянию.
+            if (download != null && !download.failed)
+              _MenuAction(
+                icon: Icons.downloading,
+                title: 'Скачивается ${(download.progress * 100).round()}%',
+                subtitle: 'Подождите — файл допишется сам',
+                onTap: null,
+              )
+            else if (downloaded)
+              _MenuAction(
+                icon: Icons.download_done,
+                title: 'Удалить загрузку',
+                subtitle: 'Трек останется в списках, но играть будет из сети',
+                onTap: () => _removeDownload(context, ref),
+              )
+            else
+              _MenuAction(
+                icon: Icons.download_outlined,
+                title: download?.failed == true
+                    ? 'Повторить скачивание'
+                    : 'Скачать',
+                subtitle: download?.failed == true
+                    ? download!.error
+                    : 'Слушать без интернета',
+                subtitleColor: download?.failed == true
+                    ? Theme.of(context).colorScheme.error
+                    : null,
+                onTap: () => _download(context, ref),
+              ),
             // Радио доступно у любого трека — и у играющего, и у того, что
             // просто лежит в списке: YouTube Music строит рекомендации по
             // любому видео.
@@ -297,6 +342,61 @@ class _TrackMenuSheet extends ConsumerWidget {
     // Клип, как и плеер, живёт в корневом навигаторе — иначе при открытии из
     // полноэкранного плеера он остался бы под его экраном.
     AppRoutes.clip(hostContext, track);
+  }
+
+  /// Закрывает меню и ставит трек в загрузку.
+  ///
+  /// Контроллер и мессенджер берём до `Navigator.pop`: после закрытия листа
+  /// его `ref` уже недействителен, а сообщение нужно показать на экране хоста.
+  void _download(BuildContext sheetContext, WidgetRef ref) {
+    final DownloadsController controller =
+        ref.read(downloadsControllerProvider.notifier);
+    final ScaffoldMessengerState messenger = ScaffoldMessenger.of(hostContext);
+    Navigator.pop(sheetContext);
+    unawaited(_runDownload(controller, messenger));
+  }
+
+  Future<void> _runDownload(
+    DownloadsController controller,
+    ScaffoldMessengerState messenger,
+  ) async {
+    final String? error = await controller.download(track);
+    if (!hostContext.mounted) return;
+    messenger.showSnackBar(
+      SnackBar(
+        content: Text(
+          error == null
+              ? '«${track.title}» скачан и доступен без интернета'
+              : 'Не удалось скачать: $error',
+        ),
+      ),
+    );
+  }
+
+  /// Удаляет скачанный файл трека.
+  void _removeDownload(BuildContext sheetContext, WidgetRef ref) {
+    final DownloadsController controller =
+        ref.read(downloadsControllerProvider.notifier);
+    final ScaffoldMessengerState messenger = ScaffoldMessenger.of(hostContext);
+    Navigator.pop(sheetContext);
+    unawaited(_runRemoveDownload(controller, messenger));
+  }
+
+  Future<void> _runRemoveDownload(
+    DownloadsController controller,
+    ScaffoldMessengerState messenger,
+  ) async {
+    final String? error = await controller.remove(track.id);
+    if (!hostContext.mounted) return;
+    messenger.showSnackBar(
+      SnackBar(
+        content: Text(
+          error == null
+              ? 'Загрузка «${track.title}» удалена'
+              : 'Не удалось удалить загрузку: $error',
+        ),
+      ),
+    );
   }
 
   /// Ссылка на трек в YouTube Music: id трека — это и есть videoId.
@@ -579,10 +679,16 @@ class _MenuAction extends StatelessWidget {
     required this.icon,
     required this.title,
     required this.onTap,
+    this.subtitle,
+    this.subtitleColor,
   });
 
   final IconData icon;
   final String title;
+
+  /// Пояснение под пунктом: причина ошибки загрузки или что даёт действие.
+  final String? subtitle;
+  final Color? subtitleColor;
   final VoidCallback? onTap;
 
   @override
@@ -590,6 +696,14 @@ class _MenuAction extends StatelessWidget {
     return ListTile(
       leading: Icon(icon),
       title: Text(title),
+      subtitle: subtitle == null
+          ? null
+          : Text(
+              subtitle!,
+              maxLines: 2,
+              overflow: TextOverflow.ellipsis,
+              style: TextStyle(color: subtitleColor),
+            ),
       enabled: onTap != null,
       onTap: onTap,
     );

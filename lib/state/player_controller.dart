@@ -108,7 +108,10 @@ class PlayerUiState {
 
   bool get hasTrack => current != null;
   bool get isPlaying => playback.isPlaying;
-  bool get isLoading => resolving || downloading || playback.isLoading;
+
+  /// Идёт получение звука, а не его скачивание: фоновая загрузка трека на
+  /// диск не должна подменять кнопку паузы значком загрузки.
+  bool get isLoading => resolving || playback.isLoading;
 
   /// Таймер сна включён (в любом из режимов).
   bool get sleepTimerActive => sleepTimer != 0;
@@ -305,6 +308,27 @@ class PlayerController extends Notifier<PlayerUiState> {
               .whenComplete(() => _handlingEnd = false),
         );
       }
+    });
+
+    // Скачивание текущего трека показывается в островке теми же полями:
+    // `downloadProgress` — настоящий прогресс по байтам из контроллера
+    // загрузок. Слушаем его здесь, а не в интерфейсе, чтобы подпись жила в
+    // одном состоянии плеера независимо от открытого экрана.
+    ref.listen<DownloadsState>(downloadsControllerProvider,
+        (DownloadsState? _, DownloadsState downloads) {
+      final Track? track = state.current;
+      final DownloadTask? task =
+          track == null ? null : downloads.taskFor(track.id);
+      if (task == null || task.failed) {
+        if (state.downloading || state.downloadProgress != 0) {
+          state = state.copyWith(downloading: false, downloadProgress: 0);
+        }
+        return;
+      }
+      state = state.copyWith(
+        downloading: true,
+        downloadProgress: task.progress,
+      );
     });
 
     // Восстанавливаем громкость и скорость из прошлой сессии.
@@ -996,7 +1020,16 @@ class PlayerController extends Notifier<PlayerUiState> {
     final Track? track = state.current;
     if (track == null) return;
 
-    state = state.copyWith(resolving: true, clearError: true);
+    // Трек мог начать скачиваться раньше: подпись прогресса должна быть
+    // сразу, не дожидаясь следующей порции байт.
+    final DownloadTask? download =
+        ref.read(downloadsControllerProvider).taskFor(track.id);
+    state = state.copyWith(
+      resolving: true,
+      clearError: true,
+      downloading: download != null && !download.failed,
+      downloadProgress: download?.progress ?? 0,
+    );
 
     // Новый трек: прошлый останавливаем сразу, не дожидаясь загрузки.
     await _engine.stop();
@@ -1011,17 +1044,25 @@ class PlayerController extends Notifier<PlayerUiState> {
       // загрузку надо отменить, иначе заиграет «не тот».
       if (state.current?.id != track.id) return;
 
-      state = state.copyWith(streamNote: _noteFor(resolved));
+      state = state.copyWith(
+        streamNote: resolved.isLocal ? 'ОФЛАЙН' : _noteFor(resolved),
+      );
 
       // Ссылку отдаём плееру напрямую. media_kit (libmpv) запрашивает поток
       // обычным GET, который медиасервер принимает (проверено
       // tool/plain_get_check.dart: обычный GET — 200, перемотка диапазоном —
       // 206). Прежний GStreamer слал открытый диапазон `Range: bytes=0-` и
       // получал 403 «Forbidden», из-за чего файл приходилось качать целиком.
-      await _engine.load(resolved.url.toString(), autoplay: autoplay);
+      //
+      // Скачанный трек — путь к файлу, и движок должен открыть его как файл,
+      // а не как сетевой адрес: иначе `file:`-адрес ушёл бы в HTTP-клиент.
+      await _engine.load(
+        resolved.localPath ?? resolved.url.toString(),
+        autoplay: autoplay,
+        isLocal: resolved.isLocal,
+      );
       state = state.copyWith(
         resolving: false,
-        downloading: false,
         // Успешная загрузка снимает прежнюю отметку: трек мог быть помечен
         // недоступным при временном сбое, и держать её после звука нельзя.
         unavailableIds: <String>{...state.unavailableIds}..remove(track.id),

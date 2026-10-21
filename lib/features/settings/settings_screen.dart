@@ -25,6 +25,7 @@ import '../../state/ui_scale.dart';
 import '../../widgets/liquid_backdrop.dart';
 import '../common/navigation.dart';
 import 'blocked_artists_screen.dart';
+import 'downloads_screen.dart';
 import 'font_settings.dart';
 import 'lyrics_animation_screen.dart';
 import 'settings_components.dart';
@@ -653,6 +654,14 @@ class SettingsScreen extends ConsumerWidget {
                   subtitle: 'Занятое место и очистка кэша текстов',
                   onTap: () => AppRoutes.storage(context),
                 ),
+                // Загрузки — тоже про данные: отдельный экран нужен, потому
+                // что здесь список треков и их размеры, а не одна цифра.
+                SettingsRow(
+                  icon: Icons.download_outlined,
+                  title: 'Загрузки',
+                  subtitle: 'Скачанные треки и занятое ими место',
+                  onTap: () => _openDownloads(context),
+                ),
                 // Статистика тоже про данные, но не про занятое место: журнал
                 // маленький, зато его можно выключить и стереть отдельно.
                 SettingsSwitchRow(
@@ -810,6 +819,35 @@ class SettingsScreen extends ConsumerWidget {
           Animation<double> secondaryAnimation,
         ) =>
             const StatsScreen(),
+        transitionsBuilder: (
+          BuildContext context,
+          Animation<double> animation,
+          Animation<double> secondaryAnimation,
+          Widget child,
+        ) =>
+            motion.routeTransition(
+          animation: animation,
+          begin: const Offset(0, 0.02),
+          child: child,
+        ),
+      ),
+    );
+  }
+
+  /// Экран загрузок открывается так же, как «Статистика»: он относится к
+  /// настройкам, поэтому общий словарь маршрутов не расширяем.
+  void _openDownloads(BuildContext context) {
+    final MotionTransition motion = AppMotion.pageEnter;
+    Navigator.of(context).push<void>(
+      PageRouteBuilder<void>(
+        transitionDuration: motion.duration,
+        reverseTransitionDuration: motion.reverseDuration ?? motion.duration,
+        pageBuilder: (
+          BuildContext context,
+          Animation<double> animation,
+          Animation<double> secondaryAnimation,
+        ) =>
+            const DownloadsScreen(),
         transitionsBuilder: (
           BuildContext context,
           Animation<double> animation,

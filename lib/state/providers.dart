@@ -1,8 +1,9 @@
 import 'dart:async';
+import 'dart:io';
 
 import 'package:flutter/foundation.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
-import 'package:media_kit/media_kit.dart';
+import 'package:media_kit/media_kit.dart' hide Track;
 import 'package:shared_preferences/shared_preferences.dart';
 
 import '../core/audio/audio_engine.dart';
@@ -18,9 +19,12 @@ import '../core/theme/ui_scaler.dart';
 import '../core/updates/update_check.dart';
 import '../core/utils/artwork_urls.dart';
 import '../data/local/app_settings.dart';
+import '../data/local/downloads.dart';
 import '../data/local/listening_stats.dart';
+import '../data/models/models.dart';
 import '../data/sources/catalog_source.dart';
 import '../data/sources/paxsenix_source.dart';
+import '../data/sources/range_downloader.dart';
 import '../data/sources/romanization.dart';
 import '../data/sources/sponsorblock.dart';
 import '../data/sources/stream_downloader.dart';
@@ -736,6 +740,9 @@ final Provider<StreamResolver> streamResolverProvider =
     region: region,
     clientChoice: clientChoice,
     authHeaders: authHeaders,
+    // Локальный файл проверяется при каждом запросе, а не кэшируется вместе с
+    // резолвером: загрузку могли удалить, и тогда нужен обычный сетевой путь.
+    localFile: ref.read(downloadsStoreProvider).localPath,
   );
   ref.onDispose(resolver.dispose);
   return resolver;
@@ -870,3 +877,374 @@ class ListeningStats extends Notifier<List<ListenEvent>> {
 final NotifierProvider<ListeningStats, List<ListenEvent>>
     listeningStatsProvider =
     NotifierProvider<ListeningStats, List<ListenEvent>>(ListeningStats.new);
+
+/// ---------------------------------------------------------------------------
+/// Загрузки для офлайн-прослушивания (задача 2.1)
+/// ---------------------------------------------------------------------------
+
+/// Каталог загрузок и метаданные — одно хранилище на приложение.
+final Provider<DownloadsStore> downloadsStoreProvider =
+    Provider<DownloadsStore>((Ref ref) => DownloadsStore());
+
+/// Загрузчик диапазонов для скачивания треков.
+///
+/// Отдельный от кэша потоков: у кэша свои правила (временный каталог, лимит
+/// размера), а загрузка — постоянная и управляется пользователем.
+final Provider<RangeDownloader> rangeDownloaderProvider =
+    Provider<RangeDownloader>((Ref ref) {
+  final RangeDownloader downloader = RangeDownloader();
+  ref.onDispose(downloader.dispose);
+  return downloader;
+});
+
+/// Идущая загрузка: что качается, сколько уже получено и чем кончилось.
+@immutable
+class DownloadTask {
+  const DownloadTask({
+    required this.track,
+    this.progress = 0,
+    this.received = 0,
+    this.total,
+    this.error,
+  });
+
+  final Track track;
+  final double progress;
+  final int received;
+  final int? total;
+
+  /// Текст ошибки; `null` — загрузка идёт или завершилась успешно.
+  final String? error;
+
+  bool get failed => error != null;
+}
+
+/// Состояние экрана «Загрузки» и пунктов меню трека.
+@immutable
+class DownloadsState {
+  const DownloadsState({
+    this.loaded = false,
+    this.items = const <DownloadedTrack>[],
+    this.active = const <String, DownloadTask>{},
+  });
+
+  /// Список прочитан с диска; до этого показывать «пусто» нельзя.
+  final bool loaded;
+
+  /// Завершённые загрузки, новые сверху.
+  final List<DownloadedTrack> items;
+
+  /// Загрузки в работе и неудавшиеся — по id трека.
+  final Map<String, DownloadTask> active;
+
+  bool isDownloaded(String id) =>
+      items.any((DownloadedTrack item) => item.id == id);
+
+  DownloadTask? taskFor(String id) => active[id];
+
+  int get totalBytes => items.fold<int>(
+        0,
+        (int sum, DownloadedTrack item) => sum + item.bytes,
+      );
+
+  /// Сколько загрузок идёт прямо сейчас (без учёта ошибок).
+  int get workingCount =>
+      active.values.where((DownloadTask task) => !task.failed).length;
+
+  DownloadsState copyWith({
+    bool? loaded,
+    List<DownloadedTrack>? items,
+    Map<String, DownloadTask>? active,
+  }) =>
+      DownloadsState(
+        loaded: loaded ?? this.loaded,
+        items: items ?? this.items,
+        active: active ?? this.active,
+      );
+}
+
+/// Скачивание треков и управление ими.
+///
+/// Один трек качается за раз: загрузки идут через тот же резолвер, что и
+/// воспроизведение, и пачка параллельных запросов только мешала бы музыке.
+/// Докачка продолжается с места обрыва — остаток лежит в `<id>.m4a.part`,
+/// а ожидаемый размер хранится в метаданных.
+class DownloadsController extends Notifier<DownloadsState> {
+  Future<void>? _ready;
+
+  @override
+  DownloadsState build() {
+    _ready = _load();
+    return const DownloadsState();
+  }
+
+  Future<void> _load() async {
+    List<DownloadedTrack> items = const <DownloadedTrack>[];
+    try {
+      items = await ref.read(downloadsStoreProvider).readAll();
+    } on Object catch (error) {
+      debugPrint('[Downloads] не удалось прочитать список: $error');
+    }
+    if (!ref.mounted) return;
+    state = state.copyWith(loaded: true, items: items);
+  }
+
+  /// Скачивает трек. Возвращает текст ошибки или `null`, если всё хорошо
+  /// (в том числе когда трек уже скачан).
+  Future<String?> download(Track track) async {
+    await _ready;
+    if (!ref.mounted) return null;
+    if (state.isDownloaded(track.id)) return null;
+    final DownloadTask? running = state.taskFor(track.id);
+    if (running != null && !running.failed) return null;
+
+    final DownloadsStore store = ref.read(downloadsStoreProvider);
+    File? part;
+    int? expected;
+    // Сколько байт уже лежит в недокачанном файле — показываем сразу, чтобы
+    // докачка не начиналась с нуля и на экране.
+    int received = 0;
+    _setTask(DownloadTask(track: track));
+
+    try {
+      final ResolvedStream stream =
+          await ref.read(streamResolverProvider).resolve(
+                track.id,
+                quality: ref.read(settingsControllerProvider).audioQuality,
+                // Файл называется `<videoId>.m4a` — просим m4a, чтобы имя не
+                // расходилось с содержимым. Если такого потока нет, резолвер
+                // отдаст любой: плеер играет по содержимому.
+                preferContainer: DownloadsStore.audioExtension,
+              );
+
+      // Прямой эфир не заканчивается — «скачать» его нельзя, и притворяться,
+      // что файл полный, было бы обманом.
+      if (stream.isLive) {
+        throw DownloadsException(
+          'Прямые трансляции не скачиваются: у них нет конца файла.',
+        );
+      }
+      // Резолвер нашёл локальный файл — значит, трек уже скачан, и качать
+      // заново нечего.
+      if (stream.isLocal) {
+        _dropTask(track.id);
+        return null;
+      }
+
+      part = await store.partialFile(track.id);
+      expected = await store.partialExpected(track.id);
+      final int already = part.existsSync() ? await part.length() : 0;
+      received = already;
+      if (already > 0) {
+        _setTask(DownloadTask(
+          track: track,
+          progress: expected == null || expected <= 0
+              ? 0
+              : (already / expected).clamp(0.0, 1.0),
+          received: already,
+          total: expected,
+        ));
+      }
+
+      // Прошлая попытка успела скачать всё, но не записала метаданные.
+      if (already > 0 && expected != null && already >= expected) {
+        final String? problem =
+            await verifyDownloadedAudio(part, expectedBytes: expected);
+        if (problem == null) {
+          final DownloadedTrack item = await store.complete(
+            track: track,
+            bytes: already,
+            container: stream.container,
+          );
+          _finish(item);
+          return null;
+        }
+        // Файл не сошёлся — начинаем заново, а не дописываем мусор.
+        await store.discardPartial(track.id);
+        expected = null;
+        received = 0;
+      }
+
+      int? persisted = expected;
+      final int written = await ref.read(rangeDownloaderProvider).downloadTo(
+        stream.url,
+        part,
+        resume: true,
+        expectedBytes: expected,
+        onBytes: (int got, int? total) {
+          received = got;
+          if (total != null && total != persisted) {
+            persisted = total;
+            // Запоминаем размер, чтобы после перезапуска не начинать с нуля
+            // и не считать оборванный файл целым.
+            unawaited(store.markPartial(track.id, total));
+          }
+          _progress(track, got, total);
+        },
+      );
+
+      // «Поток получен» — это не только код ответа 200: перед переименованием
+      // проверяем сигнатуру контейнера и полноту.
+      final String? problem = await verifyDownloadedAudio(
+        part,
+        expectedBytes: expected,
+      );
+      if (problem != null) {
+        await store.discardPartial(track.id);
+        throw DownloadsException(problem);
+      }
+
+      final DownloadedTrack item = await store.complete(
+        track: track,
+        bytes: written,
+        container: stream.container,
+      );
+      _finish(item);
+      return null;
+    } on DownloadsException catch (error) {
+      _fail(track, error.message);
+      return error.message;
+    } on StreamDownloadException catch (error) {
+      _fail(track, error.message);
+      return error.message;
+    } on StreamResolutionException catch (error) {
+      _fail(track, error.message);
+      return error.message;
+    } on FileSystemException catch (error) {
+      final String message = _describeFileError(error, received);
+      _fail(track, message);
+      return message;
+    } on Object catch (error) {
+      final String message = 'Не удалось скачать трек: $error';
+      _fail(track, message);
+      return message;
+    }
+  }
+
+  /// Скачивает пачку треков по очереди.
+  ///
+  /// Ошибка одного не останавливает остальные: пользователь должен получить
+  /// всё, что отдаётся, а не первое же «не получилось».
+  Future<({int done, int failed})> downloadMany(
+    Iterable<Track> tracks,
+  ) async {
+    int done = 0;
+    int failed = 0;
+    final Set<String> seen = <String>{};
+    for (final Track track in tracks) {
+      if (!seen.add(track.id)) continue;
+      if (state.isDownloaded(track.id)) continue;
+      final String? error = await download(track);
+      if (error == null && state.isDownloaded(track.id)) {
+        done++;
+      } else if (error != null) {
+        failed++;
+      }
+    }
+    return (done: done, failed: failed);
+  }
+
+  /// Удаляет загрузку. Возвращает текст ошибки или `null`.
+  Future<String?> remove(String videoId) async {
+    await _ready;
+    if (!ref.mounted) return null;
+    try {
+      await ref.read(downloadsStoreProvider).remove(videoId);
+      if (!ref.mounted) return null;
+      state = state.copyWith(
+        items: state.items
+            .where((DownloadedTrack item) => item.id != videoId)
+            .toList(growable: false),
+        active: <String, DownloadTask>{...state.active}..remove(videoId),
+      );
+      return null;
+    } on DownloadsException catch (error) {
+      return error.message;
+    } on Object catch (error) {
+      debugPrint('[Downloads] не удалось удалить $videoId: $error');
+      return 'Не удалось удалить загрузку: $error';
+    }
+  }
+
+  /// Удаляет все загрузки; возвращает число неудачных удалений.
+  Future<int> removeAll() async {
+    int failed = 0;
+    for (final DownloadedTrack item in List<DownloadedTrack>.of(state.items)) {
+      if (await remove(item.id) != null) failed++;
+    }
+    return failed;
+  }
+
+  /// Убирает из списка сообщение о неудачной загрузке.
+  void dismiss(String videoId) {
+    final DownloadTask? task = state.active[videoId];
+    if (task == null || !task.failed) return;
+    state = state.copyWith(
+      active: <String, DownloadTask>{...state.active}..remove(videoId),
+    );
+  }
+
+  void _setTask(DownloadTask task) {
+    if (!ref.mounted) return;
+    state = state.copyWith(
+      active: <String, DownloadTask>{...state.active, task.track.id: task},
+    );
+  }
+
+  void _dropTask(String videoId) {
+    if (!ref.mounted) return;
+    state = state.copyWith(
+      active: <String, DownloadTask>{...state.active}..remove(videoId),
+    );
+  }
+
+  void _progress(Track track, int received, int? total) {
+    _setTask(DownloadTask(
+      track: track,
+      progress: total == null || total <= 0
+          ? 0
+          : (received / total).clamp(0.0, 1.0),
+      received: received,
+      total: total,
+    ));
+  }
+
+  void _fail(Track track, String message) {
+    debugPrint('[Downloads] ${track.id}: $message');
+    _setTask(DownloadTask(track: track, error: message));
+  }
+
+  void _finish(DownloadedTrack item) {
+    if (!ref.mounted) return;
+    state = state.copyWith(
+      items: <DownloadedTrack>[
+        item,
+        for (final DownloadedTrack existing in state.items)
+          if (existing.id != item.id) existing,
+      ],
+      active: <String, DownloadTask>{...state.active}..remove(item.id),
+    );
+  }
+
+  /// Понятная причина, по которой файл не записался.
+  String _describeFileError(FileSystemException error, int received) {
+    final int? code = error.osError?.errorCode;
+    final String text =
+        '${error.osError?.message ?? ''} ${error.message}'.toLowerCase();
+    if (code == 112 ||
+        text.contains('not enough space') ||
+        text.contains('нет места') ||
+        text.contains('disk full')) {
+      return 'На диске не хватило места. Освободите немного места и '
+          'повторите — докачка продолжится с этого места.';
+    }
+    return 'Не удалось записать файл (получено $received байт): '
+        '${error.osError?.message ?? error.message}.';
+  }
+}
+
+final NotifierProvider<DownloadsController, DownloadsState>
+    downloadsControllerProvider =
+    NotifierProvider<DownloadsController, DownloadsState>(
+  DownloadsController.new,
+);

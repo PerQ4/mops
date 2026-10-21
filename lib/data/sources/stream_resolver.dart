@@ -1,4 +1,5 @@
 import 'dart:async';
+import 'dart:io';
 
 import 'package:flutter/foundation.dart';
 import 'package:http/http.dart' as http;
@@ -62,6 +63,7 @@ class ResolvedStream {
     this.isLive = false,
     this.userAgent,
     this.mimeType,
+    this.localPath,
   });
 
   final Uri url;
@@ -78,6 +80,12 @@ class ResolvedStream {
   /// Ссылки googlevideo живут несколько часов; после этого нужен перезапрос.
   final DateTime expiresAt;
 
+  /// Путь к скачанному файлу. Заполнен, только если трек уже есть на диске:
+  /// тогда [url] — его `file:`-адрес, а сеть не нужна вовсе.
+  final String? localPath;
+
+  bool get isLocal => localPath != null;
+
   bool get isExpired => DateTime.now().isAfter(
         expiresAt.subtract(const Duration(minutes: 5)),
       );
@@ -85,7 +93,15 @@ class ResolvedStream {
 
 /// Контракт получения потока. Реализации можно менять независимо от UI.
 abstract class StreamResolver {
-  Future<ResolvedStream> resolve(String videoId, {required AudioQuality quality});
+  Future<ResolvedStream> resolve(
+    String videoId, {
+    required AudioQuality quality,
+
+    /// Предпочтительный контейнер (`m4a` для загрузок: у них фиксированное
+    /// расширение файла). `null` — любой, как для обычного воспроизведения.
+    String? preferContainer,
+  });
+
   void dispose();
 }
 
@@ -131,6 +147,7 @@ class YoutubeStreamResolver implements StreamResolver {
     this.clientChoice = StreamSource.auto,
     Map<String, String> authHeaders = const <String, String>{},
     YoutubeExplode? library,
+    this.localFile,
   }) : _library = library ??
             YoutubeExplode(
               httpClient: AuthenticatedYoutubeClient(authHeaders),
@@ -145,6 +162,12 @@ class YoutubeStreamResolver implements StreamResolver {
   /// Регион выдачи YouTube в запросе.
   final String region;
 
+  /// Куда смотреть скачанный файл до похода в сеть.
+  ///
+  /// Это колбэк, а не ссылка на хранилище: резолвер не должен зависеть от
+  /// `path_provider` и каталога загрузок, а тесты могут подставить свой путь.
+  final Future<String?> Function(String videoId)? localFile;
+
   final YoutubeExplode _library;
 
   /// Какой клиент YouTube использовать для получения ссылки.
@@ -157,38 +180,58 @@ class YoutubeStreamResolver implements StreamResolver {
   Future<ResolvedStream> resolve(
     String videoId, {
     required AudioQuality quality,
+    String? preferContainer,
   }) async {
-    final String key = '$videoId:${quality.name}:${clientChoice.name}';
+    // Сначала диск, потом сеть. Скачанный трек играет без интернета, а
+    // обычный путь ниже остаётся ровно таким же, когда файла нет.
+    final String? local = await _localPath(videoId);
+    if (local != null) return _localStream(local);
+
+    final String key = '$videoId:${quality.name}:${clientChoice.name}:'
+        '${preferContainer ?? 'any'}';
     final ResolvedStream? cached = _cache[key];
     if (cached != null && !cached.isExpired) return cached;
 
     final List<String> failures = <String>[];
+    // Сетевые сбои отличаем от отказов YouTube: во втором случае совет
+    // «проверьте соединение» бесполезен, а в первом — важно сказать, что
+    // трек не скачан.
+    bool networkFailure = false;
 
     for (final YoutubeClientProfile profile
         in YoutubeClients.forChoice(clientChoice)) {
       try {
-        final ResolvedStream? resolved =
-            await _resolveWithProfile(profile, videoId, quality);
+        final ResolvedStream? resolved = await _resolveWithProfile(
+          profile,
+          videoId,
+          quality,
+          preferContainer,
+        );
         if (resolved != null) {
           _cache[key] = resolved;
           return resolved;
         }
         failures.add('${profile.label}: ссылок нет');
       } on Object catch (error) {
+        if (_isNetworkError(error)) networkFailure = true;
         failures.add('${profile.label}: $error');
       }
     }
 
     // Запасной путь — библиотека с её клиентом по умолчанию.
     try {
-      final ResolvedStream? resolved =
-          await _resolveWithLibrary(videoId, quality);
+      final ResolvedStream? resolved = await _resolveWithLibrary(
+        videoId,
+        quality,
+        preferContainer,
+      );
       if (resolved != null) {
         _cache[key] = resolved;
         return resolved;
       }
       failures.add('библиотека: ссылок нет');
     } on Object catch (error) {
+      if (_isNetworkError(error)) networkFailure = true;
       failures.add('библиотека: $error');
     }
 
@@ -204,6 +247,11 @@ class YoutubeStreamResolver implements StreamResolver {
     // одному клиенту: обычно это ограничение по региону или требование входа.
     final bool unavailable = failures.any((String f) =>
         f.contains('unavailable') || f.contains('недоступно'));
+    // Ошибку сети ищем и в тексте: библиотека заворачивает свои исключения и
+    // тип наружу не выходит.
+    final bool offline = networkFailure ||
+        failures.any((String f) => _looksLikeNetworkText(f));
+
     throw StreamResolutionException(
       needsLogin
           ? 'YouTube требует вход в аккаунт для этого видео. '
@@ -211,9 +259,57 @@ class YoutubeStreamResolver implements StreamResolver {
           : unavailable
               ? 'YouTube не отдаёт это видео: оно недоступно в вашем регионе '
                   'или требует вход в аккаунт.'
-              : 'Не удалось получить аудиопоток. '
-                  'Проверьте соединение и попробуйте снова.',
+              : offline
+                  ? 'Не удалось получить поток: сети нет или соединение с '
+                      'YouTube блокируется. Этот трек не скачан — скачайте '
+                      'его заранее (меню трека → «Скачать»), и он сыграет '
+                      'без интернета.'
+                  : 'Не удалось получить аудиопоток. '
+                      'Проверьте соединение и попробуйте снова.',
     );
+  }
+
+  /// Путь к скачанному файлу; ошибки хранилища не должны ломать сеть.
+  Future<String?> _localPath(String videoId) async {
+    final Future<String?> Function(String videoId)? lookup = localFile;
+    if (lookup == null) return null;
+    try {
+      return await lookup(videoId);
+    } on Object catch (error) {
+      debugPrint('[Поток] не удалось проверить загрузку $videoId: $error');
+      return null;
+    }
+  }
+
+  /// Результат для файла на диске: срок не истекает, качества из заголовков
+  /// нет — их покажет подпись «офлайн».
+  ResolvedStream _localStream(String path) => ResolvedStream(
+        url: Uri.file(path),
+        expiresAt: DateTime.now().add(const Duration(days: 3650)),
+        container: 'm4a',
+        localPath: path,
+      );
+
+  /// Ошибка похожа на «сети нет», а не на отказ сервера.
+  bool _isNetworkError(Object error) =>
+      error is SocketException ||
+      error is TimeoutException ||
+      error is HandshakeException ||
+      error is HttpException ||
+      error is http.ClientException;
+
+  /// То же, но по тексту: тип исключения мог потеряться по пути.
+  bool _looksLikeNetworkText(String text) {
+    final String lower = text.toLowerCase();
+    return lower.contains('socketexception') ||
+        lower.contains('clientexception') ||
+        lower.contains('failed host lookup') ||
+        lower.contains('connection closed') ||
+        lower.contains('connection refused') ||
+        lower.contains('connection reset') ||
+        lower.contains('network is unreachable') ||
+        lower.contains('timed out') ||
+        lower.contains('timeout');
   }
 
   /// Запрос `player` выбранным профилем клиента.
@@ -221,6 +317,7 @@ class YoutubeStreamResolver implements StreamResolver {
     YoutubeClientProfile profile,
     String videoId,
     AudioQuality quality,
+    String? preferContainer,
   ) async {
     final Map<String, dynamic> response = await innerTube.post(
       'player',
@@ -248,13 +345,19 @@ class YoutubeStreamResolver implements StreamResolver {
       return null;
     }
 
-    return _pickFromPlayerResponse(response, quality, profile);
+    return _pickFromPlayerResponse(
+      response,
+      quality,
+      profile,
+      preferContainer,
+    );
   }
 
   /// Запасной путь: библиотека со своим клиентом по умолчанию.
   Future<ResolvedStream?> _resolveWithLibrary(
     String videoId,
     AudioQuality quality,
+    String? preferContainer,
   ) async {
     final StreamManifest manifest =
         await _library.videos.streamsClient.getManifest(videoId);
@@ -266,14 +369,17 @@ class YoutubeStreamResolver implements StreamResolver {
         .map((AudioOnlyStreamInfo stream) => _AudioCandidate(
               url: stream.url,
               bitrateKbps: stream.bitrate.kiloBitsPerSecond.round(),
-              container: stream.container.name,
+              // Библиотека называет контейнер `mp4`, а приложение везде
+              // говорит `m4a` — приводим к одному имени, иначе предпочтение
+              // контейнера при загрузке не совпадёт.
+              container: stream.container.name == 'webm' ? 'webm' : 'm4a',
               mimeType: stream.container.name == 'webm'
                   ? 'audio/webm'
                   : 'audio/mp4',
             ))
         .toList();
 
-    return _pickCandidate(candidates, quality);
+    return _pickCandidate(candidates, quality, preferContainer);
   }
 
   /// Разбирает ответ `player` и выбирает дорожку.
@@ -285,6 +391,7 @@ class YoutubeStreamResolver implements StreamResolver {
     Map<String, dynamic> response,
     AudioQuality quality,
     YoutubeClientProfile profile,
+    String? preferContainer,
   ) {
     final dynamic data = response['streamingData'];
     if (data is! Map) return null;
@@ -314,7 +421,7 @@ class YoutubeStreamResolver implements StreamResolver {
     }
 
     if (candidates.isEmpty) return null;
-    return _pickCandidate(candidates, quality);
+    return _pickCandidate(candidates, quality, preferContainer);
   }
 
   /// Выбирает дорожку под желаемое качество.
@@ -328,18 +435,30 @@ class YoutubeStreamResolver implements StreamResolver {
   ResolvedStream? _pickCandidate(
     List<_AudioCandidate> candidates,
     AudioQuality quality,
+    String? preferContainer,
   ) {
     if (candidates.isEmpty) return null;
 
-    candidates.sort((_AudioCandidate a, _AudioCandidate b) =>
+    // Для загрузки контейнер важен: файл называется `.m4a`, и лучше, чтобы
+    // содержимое соответствовало имени. Если m4a у видео нет — берём как
+    // есть: плеер определяет формат по содержимому.
+    final List<_AudioCandidate> matching = preferContainer == null
+        ? candidates
+        : candidates
+            .where((_AudioCandidate c) => c.container == preferContainer)
+            .toList();
+    final List<_AudioCandidate> pool =
+        matching.isEmpty ? candidates : matching;
+
+    pool.sort((_AudioCandidate a, _AudioCandidate b) =>
         a.bitrateKbps.compareTo(b.bitrateKbps));
 
     // Список отсортирован по возрастанию, поэтому «экономия» — это первый.
-    _AudioCandidate chosen = candidates.first;
+    _AudioCandidate chosen = pool.first;
     if (quality == AudioQuality.high) {
-      chosen = candidates.last;
+      chosen = pool.last;
     } else if (quality == AudioQuality.medium) {
-      chosen = _nearestToTarget(candidates, quality.targetKbps);
+      chosen = _nearestToTarget(pool, quality.targetKbps);
     }
 
     return ResolvedStream(

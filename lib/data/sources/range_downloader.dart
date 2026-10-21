@@ -44,52 +44,146 @@ class RangeDownloader {
   /// Скачивает [url] в файл [target].
   ///
   /// Возвращает число записанных байт. [onProgress] получает значение
-  /// от 0 до 1, когда сервер сообщает общий размер.
+  /// от 0 до 1, когда сервер сообщает общий размер; [onBytes] — сколько
+  /// реально записано и сколько всего ожидается.
+  ///
+  /// [resume] продолжает уже начатый файл с его текущей длины, а не затирает
+  /// его: обрыв связи не должен обнулять скачанное. [expectedBytes] — размер,
+  /// который должен получиться в итоге; по нему проверяется, что файл не
+  /// оборвался на середине, и что докачка уже закончена.
   Future<int> downloadTo(
     Uri url,
     File target, {
     void Function(double progress)? onProgress,
+    void Function(int written, int? total)? onBytes,
+    bool resume = false,
+    int? expectedBytes,
   }) async {
-    final IOSink sink = target.openWrite();
+    // Ожидаемый размер мог сохраниться от прежнего потока (ссылки на трек
+    // живут часами). Тогда он не годится для проверки: доверяем ответу сервера.
+    int? expected = expectedBytes;
+    bool restart = false;
 
-    int written = 0;
-    int? total;
-
-    try {
-      while (true) {
-        if (total != null && written >= total) break;
-
-        final int start = written;
-        final int end = start + chunkBytes - 1;
-        final _Chunk chunk = await _fetch(url, start, end);
-
-        if (chunk.bytes.isEmpty) break;
-
-        sink.add(chunk.bytes);
-        written += chunk.bytes.length;
-
-        total ??= chunk.total;
-        final int? known = total;
-        onProgress?.call(known == null ? 0 : (written / known).clamp(0.0, 1.0));
-
-        // Часть короче запрошенной — файл закончился.
-        if (chunk.bytes.length < chunkBytes) break;
+    // Не больше двух проходов: второй нужен, если сохранённый размер устарел
+    // и сервер сообщил, что файл на самом деле короче остатка на диске.
+    while (true) {
+      int start = resume && !restart && target.existsSync()
+          ? await target.length()
+          : 0;
+      // Остаток длиннее ожидаемого — он испорчен (например, от прежнего потока
+      // другого качества): начинаем заново, иначе файл никогда не сойдётся.
+      if (expected != null && start > expected) {
+        start = 0;
+        expected = null;
       }
 
+      int written = start;
+      int? total = expected;
+      IOSink sink = start > 0
+          ? target.openWrite(mode: FileMode.append)
+          : target.openWrite();
+      bool needRestart = false;
+
+      void report() {
+        onBytes?.call(written, total);
+        final int? known = total;
+        onProgress?.call(
+          known == null || known <= 0
+              ? 0
+              : (written / known).clamp(0.0, 1.0),
+        );
+      }
+
+      try {
+        report();
+        while (true) {
+          if (total != null && written >= total) break;
+
+          final int from = written;
+          final int end = from + chunkBytes - 1;
+          final _Chunk chunk = await _fetch(url, from, end);
+
+          // 416 — запросили за концом файла. Если ждали больше, чем уже есть,
+          // значит сохранённый размер относится к другому потоку.
+          if (chunk.bytes.isEmpty) {
+            if (expected != null) needRestart = true;
+            break;
+          }
+
+          if (chunk.wholeFile) {
+            // Сервер проигнорировал `Range` и отдал файл целиком с начала.
+            // Дописывать его к остатку нельзя — переписываем файл заново.
+            if (written > 0) {
+              await sink.close();
+              sink = target.openWrite();
+              written = 0;
+            }
+            sink.add(chunk.bytes);
+            written += chunk.bytes.length;
+            total = chunk.bytes.length;
+            // Тело ответа `200` и есть весь файл: сверять его с прежним
+            // ожиданием нельзя, иначе докачка «оборвётся» на ровном месте.
+            expected = written;
+            report();
+            break;
+          }
+
+          sink.add(chunk.bytes);
+          written += chunk.bytes.length;
+
+          total ??= chunk.total;
+          report();
+
+          // Часть короче запрошенной — файл закончился.
+          if (chunk.bytes.length < chunkBytes) break;
+        }
+
+        await sink.flush();
+        await sink.close();
+      } on Object {
+        // Сохраняем то, что успело дойти, — отсюда продолжится докачка.
+        await _closeQuietly(sink);
+        rethrow;
+      }
+
+      if (needRestart) {
+        // Остаток на диске относится к другому потоку: удаляем его и качаем
+        // заново в этом же вызове, иначе файл навсегда останется обрезанным.
+        restart = true;
+        expected = null;
+        continue;
+      }
+
+      if (written == 0) {
+        throw StreamDownloadException(
+          'Сервер не отдал ни одного байта трека. Проверьте обход блокировок.',
+        );
+      }
+      final int? awaited = expected ?? total;
+      if (awaited != null && written < awaited) {
+        throw StreamDownloadException(
+          'Загрузка оборвалась: получено $written из $awaited байт. '
+          'Повторите — докачка продолжится с этого места.',
+        );
+      }
+      onBytes?.call(written, written);
+      onProgress?.call(1);
+      return written;
+    }
+  }
+
+  /// Закрывает приёмник, не теряя уже записанное.
+  Future<void> _closeQuietly(IOSink sink) async {
+    try {
       await sink.flush();
+    } on Object {
+      // Файл всё равно закрываем ниже.
+    }
+    try {
       await sink.close();
     } on Object {
-      await sink.close();
-      rethrow;
+      // Ошибку записи уже несёт исходное исключение.
     }
-
-    if (written == 0) {
-      throw StreamDownloadException(
-        'Сервер не отдал ни одного байта трека. Проверьте обход блокировок.',
-      );
-    }
-    onProgress?.call(1);
-    return written;
   }
 
   /// Запрашивает один диапазон.
@@ -118,7 +212,12 @@ class RangeDownloader {
     await for (final List<int> part in response) {
       builder.add(part);
     }
-    return _Chunk(builder.takeBytes(), total);
+    // `200` вместо `206` — диапазон не учтён, в ответе файл целиком.
+    return _Chunk(
+      builder.takeBytes(),
+      total,
+      wholeFile: response.statusCode == 200,
+    );
   }
 
   /// Объясняет ошибку так, чтобы было понятно, что делать.
@@ -160,8 +259,11 @@ class RangeDownloader {
 
 /// Одна скачанная часть.
 class _Chunk {
-  const _Chunk(this.bytes, this.total);
+  const _Chunk(this.bytes, this.total, {this.wholeFile = false});
 
   final List<int> bytes;
   final int? total;
+
+  /// Сервер ответил `200` и отдал файл целиком, проигнорировав `Range`.
+  final bool wholeFile;
 }
