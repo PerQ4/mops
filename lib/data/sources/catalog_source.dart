@@ -1056,7 +1056,7 @@ class CatalogSource {
       res,
       <String>['playlistPanelVideoRenderer'],
     )) {
-      final Track? track = _panelTrack(renderer);
+      final Track? track = BrowseParser.panelTrack(renderer);
       // Радио — тоже каталог: заблокированный исполнитель не должен
       // подхватываться автопродлением в обход фильтрации остальных экранов.
       if (track != null &&
@@ -1077,57 +1077,6 @@ class CatalogSource {
   Future<AlbumRef?> trackAlbum(String videoId) async {
     final Map<String, dynamic> res = await _client.next(videoId);
     return BrowseParser.trackAlbum(res, videoId: videoId);
-  }
-
-  Track? _panelTrack(dynamic renderer) {
-    if (renderer is! Map) return null;
-    final String? videoId = traverseString(renderer, <String>['videoId']);
-    if (videoId == null || videoId.isEmpty) return null;
-
-    final String title = traverseString(renderer, <String>['title', 'runs', 'text']) ??
-        traverseString(renderer, <String>['title', 'simpleText']) ??
-        'Без названия';
-
-    final List<dynamic> byline = traverseList(renderer, <String>['longBylineText', 'runs'])
-        .isNotEmpty
-        ? traverseList(renderer, <String>['longBylineText', 'runs'])
-        : traverseList(renderer, <String>['shortBylineText', 'runs']);
-
-    final List<ArtistRef> artists = <ArtistRef>[];
-    for (final dynamic run in byline) {
-      if (run is! Map) continue;
-      final String? name = textOf(run);
-      if (name == null || name.trim() == '•' || name.trim().isEmpty) continue;
-      final String? artistId = traverseString(run, <String>[
-        'navigationEndpoint',
-        'browseEndpoint',
-        'browseId',
-      ]);
-      if (artistId == null) continue;
-      artists.add(ArtistRef(name: name.trim(), id: artistId));
-    }
-
-    final List<Thumbnail> thumbs = <Thumbnail>[];
-    for (final dynamic t in traverseList(renderer, <String>['thumbnail', 'thumbnails'])) {
-      if (t is Map && t['url'] is String) {
-        thumbs.add(Thumbnail(url: t['url'] as String));
-      }
-    }
-
-    return Track(
-      id: videoId,
-      title: title,
-      artists: artists,
-      duration: parseDurationText(
-            traverseString(renderer, <String>['lengthText', 'runs', 'text']),
-          ) ??
-          Duration.zero,
-      thumbnails: thumbs,
-      // Панель очереди — та же разметка, что и строки каталога, поэтому
-      // признак клипа берём общим разбором; без него у клипа из радио
-      // не появлялся пункт «Смотреть клип».
-      isVideo: BrowseParser.isVideo(renderer),
-    );
   }
 
   // --------------------------------------------------------------- тексты

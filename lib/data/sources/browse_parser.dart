@@ -333,6 +333,190 @@ class BrowseParser {
     return _albumFromRuns(runs);
   }
 
+  /// Трек из элемента панели очереди (`playlistPanelVideoRenderer`).
+  ///
+  /// Байлайн панели размечен так: «Исполнители • Альбом • Год», причём у
+  /// исполнителей ссылка ведёт на страницу исполнителя
+  /// (`MUSIC_PAGE_TYPE_ARTIST`), а у альбома — на его страницу (`MPRE…`,
+  /// `MUSIC_PAGE_TYPE_ALBUM`). Раньше автором считался любой run со ссылкой,
+  /// поэтому альбом печатался вторым исполнителем: в очереди выходило
+  /// «Пошлая Молли, Контракт • 3:25». Здесь граница проводится по типу
+  /// страницы; текст остаётся только запасным путём.
+  static Track? panelTrack(dynamic renderer) {
+    if (renderer is! Map) return null;
+    final String? videoId = traverseString(renderer, <String>['videoId']);
+    if (videoId == null || videoId.isEmpty) return null;
+
+    final String title =
+        traverseString(renderer, <String>['title', 'runs', 'text']) ??
+            traverseString(renderer, <String>['title', 'simpleText']) ??
+            'Без названия';
+
+    final List<dynamic> longRuns =
+        traverseList(renderer, <String>['longBylineText', 'runs']);
+    final List<dynamic> shortRuns =
+        traverseList(renderer, <String>['shortBylineText', 'runs']);
+    final (List<ArtistRef>, AlbumRef?) byline =
+        _panelByline(longRuns, shortRuns);
+
+    // Панель очереди — та же разметка, что и строки каталога, поэтому
+    // признак клипа берём общим разбором; без него у клипа из радио
+    // не появлялся пункт «Смотреть клип».
+    final List<Thumbnail> thumbs = <Thumbnail>[];
+    for (final dynamic t
+        in traverseList(renderer, <String>['thumbnail', 'thumbnails'])) {
+      if (t is Map && t['url'] is String) {
+        thumbs.add(Thumbnail(url: t['url'] as String));
+      }
+    }
+
+    return Track(
+      id: videoId,
+      title: title,
+      artists: byline.$1,
+      album: byline.$2,
+      duration: parseDurationText(
+            traverseString(renderer, <String>['lengthText', 'runs', 'text']),
+          ) ??
+          Duration.zero,
+      thumbnails: thumbs,
+      isVideo: isVideo(renderer),
+    );
+  }
+
+  /// Исполнители и альбом из байлайна панели очереди.
+  ///
+  /// Ссылки решают: run со страницей исполнителя — автор, run со страницей
+  /// альбома — альбом. Если ссылок нет, `shortBylineText` панели содержит
+  /// только исполнителей (альбома там не бывает) — берём его. Совсем без
+  /// подсказок остаётся текст: тогда «Исполнитель, Альбом» неотличим от
+  /// «Исполнитель1, Исполнитель2», и мы показываем одного исполнителя —
+  /// выдуманный соавтор хуже потерянного второго.
+  static (List<ArtistRef>, AlbumRef?) _panelByline(
+    List<dynamic> longRuns,
+    List<dynamic> shortRuns,
+  ) {
+    final List<dynamic> runs = longRuns.isNotEmpty ? longRuns : shortRuns;
+
+    List<ArtistRef> artists = _linkedArtists(runs);
+    AlbumRef? album = _albumFromRuns(runs);
+
+    if (artists.isEmpty) {
+      final String shortText = _runsText(shortRuns);
+      if (shortText.isNotEmpty) {
+        artists = _artistsFromNames(_splitNames(shortText));
+      } else {
+        final List<String> names =
+            _splitNames(_firstBylineSegment(longRuns));
+        final List<ArtistRef> candidates = _artistsFromNames(names);
+        if (names.length > 1) {
+          artists = candidates.isEmpty
+              ? const <ArtistRef>[]
+              : <ArtistRef>[candidates.first];
+          album ??= AlbumRef(name: names.skip(1).join(', '));
+        } else {
+          artists = candidates;
+        }
+      }
+    }
+
+    album ??= _albumFromPanelText(longRuns, artists);
+
+    // Альбом не может быть исполнителем: даже если разбор положил его
+    // в авторы (например, у run не оказалось ссылки), убираем по названию.
+    return (_withoutAlbum(artists, album), album);
+  }
+
+  /// Альбом из текста байлайна — когда ссылки на альбом нет.
+  ///
+  /// «… • Альбом • 2021» — берём первый неслужебный сегмент после
+  /// исполнителей. «Исполнитель, Альбом» без разделителя распознаём по
+  /// разнице с уже известными исполнителями.
+  static AlbumRef? _albumFromPanelText(
+    List<dynamic> runs,
+    List<ArtistRef> artists,
+  ) {
+    final String text = _runsText(runs);
+    if (text.isEmpty) return null;
+
+    final List<String> segments = text
+        .split('•')
+        .map((String s) => s.trim())
+        .where((String s) => s.isNotEmpty)
+        .toList();
+    for (final String segment in segments.skip(1)) {
+      if (_isBylineField(segment)) continue;
+      return AlbumRef(name: segment);
+    }
+
+    if (segments.isEmpty) return null;
+    final List<String> names = _splitNames(segments.first);
+    if (names.length < 2) return null;
+    final Set<String> known =
+        artists.map((ArtistRef a) => a.name.trim().toLowerCase()).toSet();
+    final List<String> rest = names
+        .where((String name) => !known.contains(name.toLowerCase()))
+        .toList();
+    return rest.length == 1 ? AlbumRef(name: rest.single) : null;
+  }
+
+  /// Год, длительность и счётчик — не название альбома.
+  ///
+  /// Служебные подписи вроде «Альбом» здесь намеренно не отбрасываются:
+  /// это позиция названия, и альбом с таким именем существует.
+  static bool _isBylineField(String value) {
+    final String text = value.trim();
+    if (text.isEmpty || text == '•') return true;
+    if (_looksLikeYear(text)) return true;
+    if (parseDurationText(text) != null) return true;
+    return _looksLikeCount(text);
+  }
+
+  static String _runsText(List<dynamic> runs) {
+    final StringBuffer buffer = StringBuffer();
+    for (final dynamic run in runs) {
+      if (run is Map && run['text'] is String) buffer.write(run['text']);
+    }
+    return buffer.toString().trim();
+  }
+
+  static String _firstBylineSegment(List<dynamic> runs) =>
+      _runsText(runs).split('•').first.trim();
+
+  /// Разделители имён в одной текстовой строке: «A, B», «A и B», «A & B».
+  static final RegExp _artistSeparator = RegExp(
+    r'\s*,\s*|\s+и\s+|\s*&\s*|\s+feat\.?\s+|\s+ft\.?\s+',
+    caseSensitive: false,
+    unicode: true,
+  );
+
+  static List<String> _splitNames(String text) {
+    return text
+        .split(_artistSeparator)
+        .map((String part) => part.trim())
+        .where((String part) => part.isNotEmpty && part != '•')
+        .toList();
+  }
+
+  static List<ArtistRef> _artistsFromNames(List<String> names) => names
+      .where((String name) => !_isBylineField(name))
+      .where((String name) => !_artistStopWords.contains(name.toLowerCase()))
+      .map((String name) => ArtistRef(name: name))
+      .toList(growable: false);
+
+  /// Убирает из авторов элемент, совпавший с названием альбома.
+  static List<ArtistRef> _withoutAlbum(
+    List<ArtistRef> artists,
+    AlbumRef? album,
+  ) {
+    if (album == null) return artists;
+    final String albumName = album.name.trim().toLowerCase();
+    if (albumName.isEmpty) return artists;
+    return artists
+        .where((ArtistRef a) => a.name.trim().toLowerCase() != albumName)
+        .toList(growable: false);
+  }
+
   /// Разбирает `musicShelfRenderer` / `musicCarouselShelfRenderer` в секцию.
   static BrowseSection? shelf(dynamic renderer) {
     if (renderer is! Map) return null;

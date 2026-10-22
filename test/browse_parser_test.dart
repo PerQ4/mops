@@ -9,11 +9,20 @@ import 'package:mops/core/innertube/renderer.dart';
 import 'package:mops/data/models/models.dart';
 import 'package:mops/data/sources/browse_parser.dart';
 
-Map<String, dynamic> run(String text, {String? browseId}) => <String, dynamic>{
+Map<String, dynamic> run(String text, {String? browseId, String? pageType}) =>
+    <String, dynamic>{
       'text': text,
       if (browseId != null)
         'navigationEndpoint': <String, dynamic>{
-          'browseEndpoint': <String, dynamic>{'browseId': browseId},
+          'browseEndpoint': <String, dynamic>{
+            'browseId': browseId,
+            if (pageType != null)
+              'browseEndpointContextSupportedConfigs': <String, dynamic>{
+                'browseEndpointContextMusicConfig': <String, dynamic>{
+                  'pageType': pageType,
+                },
+              },
+          },
         },
     };
 
@@ -117,6 +126,132 @@ void main() {
         <String>['Radiohead'],
       );
       expect(track.duration, const Duration(minutes: 3, seconds: 59));
+    });
+  });
+
+  group('панель очереди («Далее»)', () {
+    /// Элемент `playlistPanelVideoRenderer` в том виде, в каком его отдаёт
+    /// `next`: длинный байлайн — исполнители, альбом и год.
+    Map<String, dynamic> panelRow({
+      required List<Map<String, dynamic>> long,
+      List<Map<String, dynamic>>? short,
+    }) =>
+        <String, dynamic>{
+          'videoId': 'panel1',
+          'title': <String, dynamic>{
+            'runs': <Map<String, dynamic>>[<String, dynamic>{'text': 'Контракт'}],
+          },
+          'longBylineText': <String, dynamic>{'runs': long},
+          if (short != null)
+            'shortBylineText': <String, dynamic>{'runs': short},
+          'lengthText': <String, dynamic>{
+            'runs': <Map<String, dynamic>>[<String, dynamic>{'text': '3:25'}],
+          },
+        };
+
+    test('байлайн через запятую: альбом не становится вторым исполнителем', () {
+      // Раньше автором считался любой run со ссылкой, поэтому альбом
+      // («Контракт») печатался в очереди как второй исполнитель.
+      final Track? track = BrowseParser.panelTrack(panelRow(
+        long: <Map<String, dynamic>>[
+          run('Исполнитель',
+              browseId: 'UC1', pageType: 'MUSIC_PAGE_TYPE_ARTIST'),
+          run(', '),
+          run('Альбом',
+              browseId: 'MPREb_1', pageType: 'MUSIC_PAGE_TYPE_ALBUM'),
+          run(' • '),
+          run('3:25'),
+        ],
+        short: <Map<String, dynamic>>[run('Исполнитель')],
+      ));
+
+      expect(track, isNotNull);
+      expect(track!.artists.map((ArtistRef a) => a.name), <String>['Исполнитель']);
+      expect(track.artists.single.id, 'UC1');
+      expect(track.album?.name, 'Альбом');
+      expect(track.album?.id, 'MPREb_1');
+      expect(track.duration, const Duration(minutes: 3, seconds: 25));
+    });
+
+    test('несколько исполнителей со ссылками сохраняются оба', () {
+      final Track? track = BrowseParser.panelTrack(panelRow(
+        long: <Map<String, dynamic>>[
+          run('Исполнитель1',
+              browseId: 'UC1', pageType: 'MUSIC_PAGE_TYPE_ARTIST'),
+          run(', '),
+          run('Исполнитель2',
+              browseId: 'UC2', pageType: 'MUSIC_PAGE_TYPE_ARTIST'),
+          run(' • '),
+          run('Альбом',
+              browseId: 'MPREb_1', pageType: 'MUSIC_PAGE_TYPE_ALBUM'),
+          run(' • '),
+          run('2024'),
+        ],
+        short: <Map<String, dynamic>>[
+          run('Исполнитель1'),
+          run(', '),
+          run('Исполнитель2'),
+        ],
+      ));
+
+      expect(track, isNotNull);
+      expect(
+        track!.artists.map((ArtistRef a) => a.name),
+        <String>['Исполнитель1', 'Исполнитель2'],
+      );
+      expect(track.album?.name, 'Альбом');
+    });
+
+    test('без ссылок альбом отделяется по тексту', () {
+      final Track? track = BrowseParser.panelTrack(panelRow(
+        long: <Map<String, dynamic>>[
+          run('Исполнитель'),
+          run(' • '),
+          run('Альбом'),
+          run(' • '),
+          run('3:25'),
+        ],
+        short: <Map<String, dynamic>>[run('Исполнитель')],
+      ));
+
+      expect(track, isNotNull);
+      expect(track!.artists.map((ArtistRef a) => a.name), <String>['Исполнитель']);
+      expect(track.album?.name, 'Альбом');
+    });
+
+    test('без ссылок и короткой подписи один исполнитель, а не соавтор', () {
+      // «Исполнитель, Альбом • 3:25» без ссылок неотличим от двух авторов.
+      // Показываем только первого: выдуманный соавтор хуже потери второго.
+      final Track? track = BrowseParser.panelTrack(panelRow(
+        long: <Map<String, dynamic>>[
+          run('Исполнитель, Альбом'),
+          run(' • '),
+          run('3:25'),
+        ],
+      ));
+
+      expect(track, isNotNull);
+      expect(track!.artists.map((ArtistRef a) => a.name), <String>['Исполнитель']);
+      expect(track.album?.name, 'Альбом');
+    });
+
+    test('короткая подпись сохраняет нескольких исполнителей без ссылок', () {
+      // В `shortBylineText` альбома не бывает: там перечислены только авторы.
+      final Track? track = BrowseParser.panelTrack(panelRow(
+        long: <Map<String, dynamic>>[
+          run('Исполнитель1, Исполнитель2'),
+          run(' • '),
+          run('3:25'),
+        ],
+        short: <Map<String, dynamic>>[run('Исполнитель1, Исполнитель2')],
+      ));
+
+      expect(track, isNotNull);
+      expect(
+        track!.artists.map((ArtistRef a) => a.name),
+        <String>['Исполнитель1', 'Исполнитель2'],
+      );
+      expect(track.album, isNull);
     });
   });
 
