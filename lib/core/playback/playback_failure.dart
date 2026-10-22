@@ -34,14 +34,20 @@ class PlaybackFailureException implements Exception {
 
 /// Причина по ошибке резолвера.
 ///
-/// Единственное место, где текст ошибки превращается в код: у
-/// `StreamResolutionException` пока нет поля причины, а менять `lib/data` — за
-/// рамками этой задачи. Когда поле появится, поменяется только эта функция.
+/// Резолвер сам ставит отметку [StreamResolutionException.unavailable], когда
+/// сервер потока ответил явным отказом: такой случай (503 на ссылку) по тексту
+/// от «видео недоступно» не отличить, а от него зависит, предложить ли
+/// замену. Остальные причины по-прежнему различаются по тексту: других
+/// признаков у ошибки нет.
 PlaybackFailure failureOfResolution(StreamResolutionException error) {
+  if (error.unavailable) return PlaybackFailure.unavailable;
+
   final String message = error.message.toLowerCase();
   // «Недоступно» проверяем раньше входа: в тексте про регион вход упомянут
   // как вторая причина, но замена трека нужна именно там.
-  if (message.contains('недоступно')) return PlaybackFailure.unavailable;
+  if (message.contains('недоступно') || message.contains('недоступен')) {
+    return PlaybackFailure.unavailable;
+  }
   if (message.contains('требует вход') || message.contains('войдите')) {
     return PlaybackFailure.needsLogin;
   }

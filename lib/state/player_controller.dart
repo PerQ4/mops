@@ -1238,9 +1238,9 @@ class PlayerController extends Notifier<PlayerUiState> {
             : state.unavailableIds,
       );
     } on StreamResolutionException catch (error) {
-      // Резолвер отличает «недоступно» (удалено, скрыто, регион) от сетевого
-      // сбоя. Только первый случай даёт смысл искать замену — во втором
-      // достаточно повторить попытку.
+      // Резолвер отличает «недоступно» (удалено, скрыто, регион, отказ
+      // медиасервера) от сетевого сбоя. Только первый случай даёт смысл искать
+      // замену — во втором достаточно повторить попытку.
       final bool unavailable =
           failureOfResolution(error) == PlaybackFailure.unavailable;
       state = state.copyWith(

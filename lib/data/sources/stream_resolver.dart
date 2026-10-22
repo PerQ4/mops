@@ -91,6 +91,161 @@ class ResolvedStream {
       );
 }
 
+/// Что дала проверка ссылки на поток.
+enum StreamLinkState {
+  /// Сервер отдал данные — ссылку можно передавать плееру.
+  ok,
+
+  /// Явный отказ: HTTP-код вне 2xx или пустое тело.
+  refused,
+
+  /// Проверить не удалось (сеть, таймаут, прокси). О доступности самого
+  /// трека это ничего не говорит.
+  unchecked,
+}
+
+/// Итог проверки ссылки: состояние и HTTP-код отказа, если он был.
+@immutable
+class StreamLinkProbe {
+  const StreamLinkProbe(this.state, {this.statusCode, this.detail});
+
+  final StreamLinkState state;
+
+  /// Код ответа, которым сервер отказал; `null` у успеха и сетевых сбоев.
+  final int? statusCode;
+
+  /// Текст сетевой ошибки — только для лога.
+  final String? detail;
+}
+
+/// Проверка, что медиасервер действительно отдаёт поток.
+///
+/// googlevideo умеет отвечать на готовую ссылку `503` с пустым телом: URL
+/// формально получен, но звука не будет, и ошибка всплывает уже в плеере без
+/// понятного текста. Один запрос `Range: bytes=0-0` отличает такую ссылку от
+/// рабочей за десятки миллисекунд.
+///
+/// Отказом считается только явный HTTP-ответ. Сетевую ошибку (таймаут, обрыв,
+/// прокси не пустил) отказом считать нельзя: при работающем обходе блокировок
+/// проверка может не пройти там, где плеер потом сыграет.
+class StreamLinkChecker {
+  StreamLinkChecker({this.timeout = const Duration(seconds: 4)});
+
+  /// Сколько всего ждать проверку — соединение, заголовки и первый байт.
+  ///
+  /// Коротко намеренно: проверка не должна задерживать запуск трека, а
+  /// медленный сервер — это не «трек удалён».
+  final Duration timeout;
+
+  HttpClient? _client;
+
+  /// Настройки обхода, при которых создан [_client].
+  ///
+  /// Прокси и подмена хоста применяются глобально: клиент, созданный до
+  /// включения прокси, о нём не узнает. Сверяем и пересоздаём — иначе
+  /// проверка ходила бы мимо только что включённого прокси.
+  HttpOverrides? _overrides;
+
+  Future<StreamLinkProbe> check(Uri url, {String? userAgent}) async {
+    // Не HTTP — проверять нечего: отказа сервера тут быть не может.
+    if (url.scheme != 'http' && url.scheme != 'https') {
+      return const StreamLinkProbe(StreamLinkState.unchecked);
+    }
+
+    // Общий срок на все шаги: иначе зависший на каждом из них сервер держал
+    // бы запуск трека втрое дольше заявленного таймаута.
+    final DateTime deadline = DateTime.now().add(timeout);
+    Duration left() {
+      final Duration remaining = deadline.difference(DateTime.now());
+      return remaining.isNegative ? Duration.zero : remaining;
+    }
+
+    try {
+      final HttpClient client = _clientForCurrentOverrides();
+      final HttpClientRequest request =
+          await client.getUrl(url).timeout(left());
+      request.headers.set(HttpHeaders.rangeHeader, 'bytes=0-0');
+      final String? agent = userAgent;
+      if (agent != null && agent.isNotEmpty) {
+        request.headers.set(HttpHeaders.userAgentHeader, agent);
+      }
+
+      final HttpClientResponse response =
+          await request.close().timeout(left());
+      final int code = response.statusCode;
+      if (code < 200 || code >= 300) {
+        await _drainQuietly(response, left());
+        return StreamLinkProbe(StreamLinkState.refused, statusCode: code);
+      }
+
+      // 2xx с пустым телом — та же заглушка, что и 503: заголовки есть,
+      // данных нет. Проверяем и явный нулевой размер, и пустой поток.
+      if (response.contentLength == 0) {
+        return StreamLinkProbe(StreamLinkState.refused, statusCode: code);
+      }
+      final bool hasData = await _firstChunk(response, left());
+      return hasData
+          ? const StreamLinkProbe(StreamLinkState.ok)
+          : StreamLinkProbe(StreamLinkState.refused, statusCode: code);
+    } on Object catch (error) {
+      return StreamLinkProbe(StreamLinkState.unchecked, detail: '$error');
+    }
+  }
+
+  HttpClient _clientForCurrentOverrides() {
+    final HttpOverrides? overrides = HttpOverrides.current;
+    final HttpClient? existing = _client;
+    if (existing != null && identical(overrides, _overrides)) return existing;
+
+    existing?.close(force: true);
+    _overrides = overrides;
+    return _client = HttpClient()..connectionTimeout = timeout;
+  }
+
+  /// Читает первый кусок тела и обрывает соединение: весь файл не нужен.
+  ///
+  /// Таймаут здесь — сетевая ошибка, а не отказ: его обрабатывает [check].
+  Future<bool> _firstChunk(HttpClientResponse response, Duration limit) async {
+    final Completer<bool> chunk = Completer<bool>();
+    late final StreamSubscription<List<int>> subscription;
+    subscription = response.listen(
+      (List<int> data) {
+        if (!chunk.isCompleted && data.isNotEmpty) chunk.complete(true);
+      },
+      onError: (Object error) {
+        if (!chunk.isCompleted) chunk.completeError(error);
+      },
+      onDone: () {
+        if (!chunk.isCompleted) chunk.complete(false);
+      },
+      cancelOnError: true,
+    );
+    try {
+      return await chunk.future.timeout(limit);
+    } finally {
+      await subscription.cancel();
+    }
+  }
+
+  /// Дочитывает маленькое тело отказа, чтобы не оставлять соединение
+  /// полуоткрытым в пуле клиента.
+  Future<void> _drainQuietly(
+    HttpClientResponse response,
+    Duration limit,
+  ) async {
+    try {
+      await response.drain<void>().timeout(limit);
+    } on Object {
+      // Код ответа уже получен; потеря тела отказа ничего не меняет.
+    }
+  }
+
+  void dispose() {
+    _client?.close(force: true);
+    _client = null;
+  }
+}
+
 /// Контракт получения потока. Реализации можно менять независимо от UI.
 abstract class StreamResolver {
   Future<ResolvedStream> resolve(
@@ -107,9 +262,16 @@ abstract class StreamResolver {
 
 /// Ошибка получения потока с понятным текстом.
 class StreamResolutionException implements Exception {
-  StreamResolutionException(this.message);
+  StreamResolutionException(this.message, {this.unavailable = false});
 
   final String message;
+
+  /// Трек не отдаётся площадкой: удалён, скрыт или ограничен по региону.
+  ///
+  /// Признак ставит резолвер, когда сервер потока ответил явным отказом.
+  /// По тексту такой случай от «недоступно» не отличить надёжно, а от него
+  /// зависит, предложить ли замену трека.
+  final bool unavailable;
 
   @override
   String toString() => message;
@@ -132,6 +294,44 @@ class _AudioCandidate {
   final String? userAgent;
 }
 
+/// Результат перебора ссылок источника.
+@immutable
+class _Verified {
+  const _Verified(this.stream, {required this.checked});
+
+  final ResolvedStream stream;
+
+  /// Ссылка действительно проверена сервером.
+  ///
+  /// Непроверенную (сеть не дала) не кэшируем: иначе временный обрыв закрепил
+  /// бы сомнительный адрес на часы, и повторная попытка не переспросила бы
+  /// сервер.
+  final bool checked;
+}
+
+/// Все проверенные ссылки одного источника получили явный отказ сервера.
+///
+/// Отдельное исключение, чтобы отказ не смешивался с сетевыми сбоями: только
+/// он даёт право сказать «трек недоступен».
+class _StreamRefused implements Exception {
+  const _StreamRefused(this.statusCode);
+
+  /// Код последнего отказа; `null`, если отказ был по пустому телу без кода.
+  final int? statusCode;
+
+  @override
+  String toString() => 'сервер не отдаёт поток (${statusCode ?? '?'})';
+}
+
+/// Сколько вариантов одной ссылки проверять, прежде чем признать источник
+/// отказавшим.
+///
+/// Отказ приходит быстро (503 на любой формат), а вот медленный ответ — это
+/// сетевая ошибка, после которой проверка прекращается сама. Предел нужен на
+/// случай, когда сервер отвечает отказом, но не сразу: трек не должен
+/// «висеть» на десятке таймаутов.
+const int _kMaxProbesPerSource = 4;
+
 /// Получение потока.
 ///
 /// Основной путь — запрос `player` нашим InnerTube-клиентом с профилем
@@ -148,6 +348,7 @@ class YoutubeStreamResolver implements StreamResolver {
     Map<String, String> authHeaders = const <String, String>{},
     YoutubeExplode? library,
     this.localFile,
+    this.fallbackLinks,
   }) : _library = library ??
             YoutubeExplode(
               httpClient: AuthenticatedYoutubeClient(authHeaders),
@@ -168,6 +369,13 @@ class YoutubeStreamResolver implements StreamResolver {
   /// `path_provider` и каталога загрузок, а тесты могут подставить свой путь.
   final Future<String?> Function(String videoId)? localFile;
 
+  /// Запасной источник ссылок вместо библиотеки.
+  ///
+  /// Нужен тестам: перебор и проверка ссылок при этом остаются боевыми, а
+  /// сеть подменяется локальным сервером. `null` — обычный путь через
+  /// `youtube_explode_dart`. Ссылки должны идти в порядке предпочтения.
+  final Future<List<ResolvedStream>> Function(String videoId)? fallbackLinks;
+
   final YoutubeExplode _library;
 
   /// Какой клиент YouTube использовать для получения ссылки.
@@ -175,6 +383,10 @@ class YoutubeStreamResolver implements StreamResolver {
 
   /// Кэш: ссылки живут часами, а запрос — довольно дорогая операция.
   final Map<String, ResolvedStream> _cache = <String, ResolvedStream>{};
+
+  /// Проверка ссылки перед выдачей: один клиент на резолвер, чтобы его пул
+  /// соединений переиспользовался между треками.
+  final StreamLinkChecker _checker = StreamLinkChecker();
 
   @override
   Future<ResolvedStream> resolve(
@@ -197,21 +409,28 @@ class YoutubeStreamResolver implements StreamResolver {
     // «проверьте соединение» бесполезен, а в первом — важно сказать, что
     // трек не скачан.
     bool networkFailure = false;
+    // Последний явный отказ медиасервера. Именно он, а не текст ошибки,
+    // решает, что трек недоступен.
+    int? refusedCode;
 
     for (final YoutubeClientProfile profile
         in YoutubeClients.forChoice(clientChoice)) {
       try {
-        final ResolvedStream? resolved = await _resolveWithProfile(
-          profile,
-          videoId,
-          quality,
-          preferContainer,
-        );
-        if (resolved != null) {
-          _cache[key] = resolved;
-          return resolved;
+        final List<_AudioCandidate> candidates =
+            await _candidatesWithProfile(profile, videoId);
+        if (candidates.isEmpty) {
+          failures.add('${profile.label}: ссылок нет');
+          continue;
         }
-        failures.add('${profile.label}: ссылок нет');
+        final _Verified pick = await _verifiedPick(
+          _linksFrom(candidates, quality, preferContainer),
+          source: profile.label,
+        );
+        if (pick.checked) _cache[key] = pick.stream;
+        return pick.stream;
+      } on _StreamRefused catch (refusal) {
+        refusedCode = refusal.statusCode;
+        failures.add('${profile.label}: $refusal');
       } on Object catch (error) {
         if (_isNetworkError(error)) networkFailure = true;
         failures.add('${profile.label}: $error');
@@ -220,16 +439,22 @@ class YoutubeStreamResolver implements StreamResolver {
 
     // Запасной путь — библиотека с её клиентом по умолчанию.
     try {
-      final ResolvedStream? resolved = await _resolveWithLibrary(
-        videoId,
-        quality,
-        preferContainer,
-      );
-      if (resolved != null) {
-        _cache[key] = resolved;
-        return resolved;
+      final List<ResolvedStream> links = fallbackLinks != null
+          ? await fallbackLinks!(videoId)
+          : await _libraryLinks(videoId, quality, preferContainer);
+      if (links.isEmpty) {
+        failures.add('библиотека: ссылок нет');
+      } else {
+        final _Verified pick = await _verifiedPick(
+          links,
+          source: 'библиотека',
+        );
+        if (pick.checked) _cache[key] = pick.stream;
+        return pick.stream;
       }
-      failures.add('библиотека: ссылок нет');
+    } on _StreamRefused catch (refusal) {
+      refusedCode = refusal.statusCode;
+      failures.add('библиотека: $refusal');
     } on Object catch (error) {
       if (_isNetworkError(error)) networkFailure = true;
       failures.add('библиотека: $error');
@@ -256,17 +481,61 @@ class YoutubeStreamResolver implements StreamResolver {
       needsLogin
           ? 'YouTube требует вход в аккаунт для этого видео. '
               'Войдите в приложении и попробуйте снова.'
-          : unavailable
-              ? 'YouTube не отдаёт это видео: оно недоступно в вашем регионе '
-                  'или требует вход в аккаунт.'
-              : offline
-                  ? 'Не удалось получить поток: сети нет или соединение с '
-                      'YouTube блокируется. Этот трек не скачан — скачайте '
-                      'его заранее (меню трека → «Скачать»), и он сыграет '
-                      'без интернета.'
-                  : 'Не удалось получить аудиопоток. '
-                      'Проверьте соединение и попробуйте снова.',
+          : refusedCode != null
+              // Явный отказ важнее прочих догадок: сервер ответил, а не
+              // пропал, и повторять запрос бессмысленно — нужна замена.
+              ? 'Сервер не отдаёт этот трек ($refusedCode) — возможно, он '
+                  'недоступен в регионе или удалён.'
+              : unavailable
+                  ? 'YouTube не отдаёт это видео: оно недоступно в вашем '
+                      'регионе или требует вход в аккаунт.'
+                  : offline
+                      ? 'Не удалось получить поток: сети нет или соединение с '
+                          'YouTube блокируется. Этот трек не скачан — скачайте '
+                          'его заранее (меню трека → «Скачать»), и он сыграет '
+                          'без интернета.'
+                      : 'Не удалось получить аудиопоток. '
+                          'Проверьте соединение и попробуйте снова.',
+      unavailable: refusedCode != null || unavailable,
     );
+  }
+
+  /// Проверяет ссылки по очереди и возвращает первую, которую сервер отдаёт.
+  ///
+  /// Отказ — только явный HTTP-ответ (не 2xx) или пустое тело. Если проверка
+  /// не удалась по сети, ссылка уходит плееру как есть: иначе сломанный прокси
+  /// или временный обрыв выглядели бы как «трек удалён».
+  ///
+  /// Бросает [_StreamRefused], когда отказали все проверенные варианты, — это
+  /// и есть повод перейти к следующему клиенту или источнику.
+  Future<_Verified> _verifiedPick(
+    List<ResolvedStream> links, {
+    required String source,
+  }) async {
+    int? refusedCode;
+    final int limit = links.length < _kMaxProbesPerSource
+        ? links.length
+        : _kMaxProbesPerSource;
+
+    for (int i = 0; i < limit; i++) {
+      final ResolvedStream link = links[i];
+      final StreamLinkProbe probe =
+          await _checker.check(link.url, userAgent: link.userAgent);
+      switch (probe.state) {
+        case StreamLinkState.ok:
+          return _Verified(link, checked: true);
+        case StreamLinkState.unchecked:
+          // Сеть не дала проверить — не наше дело судить о доступности.
+          debugPrint('[Поток] $source: проверка ссылки не удалась '
+              '(${probe.detail}) — отдаю без проверки');
+          return _Verified(link, checked: false);
+        case StreamLinkState.refused:
+          refusedCode = probe.statusCode;
+          debugPrint('[Поток] $source: отказ ${probe.statusCode ?? '?'} для '
+              '${link.container ?? '?'} ${link.bitrateKbps ?? '?'} kbps');
+      }
+    }
+    throw _StreamRefused(refusedCode);
   }
 
   /// Путь к скачанному файлу; ошибки хранилища не должны ломать сеть.
@@ -313,11 +582,9 @@ class YoutubeStreamResolver implements StreamResolver {
   }
 
   /// Запрос `player` выбранным профилем клиента.
-  Future<ResolvedStream?> _resolveWithProfile(
+  Future<List<_AudioCandidate>> _candidatesWithProfile(
     YoutubeClientProfile profile,
     String videoId,
-    AudioQuality quality,
-    String? preferContainer,
   ) async {
     final Map<String, dynamic> response = await innerTube.post(
       'player',
@@ -342,19 +609,14 @@ class YoutubeStreamResolver implements StreamResolver {
     if (state != 'OK') {
       debugPrint('[Поток] ${profile.label}: $state '
           '${status is Map ? status['reason'] ?? '' : ''}');
-      return null;
+      return const <_AudioCandidate>[];
     }
 
-    return _pickFromPlayerResponse(
-      response,
-      quality,
-      profile,
-      preferContainer,
-    );
+    return _candidatesFromPlayerResponse(response, profile);
   }
 
   /// Запасной путь: библиотека со своим клиентом по умолчанию.
-  Future<ResolvedStream?> _resolveWithLibrary(
+  Future<List<ResolvedStream>> _libraryLinks(
     String videoId,
     AudioQuality quality,
     String? preferContainer,
@@ -363,7 +625,7 @@ class YoutubeStreamResolver implements StreamResolver {
         await _library.videos.streamsClient.getManifest(videoId);
 
     final List<AudioOnlyStreamInfo> audio = manifest.audioOnly.toList();
-    if (audio.isEmpty) return null;
+    if (audio.isEmpty) return const <ResolvedStream>[];
 
     final List<_AudioCandidate> candidates = audio
         .map((AudioOnlyStreamInfo stream) => _AudioCandidate(
@@ -379,22 +641,20 @@ class YoutubeStreamResolver implements StreamResolver {
             ))
         .toList();
 
-    return _pickCandidate(candidates, quality, preferContainer);
+    return _linksFrom(candidates, quality, preferContainer);
   }
 
-  /// Разбирает ответ `player` и выбирает дорожку.
+  /// Разбирает ответ `player` и отдаёт все аудиодорожки с готовой ссылкой.
   ///
   /// Подходят только дорожки с готовой ссылкой (`url`): если YouTube вернул
   /// `signatureCipher`, расшифровать его мы не можем — тогда путь через
   /// профиль не годится, и сработает запасной через библиотеку.
-  ResolvedStream? _pickFromPlayerResponse(
+  List<_AudioCandidate> _candidatesFromPlayerResponse(
     Map<String, dynamic> response,
-    AudioQuality quality,
     YoutubeClientProfile profile,
-    String? preferContainer,
   ) {
     final dynamic data = response['streamingData'];
-    if (data is! Map) return null;
+    if (data is! Map) return const <_AudioCandidate>[];
 
     final List<Map<String, dynamic>> formats = <dynamic>[
       ...(data['adaptiveFormats'] as List<dynamic>? ?? <dynamic>[]),
@@ -419,12 +679,35 @@ class YoutubeStreamResolver implements StreamResolver {
         userAgent: profile.userAgent,
       ));
     }
-
-    if (candidates.isEmpty) return null;
-    return _pickCandidate(candidates, quality, preferContainer);
+    return candidates;
   }
 
-  /// Выбирает дорожку под желаемое качество.
+  /// Дорожки в виде ссылок в порядке предпочтения — их и проверяем.
+  ///
+  /// Срок годности один на все: ссылки получены одним ответом YouTube и живут
+  /// одинаково. Проверяем не только желаемое качество, поэтому при отказе
+  /// сервера остаётся чем его заменить.
+  List<ResolvedStream> _linksFrom(
+    List<_AudioCandidate> candidates,
+    AudioQuality quality,
+    String? preferContainer,
+  ) {
+    final DateTime expiresAt = DateTime.now().add(const Duration(hours: 5));
+    return <ResolvedStream>[
+      for (final _AudioCandidate candidate
+          in _orderedCandidates(candidates, quality, preferContainer))
+        ResolvedStream(
+          url: candidate.url,
+          bitrateKbps: candidate.bitrateKbps,
+          container: candidate.container,
+          mimeType: candidate.mimeType,
+          userAgent: candidate.userAgent,
+          expiresAt: expiresAt,
+        ),
+    ];
+  }
+
+  /// Дорожки под желаемое качество, лучшая первой.
   ///
   /// «Максимум» — лучшая доступная дорожка, «экономия» — самая дешёвая,
   /// «среднее» — ближайшая к целевым 128 kbps. Для «среднего» важна именно
@@ -432,43 +715,61 @@ class YoutubeStreamResolver implements StreamResolver {
   /// дорожки, а не номинальный, — у itag 140 это 130–131 kbps при номинале 128,
   /// и отбор «не выше 128» промахивался мимо него, роняя «среднее» до
   /// ~70 kbps Opus, хотя рядом лежала дорожка ~128 kbps.
-  ResolvedStream? _pickCandidate(
+  ///
+  /// Дальше в списке идут остальные дорожки — тем ближе по битрейту, чем
+  /// лучше: если сервер отказал на выбранной, следующей пробуем ближайшую к
+  /// ней по качеству. Для загрузки контейнер важнее: файл называется `.m4a`,
+  /// и сначала пробуем его, а другие контейнеры — в конце, когда m4a не
+  /// отдаётся вовсе.
+  List<_AudioCandidate> _orderedCandidates(
     List<_AudioCandidate> candidates,
     AudioQuality quality,
     String? preferContainer,
   ) {
-    if (candidates.isEmpty) return null;
+    if (candidates.isEmpty) return const <_AudioCandidate>[];
 
-    // Для загрузки контейнер важен: файл называется `.m4a`, и лучше, чтобы
-    // содержимое соответствовало имени. Если m4a у видео нет — берём как
-    // есть: плеер определяет формат по содержимому.
-    final List<_AudioCandidate> matching = preferContainer == null
-        ? candidates
-        : candidates
-            .where((_AudioCandidate c) => c.container == preferContainer)
-            .toList();
-    final List<_AudioCandidate> pool =
-        matching.isEmpty ? candidates : matching;
+    int byBitrate(_AudioCandidate a, _AudioCandidate b) =>
+        a.bitrateKbps.compareTo(b.bitrateKbps);
+    bool sameContainer(_AudioCandidate c) =>
+        preferContainer == null || c.container == preferContainer;
 
-    pool.sort((_AudioCandidate a, _AudioCandidate b) =>
-        a.bitrateKbps.compareTo(b.bitrateKbps));
+    final List<_AudioCandidate> preferred =
+        candidates.where(sameContainer).toList()..sort(byBitrate);
+    final List<_AudioCandidate> others =
+        candidates.where((_AudioCandidate c) => !sameContainer(c)).toList()
+          ..sort(byBitrate);
+
+    return <_AudioCandidate>[
+      ..._byQuality(preferred, quality),
+      ..._byQuality(others, quality),
+    ];
+  }
+
+  /// Один набор дорожек (уже по возрастанию битрейта), ближайшая к качеству
+  /// первой.
+  List<_AudioCandidate> _byQuality(
+    List<_AudioCandidate> pool,
+    AudioQuality quality,
+  ) {
+    if (pool.isEmpty) return const <_AudioCandidate>[];
 
     // Список отсортирован по возрастанию, поэтому «экономия» — это первый.
-    _AudioCandidate chosen = pool.first;
-    if (quality == AudioQuality.high) {
-      chosen = pool.last;
-    } else if (quality == AudioQuality.medium) {
-      chosen = _nearestToTarget(pool, quality.targetKbps);
-    }
+    final _AudioCandidate first = quality == AudioQuality.high
+        ? pool.last
+        : quality == AudioQuality.medium
+            ? _nearestToTarget(pool, quality.targetKbps)
+            : pool.first;
 
-    return ResolvedStream(
-      url: chosen.url,
-      bitrateKbps: chosen.bitrateKbps,
-      container: chosen.container,
-      mimeType: chosen.mimeType,
-      userAgent: chosen.userAgent,
-      expiresAt: DateTime.now().add(const Duration(hours: 5)),
-    );
+    final List<_AudioCandidate> rest = pool
+        .where((_AudioCandidate c) => !identical(c, first))
+        .toList()
+      ..sort((_AudioCandidate a, _AudioCandidate b) {
+        final int left = (a.bitrateKbps - first.bitrateKbps).abs();
+        final int right = (b.bitrateKbps - first.bitrateKbps).abs();
+        return left.compareTo(right);
+      });
+
+    return <_AudioCandidate>[first, ...rest];
   }
 
   /// Дорожка, ближайшая к целевому битрейту; при равной близости — дешевле
@@ -490,6 +791,7 @@ class YoutubeStreamResolver implements StreamResolver {
   @override
   void dispose() {
     _cache.clear();
+    _checker.dispose();
     _library.close();
   }
 }
