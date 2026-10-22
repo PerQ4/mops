@@ -287,6 +287,12 @@ abstract class StreamResolver {
   void dispose();
 }
 
+/// Источник ссылок, умеющий забыть закэшированную ссылку.
+abstract interface class StreamCacheInvalidator {
+  /// Убирает все сохранённые ссылки на [videoId].
+  void forget(String videoId);
+}
+
 /// Ошибка получения потока с понятным текстом.
 class StreamResolutionException implements Exception {
   StreamResolutionException(this.message, {this.unavailable = false});
@@ -366,7 +372,7 @@ const int _kMaxProbesPerSource = 4;
 /// ни PO-токена. Запасной путь — `youtube_explode_dart` со своим клиентом
 /// по умолчанию: он работает всегда, но YouTube всё чаще требует для него
 /// PO-токен.
-class YoutubeStreamResolver implements StreamResolver {
+class YoutubeStreamResolver implements StreamResolver, StreamCacheInvalidator {
   YoutubeStreamResolver({
     required this.innerTube,
     required this.locale,
@@ -600,6 +606,23 @@ class YoutubeStreamResolver implements StreamResolver {
 
   @override
   bool get isAvailable => true;
+
+  /// Убирает из кэша все ссылки на [videoId].
+  ///
+  /// Ключ включает качество, контейнер и профиль клиента, поэтому забываем по
+  /// префиксу: иначе повтор открытия взял бы тот же адрес, который только что
+  /// отказал, и повторы были бы бессмысленными.
+  @override
+  void forget(String videoId) {
+    final String prefix = '$videoId:';
+    _cache.removeWhere(
+      (String key, ResolvedStream _) => key.startsWith(prefix),
+    );
+    // Веб-сессия кэширует отдельно: у неё своё правило забывания, если оно
+    // появится; без него последний рубеж просто останется как был.
+    final Object? web = _webSession;
+    if (web is StreamCacheInvalidator) web.forget(videoId);
+  }
 
   /// Проверяет ссылки по очереди и возвращает первую, которую сервер отдаёт.
   ///

@@ -54,6 +54,23 @@ const int kSleepTimerAfterTrack = -1;
 /// округление на тике. Меньший откат не считается возвратом «к началу».
 const Duration _kSponsorRewindWindow = Duration(seconds: 1);
 
+/// Сколько всего раз открываем поток, прежде чем показать ошибку.
+///
+/// googlevideo отвечает на одну и ту же ссылку то `206`, то `503` с пустым
+/// телом: это сбой конкретного запроса, а не недоступность трека. Трёх попыток
+/// достаточно, чтобы пережить такой отказ, и мало, чтобы бесконечно долбить
+/// сервер.
+const int _kMaxLoadAttempts = 3;
+
+/// Паузы перед повторами открытия: первая короткая, вторая длиннее.
+///
+/// Ссылку к следующей попытке успевают выдать заново, а короткая пауза не
+/// даёт серверу увидеть шквал запросов подряд.
+const List<Duration> _kLoadRetryDelays = <Duration>[
+  Duration(milliseconds: 400),
+  Duration(milliseconds: 900),
+];
+
 /// Полное состояние плеера, которое видит интерфейс.
 @immutable
 class PlayerUiState {
@@ -281,6 +298,22 @@ class PlayerController extends Notifier<PlayerUiState> {
   /// номеру понимает, что её результат уже не нужен.
   int _loadGeneration = 0;
 
+  /// Сколько повторов открытия уже сделано для текущей загрузки.
+  ///
+  /// Считаем именно повторы, а не попытки: ноль — играет первая. Сбрасывается
+  /// при обычной загрузке и не сбрасывается при повторе, иначе счётчик не
+  /// ограничивал бы серию.
+  int _openAttempts = 0;
+
+  /// Поток открывался с автозапуском — повтор должен вести себя так же.
+  bool _loadAutoplay = true;
+
+  /// Повтор уже ждёт своей паузы.
+  ///
+  /// Пока это так, новые сообщения об ошибке того же открытия (mpv умеет
+  /// присылать их несколько) не должны запускать вторую серию повторов.
+  bool _retryScheduled = false;
+
   /// Отложенная запись громкости: ползунок двигают чаще, чем нужно писать диск.
   double? _pendingVolume;
   Timer? _volumeSaveTimer;
@@ -305,7 +338,9 @@ class PlayerController extends Notifier<PlayerUiState> {
       }
       state = state.copyWith(playback: playback);
       if (playback.status == PlaybackStatus.error && playback.error != null) {
-        state = state.copyWith(error: playback.error);
+        // Ошибку открытия сначала пробуем пережить повтором: тот же адрес
+        // через секунду отвечает, поэтому молча ронять трек нельзя.
+        _onPlaybackError(playback.error!);
       }
 
       // Пропуск вставок — здесь же, на тиках движка: это единственный момент,
@@ -325,7 +360,11 @@ class PlayerController extends Notifier<PlayerUiState> {
       );
 
       _scrobblePlayback(playback, tick);
-      if (tick == ListeningTick.started) _listenRecorded = false;
+      // Повтор открытия начинается с нуля, но это то же проигрывание: уже
+      // зачтённое прослушивание не должно засчитаться второй раз.
+      if (tick == ListeningTick.started && !_retryScheduled) {
+        _listenRecorded = false;
+      }
       _countListening(playback);
 
       // На ошибке и во время перемотки вперёд не идём: «конец трека» здесь
@@ -1128,9 +1167,15 @@ class PlayerController extends Notifier<PlayerUiState> {
 
   /// Загружает текущий трек.
   ///
+  /// [retry] — это повтор после сбоя транспорта: счётчик повторов не
+  /// сбрасывается, ссылка уже забыта вызывающей стороной.
+  ///
   /// Возвращает номер поколения этой загрузки: по нему перемотка, начатая
   /// после `await`, понимает, что трек за это время не сменился.
-  Future<int> _loadCurrent({bool autoplay = true}) async {
+  Future<int> _loadCurrent({bool autoplay = true, bool retry = false}) async {
+    // Обычная загрузка (не повтор) начинает новый счёт попыток.
+    if (!retry) _openAttempts = 0;
+    _loadAutoplay = autoplay;
     // Любая настоящая загрузка снимает «восстановленный» режим: дальше
     // позицию ведёт движок, а не снимок.
     _restorePending = false;
@@ -1228,6 +1273,14 @@ class PlayerController extends Notifier<PlayerUiState> {
       if (autoplay) unawaited(_preloadNext());
       return generation;
     } on PlaybackFailureException catch (error) {
+      if (await _retryLoad(
+        track,
+        generation: generation,
+        autoplay: autoplay,
+        failure: error,
+      )) {
+        return _loadGeneration;
+      }
       // Причина известна точно — искать в тексте ничего не нужно.
       state = state.copyWith(
         resolving: false,
@@ -1238,6 +1291,14 @@ class PlayerController extends Notifier<PlayerUiState> {
             : state.unavailableIds,
       );
     } on StreamResolutionException catch (error) {
+      if (await _retryLoad(
+        track,
+        generation: generation,
+        autoplay: autoplay,
+        failure: error,
+      )) {
+        return _loadGeneration;
+      }
       // Резолвер отличает «недоступно» (удалено, скрыто, регион, отказ
       // медиасервера) от сетевого сбоя. Только первый случай даёт смысл искать
       // замену — во втором достаточно повторить попытку.
@@ -1258,6 +1319,14 @@ class PlayerController extends Notifier<PlayerUiState> {
         error: error.message,
       );
     } on Object catch (error) {
+      if (await _retryLoad(
+        track,
+        generation: generation,
+        autoplay: autoplay,
+        failure: error,
+      )) {
+        return _loadGeneration;
+      }
       // `on Object`, а не `on Exception`: ошибка (например, `ArgumentError`)
       // тоже не должна оставлять интерфейс со спиннером навсегда.
       state = state.copyWith(
@@ -1269,7 +1338,8 @@ class PlayerController extends Notifier<PlayerUiState> {
       // Любой выход из загрузки гасит признаки ожидания: даже если вылетело
       // то, что мы не предусмотрели, «крутилка» не должна остаться навсегда.
       if (state.current?.id == track.id &&
-          (state.resolving || state.downloading)) {
+          (state.resolving || state.downloading) &&
+          !_retryScheduled) {
         state = state.copyWith(resolving: false, downloading: false);
       }
       // Движок обнулил позицию при остановке прошлого трека — снимок хранит
@@ -1277,6 +1347,198 @@ class PlayerController extends Notifier<PlayerUiState> {
       _persistSnapshot();
     }
     return generation;
+  }
+
+  /// Обрабатывает ошибку воспроизведения от движка.
+  ///
+  /// mpv сообщает о сетевом отказе уже после открытия, поэтому повтором
+  /// управляем здесь, а не только в исключениях загрузки.
+  void _onPlaybackError(String message) {
+    final Track? track = state.current;
+    final bool alreadyListened = track != null &&
+        _listen.trackId == track.id &&
+        _listen.listened > Duration.zero;
+    final bool retryable = track != null &&
+        !isLocalTrackId(track.id) &&
+        !alreadyListened &&
+        _looksLikeTransportFailure(message);
+
+    if (!retryable) {
+      // Явный отказ (404, 403) — это не транспорт: повтор его не исправит,
+      // а пометка «Недоступен» подскажет искать замену.
+      final bool refused = track != null &&
+          !isLocalTrackId(track.id) &&
+          _isExplicitRefusal(message);
+      state = state.copyWith(
+        error: message,
+        unavailableIds: refused
+            ? <String>{...state.unavailableIds, track.id}
+            : state.unavailableIds,
+      );
+      return;
+    }
+
+    if (_retryScheduled) return;
+    if (_openAttempts >= _kMaxLoadAttempts - 1) {
+      _failAfterRetries(track, message);
+      return;
+    }
+
+    final int generation = _loadGeneration;
+    final bool autoplay = _loadAutoplay;
+    unawaited(
+      _retryLoad(
+        track,
+        generation: generation,
+        autoplay: autoplay,
+        failure: message,
+      ).then((bool retried) {
+        if (!retried && state.current?.id == track.id) {
+          _failAfterRetries(track, message);
+        }
+      }),
+    );
+  }
+
+  /// Пробует открыть трек ещё раз со свежей ссылкой.
+  ///
+  /// Возвращает `true`, если ошибку показывать не нужно: повтор запущен или
+  /// уже ждёт своей паузы. `false` — повтор невозможен, ошибка настоящая.
+  Future<bool> _retryLoad(
+    Track track, {
+    required int generation,
+    required bool autoplay,
+    required Object failure,
+  }) async {
+    if (isLocalTrackId(track.id)) return false;
+    if (!_looksLikeTransportFailureOf(failure)) return false;
+    if (_openAttempts >= _kMaxLoadAttempts - 1) return false;
+    if (_retryScheduled) return true;
+
+    final int attempt = ++_openAttempts;
+    _retryScheduled = true;
+    // Кэш держит именно тот адрес, который отказал. Забываем его, чтобы
+    // следующий запрос получил свежую ссылку — возможно, с другого узла.
+    // Заодно это снимает ссылку, прогретую предзагрузкой.
+    final Object resolver = ref.read(streamResolverProvider);
+    if (resolver is StreamCacheInvalidator) resolver.forget(track.id);
+    state = state.copyWith(
+      resolving: true,
+      downloading: false,
+      error: 'Сервер не отдал поток, повторяю… '
+          '(попытка ${attempt + 1} из $_kMaxLoadAttempts)',
+    );
+
+    try {
+      await Future<void>.delayed(_kLoadRetryDelays[attempt - 1]);
+    } finally {
+      _retryScheduled = false;
+    }
+    if (!ref.mounted) return true;
+
+    // Пока ждали, трек могли сменить: чужой повтор не должен заиграть.
+    if (generation != _loadGeneration || state.current?.id != track.id) {
+      return true;
+    }
+    await _loadCurrent(autoplay: autoplay, retry: true);
+    return true;
+  }
+
+  /// Показывает ошибку после исчерпанных повторов.
+  void _failAfterRetries(Track track, String message) {
+    final bool refused = _isExplicitRefusal(message);
+    state = state.copyWith(
+      resolving: false,
+      downloading: false,
+      error: message,
+      unavailableIds: refused
+          ? <String>{...state.unavailableIds, track.id}
+          : state.unavailableIds,
+    );
+  }
+
+  /// Сбой транспорта, а не приговор треку: стоит повторить.
+  bool _looksLikeTransportFailureOf(Object failure) {
+    if (failure is PlaybackFailureException) {
+      // Локальный файл и «недоступно» сюда не входят вовсе: их повтор не
+      // исправит, а «офлайн» — ровно тот случай, когда поможет.
+      return failure.reason == PlaybackFailure.offline;
+    }
+    if (failure is StreamDownloadException) return false;
+    if (failure is StreamResolutionException) {
+      final PlaybackFailure reason = failureOfResolution(failure);
+      return reason == PlaybackFailure.offline ||
+          reason == PlaybackFailure.other;
+    }
+    if (failure is SocketException ||
+        failure is TimeoutException ||
+        failure is HandshakeException ||
+        failure is HttpException) {
+      return true;
+    }
+    return _looksLikeTransportFailure(failure.toString());
+  }
+
+  /// Текст ошибки похож на отказ сервера или обрыв, а не на «трека нет».
+  bool _looksLikeTransportFailure(String text) {
+    final String lower = text.toLowerCase();
+
+    // Явная недоступность, вход и битый файл — не транспорт. Проверяем
+    // раньше: в тексте отказа тоже встречаются слова «не удалось».
+    if (lower.contains('недоступ') ||
+        lower.contains('unavailable') ||
+        lower.contains('не найден') ||
+        lower.contains('not found') ||
+        lower.contains('http 404') ||
+        lower.contains('status 404') ||
+        lower.contains('требует вход') ||
+        lower.contains('войдите') ||
+        lower.contains('login_required') ||
+        (lower.contains('файл') &&
+            (lower.contains('поврежд') || lower.contains('битый')))) {
+      return false;
+    }
+
+    // Код 5xx в тексте mpv бывает в разной обёртке («HTTP 503», «error 502»).
+    if (RegExp(r'\b5\d\d\b').hasMatch(lower)) return true;
+
+    const List<String> signs = <String>[
+      'failed to open',
+      'failed to load',
+      '5xx',
+      'server error',
+      'service unavailable',
+      'timed out',
+      'timeout',
+      'connection reset',
+      'connection refused',
+      'connection closed',
+      'connection error',
+      'network is unreachable',
+      'network error',
+      'socket',
+      'handshake',
+      'unexpected eof',
+      'не удалось воспроизвести',
+      'не удалось открыть',
+      'отклонил ссылку',
+      'обрыв',
+      'таймаут',
+    ];
+    return signs.any(lower.contains);
+  }
+
+  /// Сервер ответил отказом, а не просто пропал.
+  bool _isExplicitRefusal(String text) {
+    final String lower = text.toLowerCase();
+    return lower.contains('http 403') ||
+        lower.contains('status 403') ||
+        lower.contains('forbidden') ||
+        lower.contains('отклонил ссылку') ||
+        lower.contains('http 404') ||
+        lower.contains('status 404') ||
+        lower.contains('не найден') ||
+        lower.contains('недоступ');
   }
 
   /// Подпись качества: контейнер и битрейт потока.
