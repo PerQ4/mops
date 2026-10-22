@@ -375,6 +375,54 @@ class SettingsScreen extends ConsumerWidget {
                   onTap: () =>
                       _pickLyricsTextScale(context, controller, settings),
                 ),
+                // Дальше — тонкая настройка того, как выглядит поющаяся
+                // строка. Всё это меняет только отрисовку: габарит строки в
+                // раскладке остаётся прежним, поэтому список не «скачет».
+                SettingsRow(
+                  icon: Icons.format_size,
+                  title: 'Масштаб активной строки',
+                  subtitle: _activeLineScaleLabel(settings),
+                  subtitleMaxLines: 2,
+                  onTap: () =>
+                      _pickLyricsActiveLineScale(context, controller, settings),
+                ),
+                SettingsRow(
+                  icon: Icons.opacity,
+                  title: 'Прозрачность неактивных строк',
+                  subtitle: settings.lyricsInactiveOpacity >= 1
+                      ? '100% — как в выбранном виде'
+                      : '${(settings.lyricsInactiveOpacity * 100).round()}%'
+                          ' · строки вокруг поющейся гаснут сильнее',
+                  subtitleMaxLines: 2,
+                  onTap: () =>
+                      _pickLyricsInactiveOpacity(context, controller, settings),
+                ),
+                SettingsRow(
+                  icon: Icons.format_align_center,
+                  title: 'Выравнивание текста',
+                  subtitle: settings.lyricsTextAlign.label,
+                  onTap: () =>
+                      _pickLyricsTextAlign(context, controller, settings),
+                ),
+                SettingsRow(
+                  icon: Icons.horizontal_distribute,
+                  title: 'Ширина колонки текста',
+                  subtitle:
+                      '${settings.lyricsColumnWidth.label}'
+                      ' · ${settings.lyricsColumnWidth.description}',
+                  subtitleMaxLines: 2,
+                  onTap: () =>
+                      _pickLyricsColumnWidth(context, controller, settings),
+                ),
+                SettingsSwitchRow(
+                  icon: Icons.swap_vert,
+                  title: 'Автопрокрутка',
+                  subtitle: settings.lyricsAutoScroll
+                      ? 'Список сам следует за поющейся строкой'
+                      : 'Строки листаются только вручную',
+                  value: settings.lyricsAutoScroll,
+                  onChanged: controller.setLyricsAutoScroll,
+                ),
                 // Пять отдельных переключателей как группа `romanization`
                 // в ArchiveTune: язык определяется по тексту сам, поэтому
                 // ручного выбора языка больше нет. Подряд они занимали почти
@@ -1780,6 +1828,101 @@ class SettingsScreen extends ConsumerWidget {
       label: (double v) => '${(v * 100).round()}%',
     );
     if (result != null) await controller.setLyricsTextScale(result);
+  }
+
+  /// Подпись к крупности активной строки: процент и откуда он взялся.
+  ///
+  /// Пока значение не трогали, оно принадлежит виду — так смена вида сразу
+  /// даёт его привычный вид, а не число, подобранное для другого вида.
+  String _activeLineScaleLabel(AppSettings settings) {
+    final int percent = (settings.effectiveLyricsActiveLineScale * 100).round();
+    return settings.hasCustomLyricsActiveLineScale
+        ? '$percent% · задано вручную'
+        : '$percent% · как в виде «${settings.lyricsMode.label}»';
+  }
+
+  Future<void> _pickLyricsActiveLineScale(
+    BuildContext context,
+    SettingsController controller,
+    AppSettings settings,
+  ) async {
+    // Ноль — «как в выбранном виде»: так настройку можно вернуть к виду, не
+    // подбирая число заново после смены режима.
+    const List<double> values = <double>[0, 1.0, 1.1, 1.2, 1.3, 1.4, 1.5, 1.6];
+    final int modePercent =
+        (settings.modeLyricsActiveLineScale * 100).round();
+    final double? result = await _showChoice<double>(
+      context,
+      title: 'Масштаб активной строки',
+      current: settings.lyricsActiveLineScale,
+      values: values,
+      label: (double v) => v == 0
+          ? 'Как в выбранном виде ($modePercent%)'
+          : (v == 1.0
+              ? '100% — как обычная строка'
+              : '${(v * 100).round()}%'),
+      description: (double v) => v == 0
+          ? 'Крупность задаёт сам вид: 100% в классическом, 130% в V2'
+          : (v == 1.0
+              ? 'Активная строка не крупнее остальных — так текст не «дышит»'
+              : 'Крупнее остальных; габарит списка не меняется'),
+    );
+    if (result != null) await controller.setLyricsActiveLineScale(result);
+  }
+
+  Future<void> _pickLyricsInactiveOpacity(
+    BuildContext context,
+    SettingsController controller,
+    AppSettings settings,
+  ) async {
+    // Доли от задуманной видом прозрачности, а не абсолютная альфа: у каждого
+    // вида своя лестница затухания, и 100% должно возвращать ровно её.
+    const List<double> values = <double>[0.2, 0.3, 0.4, 0.5, 0.6, 0.7, 0.8, 0.9, 1.0];
+    final double? result = await _showChoice<double>(
+      context,
+      title: 'Прозрачность неактивных строк',
+      current: settings.lyricsInactiveOpacity,
+      values: values,
+      label: (double v) => v == 1.0
+          ? '100% — как в выбранном виде'
+          : '${(v * 100).round()}%',
+      description: (double v) => v == 1.0
+          ? 'Соседние строки видны ровно так, как задумано видом'
+          : 'Чем меньше, тем сильнее гаснут строки вокруг поющейся',
+    );
+    if (result != null) await controller.setLyricsInactiveOpacity(result);
+  }
+
+  Future<void> _pickLyricsTextAlign(
+    BuildContext context,
+    SettingsController controller,
+    AppSettings settings,
+  ) async {
+    final LyricsTextAlign? result = await _showChoice<LyricsTextAlign>(
+      context,
+      title: 'Выравнивание текста',
+      current: settings.lyricsTextAlign,
+      values: LyricsTextAlign.values,
+      label: (LyricsTextAlign v) => v.label,
+      description: (LyricsTextAlign v) => v.description,
+    );
+    if (result != null) await controller.setLyricsTextAlign(result);
+  }
+
+  Future<void> _pickLyricsColumnWidth(
+    BuildContext context,
+    SettingsController controller,
+    AppSettings settings,
+  ) async {
+    final LyricsColumnWidth? result = await _showChoice<LyricsColumnWidth>(
+      context,
+      title: 'Ширина колонки текста',
+      current: settings.lyricsColumnWidth,
+      values: LyricsColumnWidth.values,
+      label: (LyricsColumnWidth v) => v.label,
+      description: (LyricsColumnWidth v) => v.description,
+    );
+    if (result != null) await controller.setLyricsColumnWidth(result);
   }
 
   Future<void> _pickSwipeSensitivity(

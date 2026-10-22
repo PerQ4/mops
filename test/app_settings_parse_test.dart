@@ -34,6 +34,11 @@ AppSettings _allNonDefault() => const AppSettings().copyWith(
   lyricsLineBlur: false,
   lyricsMode: LyricsMode.enhanced,
   lyricsAnimationStyle: LyricsAnimationStyle.spring,
+  lyricsActiveLineScale: 1.4,
+  lyricsInactiveOpacity: 0.6,
+  lyricsTextAlign: LyricsTextAlign.center,
+  lyricsColumnWidth: LyricsColumnWidth.narrow,
+  lyricsAutoScroll: false,
   lyricsProviderOrder: <LyricsSource>[LyricsSource.kugou, LyricsSource.unison],
   lyricsDisabledProviders: <LyricsSource>[LyricsSource.music],
   paxsenixAppleMusic: false,
@@ -134,6 +139,11 @@ const List<String> _expectedKeyOrder = <String>[
   'lyricsLineBlur',
   'lyricsMode',
   'lyricsAnimationStyle',
+  'lyricsActiveLineScale',
+  'lyricsInactiveOpacity',
+  'lyricsTextAlign',
+  'lyricsColumnWidth',
+  'lyricsAutoScroll',
   'lyricsProviderOrder',
   'lyricsDisabledProviders',
   'paxsenixAppleMusic',
@@ -316,11 +326,11 @@ void main() {
   });
 
   group('toJson: состав и порядок', () {
-    test('83 ключа в прежнем порядке', () {
+    test('88 ключей в прежнем порядке', () {
       final Map<String, dynamic> json = const AppSettings().toJson();
 
       expect(json.length, _expectedKeyOrder.length);
-      expect(json.length, 83);
+      expect(json.length, 88);
       expect(json.keys.toList(), _expectedKeyOrder);
     });
 
@@ -333,4 +343,4 @@ void main() {
 /// JSON, который приложение писало до правки разбора (снят с кода до неё).
 /// Это эталон байт в байт: состав, порядок и формат значений не должны меняться.
 const String kDefaultSettingsJson =
-    r'{"themeMode":"system","colorSource":"seed","seedColorIndex":0,"useMaterialExpressive":true,"pureBlack":false,"paletteStyle":"tonal","fontPreference":"poppins","customFontPath":"","disableAnimations":false,"forceHighRefreshRate":false,"playerPanelWidth":280.0,"playerPanelMode":"queue","sidebarWidth":280.0,"lyricsSource":"auto","audioQuality":"high","lowDataMode":false,"streamClient":"auto","showLyricsInPlayer":true,"lyricsTextScale":1.0,"lyricsLineSpacing":1.35,"lyricsLineBlur":true,"lyricsMode":"classic","lyricsAnimationStyle":"fade","lyricsProviderOrder":"youlyPlus,betterLyrics,musixmatch,kugou,lrclib,unison","lyricsDisabledProviders":"","paxsenixAppleMusic":true,"paxsenixSpotify":true,"paxsenixMusixmatch":true,"romanizeJapanese":true,"romanizeKorean":true,"romanizeChinese":true,"romanizeHindi":true,"romanizeOther":true,"autoPlayNext":true,"restoreQueue":true,"preloadNextTrack":true,"localMediaFolder":"","searchSource":"online","hideExplicit":false,"hideVideo":false,"topSize":"fifty","miniSwipeSensitivity":"normal","trackSwipeAction":"off","streamingRegion":"RU","streamingLanguage":"ru","oauthClientId":"","oauthClientSecret":"","musixmatchApiKey":"","discordRichPresence":false,"discordApplicationId":"","lastVolume":1.0,"lastSpeed":1.0,"uiScale":0.0,"compactRows":false,"bypass":{"frontingEnabled":true,"frontHost":"www.google.com","fragmentation":"off","fragmentDelayMs":1,"proxyKind":"none","proxyHost":"","proxyPort":1080,"proxyUsername":"","proxyPassword":""},"autoDetectProxy":true,"sidebarCollapsed":false,"sidebarNavigation":false,"playerPanelEnabled":true,"progressBarStyle":"standard","playerBackgroundStyle":"gradient","liquidSpeed":1.0,"liquidScale":1.0,"liquidSaturation":1.0,"liquidColorSource":"artwork","disableBlur":false,"blurRadius":48.0,"visualizerEnabled":false,"visualizerStyle":"halo","liveCoverEnabled":false,"listeningStatsEnabled":true,"equalizerEnabled":false,"equalizerBands":"0.0,0.0,0.0,0.0,0.0,0.0,0.0,0.0,0.0,0.0","equalizerPresetId":"flat","skipSilence":false,"audioNormalization":false,"pauseOnDeviceMute":true,"volumeSliderStyle":"standard","miniPlayerBackgroundStyle":"theme","titleBarCentered":true,"titleBarMatchesBackground":false,"sponsorBlockEnabled":false,"sponsorBlockCategories":"sponsor,selfpromo,intro,outro,music_offtopic"}';
+    r'{"themeMode":"system","colorSource":"seed","seedColorIndex":0,"useMaterialExpressive":true,"pureBlack":false,"paletteStyle":"tonal","fontPreference":"poppins","customFontPath":"","disableAnimations":false,"forceHighRefreshRate":false,"playerPanelWidth":280.0,"playerPanelMode":"queue","sidebarWidth":280.0,"lyricsSource":"auto","audioQuality":"high","lowDataMode":false,"streamClient":"auto","showLyricsInPlayer":true,"lyricsTextScale":1.0,"lyricsLineSpacing":1.35,"lyricsLineBlur":true,"lyricsMode":"classic","lyricsAnimationStyle":"fade","lyricsActiveLineScale":0.0,"lyricsInactiveOpacity":1.0,"lyricsTextAlign":"left","lyricsColumnWidth":"normal","lyricsAutoScroll":true,"lyricsProviderOrder":"youlyPlus,betterLyrics,musixmatch,kugou,lrclib,unison","lyricsDisabledProviders":"","paxsenixAppleMusic":true,"paxsenixSpotify":true,"paxsenixMusixmatch":true,"romanizeJapanese":true,"romanizeKorean":true,"romanizeChinese":true,"romanizeHindi":true,"romanizeOther":true,"autoPlayNext":true,"restoreQueue":true,"preloadNextTrack":true,"localMediaFolder":"","searchSource":"online","hideExplicit":false,"hideVideo":false,"topSize":"fifty","miniSwipeSensitivity":"normal","trackSwipeAction":"off","streamingRegion":"RU","streamingLanguage":"ru","oauthClientId":"","oauthClientSecret":"","musixmatchApiKey":"","discordRichPresence":false,"discordApplicationId":"","lastVolume":1.0,"lastSpeed":1.0,"uiScale":0.0,"compactRows":false,"bypass":{"frontingEnabled":true,"frontHost":"www.google.com","fragmentation":"off","fragmentDelayMs":1,"proxyKind":"none","proxyHost":"","proxyPort":1080,"proxyUsername":"","proxyPassword":""},"autoDetectProxy":true,"sidebarCollapsed":false,"sidebarNavigation":false,"playerPanelEnabled":true,"progressBarStyle":"standard","playerBackgroundStyle":"gradient","liquidSpeed":1.0,"liquidScale":1.0,"liquidSaturation":1.0,"liquidColorSource":"artwork","disableBlur":false,"blurRadius":48.0,"visualizerEnabled":false,"visualizerStyle":"halo","liveCoverEnabled":false,"listeningStatsEnabled":true,"equalizerEnabled":false,"equalizerBands":"0.0,0.0,0.0,0.0,0.0,0.0,0.0,0.0,0.0,0.0","equalizerPresetId":"flat","skipSilence":false,"audioNormalization":false,"pauseOnDeviceMute":true,"volumeSliderStyle":"standard","miniPlayerBackgroundStyle":"theme","titleBarCentered":true,"titleBarMatchesBackground":false,"sponsorBlockEnabled":false,"sponsorBlockCategories":"sponsor,selfpromo,intro,outro,music_offtopic"}';

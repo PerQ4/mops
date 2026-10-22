@@ -80,6 +80,56 @@ enum LyricsAnimationStyle {
       );
 }
 
+/// Выравнивание строк текста песни.
+///
+/// По левому краю — как было всегда: строки растут от одной вертикали, и глаз
+/// не перескакивает. По центру — как в караоке на телефоне: активная строка
+/// стоит посередине, соседние под ней.
+enum LyricsTextAlign {
+  left('По левому краю', 'Строки начинаются от одной вертикали — как было'),
+  center('По центру', 'Строки стоят по центру колонки, как в караоке');
+
+  const LyricsTextAlign(this.label, this.description);
+
+  final String label;
+  final String description;
+
+  static LyricsTextAlign fromName(String? name) =>
+      LyricsTextAlign.values.firstWhere(
+        (LyricsTextAlign v) => v.name == name,
+        orElse: () => LyricsTextAlign.left,
+      );
+}
+
+/// Ширина колонки текста песни.
+///
+/// На десктопе окно широкое, и текст во всю ширину читается как полоса: строка
+/// длиннее ~80 знаков теряет начало, пока глаз доходит до конца. Поэтому по
+/// умолчанию колонка ограничена, а «во всю ширину» остаётся выбором.
+enum LyricsColumnWidth {
+  narrow('Узко', 'Около 400 точек — короткая строка, удобно читать'),
+  normal('Обычно', 'Около 560 точек — как было'),
+  full('Во всю ширину', 'Текст занимает всё окно');
+
+  const LyricsColumnWidth(this.label, this.description);
+
+  final String label;
+  final String description;
+
+  /// Предельная ширина колонки; `null` — без ограничения.
+  double? get maxWidth => switch (this) {
+    LyricsColumnWidth.narrow => 400,
+    LyricsColumnWidth.normal => 560,
+    LyricsColumnWidth.full => null,
+  };
+
+  static LyricsColumnWidth fromName(String? name) =>
+      LyricsColumnWidth.values.firstWhere(
+        (LyricsColumnWidth v) => v.name == name,
+        orElse: () => LyricsColumnWidth.normal,
+      );
+}
+
 /// Какие каталоги Paxsenix спрашивать.
 ///
 /// Как `paxsenixProviders` в ArchiveTune: ключ у Paxsenix один, а каталоги за
@@ -165,6 +215,14 @@ class LyricsSettings {
     this.lyricsLineBlur = true,
     this.lyricsMode = LyricsMode.classic,
     this.lyricsAnimationStyle = LyricsAnimationStyle.fade,
+    // Ноль — «как в выбранном виде» (см. [effectiveActiveLineScale]): так
+    // смена вида сразу даёт его привычный вид, а не значение, подобранное для
+    // другого вида.
+    this.lyricsActiveLineScale = 0.0,
+    this.lyricsInactiveOpacity = 1.0,
+    this.lyricsTextAlign = LyricsTextAlign.left,
+    this.lyricsColumnWidth = LyricsColumnWidth.normal,
+    this.lyricsAutoScroll = true,
     this.lyricsProviderOrder = kDefaultLyricsOrder,
     // Источники, выключенные пользователем (как `providerPreferenceKeys`
     // в ArchiveTune). Храним именно выключенные: новый источник по умолчанию
@@ -203,6 +261,44 @@ class LyricsSettings {
 
   /// Стиль появления строки и подсветки слов (задача 3.2).
   final LyricsAnimationStyle lyricsAnimationStyle;
+
+  /// Во сколько раз активная строка крупнее базовой.
+  ///
+  /// Раскладку это не меняет: строка рисуется базовым кеглем, а увеличение
+  /// даёт `Transform.scale`, поэтому подсветка не двигает список. Ноль —
+  /// «как в выбранном виде» (см. [effectiveActiveLineScale]), иначе 1.0–1.6.
+  final double lyricsActiveLineScale;
+
+  /// Множитель прозрачности неактивных строк (1 — как в выбранном виде).
+  final double lyricsInactiveOpacity;
+
+  /// Выравнивание строк текста.
+  final LyricsTextAlign lyricsTextAlign;
+
+  /// Ширина колонки текста.
+  final LyricsColumnWidth lyricsColumnWidth;
+
+  /// Следует ли список за поющейся строкой сам.
+  final bool lyricsAutoScroll;
+
+  /// Крупность активной строки, которая задана самим видом.
+  static const double classicActiveScale = 1.0;
+  static const double v2ActiveScale = 1.3;
+  static const double enhancedActiveScale = 1.14;
+
+  /// Крупность активной строки с учётом настройки.
+  double get effectiveActiveLineScale =>
+      hasCustomActiveLineScale ? lyricsActiveLineScale : modeActiveLineScale;
+
+  /// Крупность активной строки, которую задаёт сам вид.
+  double get modeActiveLineScale => switch (lyricsMode) {
+    LyricsMode.classic => classicActiveScale,
+    LyricsMode.v2 => v2ActiveScale,
+    LyricsMode.enhanced => enhancedActiveScale,
+  };
+
+  /// Задана ли крупность активной строки вручную, а не видом.
+  bool get hasCustomActiveLineScale => lyricsActiveLineScale > 0;
 
   /// Порядок источников текста в режиме «Авто» — как `LyricsProviderOrderKey`
   /// в ArchiveTune. Первый источник в списке — приоритетный.
@@ -265,6 +361,11 @@ class LyricsSettings {
     bool? lyricsLineBlur,
     LyricsMode? lyricsMode,
     LyricsAnimationStyle? lyricsAnimationStyle,
+    double? lyricsActiveLineScale,
+    double? lyricsInactiveOpacity,
+    LyricsTextAlign? lyricsTextAlign,
+    LyricsColumnWidth? lyricsColumnWidth,
+    bool? lyricsAutoScroll,
     List<LyricsSource>? lyricsProviderOrder,
     List<LyricsSource>? lyricsDisabledProviders,
     bool? paxsenixAppleMusic,
@@ -284,6 +385,12 @@ class LyricsSettings {
       lyricsLineBlur: lyricsLineBlur ?? this.lyricsLineBlur,
       lyricsMode: lyricsMode ?? this.lyricsMode,
       lyricsAnimationStyle: lyricsAnimationStyle ?? this.lyricsAnimationStyle,
+      lyricsActiveLineScale:
+          lyricsActiveLineScale ?? this.lyricsActiveLineScale,
+      lyricsInactiveOpacity: lyricsInactiveOpacity ?? this.lyricsInactiveOpacity,
+      lyricsTextAlign: lyricsTextAlign ?? this.lyricsTextAlign,
+      lyricsColumnWidth: lyricsColumnWidth ?? this.lyricsColumnWidth,
+      lyricsAutoScroll: lyricsAutoScroll ?? this.lyricsAutoScroll,
       lyricsProviderOrder: lyricsProviderOrder ?? this.lyricsProviderOrder,
       lyricsDisabledProviders:
           lyricsDisabledProviders ?? this.lyricsDisabledProviders,
@@ -306,6 +413,11 @@ class LyricsSettings {
     'lyricsLineBlur': lyricsLineBlur,
     'lyricsMode': lyricsMode.name,
     'lyricsAnimationStyle': lyricsAnimationStyle.name,
+    'lyricsActiveLineScale': lyricsActiveLineScale,
+    'lyricsInactiveOpacity': lyricsInactiveOpacity,
+    'lyricsTextAlign': lyricsTextAlign.name,
+    'lyricsColumnWidth': lyricsColumnWidth.name,
+    'lyricsAutoScroll': lyricsAutoScroll,
     'lyricsProviderOrder': lyricsProviderOrder
         .map((LyricsSource s) => s.name)
         .join(','),
@@ -343,6 +455,19 @@ class LyricsSettings {
         LyricsAnimationStyle.values,
         LyricsAnimationStyle.fade,
       ),
+      lyricsActiveLineScale: readDouble(json['lyricsActiveLineScale'], 0.0),
+      lyricsInactiveOpacity: readDouble(json['lyricsInactiveOpacity'], 1.0),
+      lyricsTextAlign: readEnumByName(
+        json['lyricsTextAlign'],
+        LyricsTextAlign.values,
+        LyricsTextAlign.left,
+      ),
+      lyricsColumnWidth: readEnumByName(
+        json['lyricsColumnWidth'],
+        LyricsColumnWidth.values,
+        LyricsColumnWidth.normal,
+      ),
+      lyricsAutoScroll: readBool(json['lyricsAutoScroll'], true),
       lyricsProviderOrder: _parseLyricsOrder(
         readStringList(json['lyricsProviderOrder']),
       ),

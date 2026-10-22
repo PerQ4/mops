@@ -426,6 +426,26 @@ class SettingsController extends Notifier<AppSettings> {
   Future<void> setLyricsAnimationStyle(LyricsAnimationStyle style) =>
       update((AppSettings s) => s.copyWith(lyricsAnimationStyle: style));
 
+  /// Крупность активной строки. Ноль — «как в выбранном виде».
+  Future<void> setLyricsActiveLineScale(double value) =>
+      update((AppSettings s) => s.copyWith(lyricsActiveLineScale: value));
+
+  /// Прозрачность неактивных строк (1 — как в выбранном виде).
+  Future<void> setLyricsInactiveOpacity(double value) =>
+      update((AppSettings s) => s.copyWith(lyricsInactiveOpacity: value));
+
+  /// Выравнивание строк текста песни.
+  Future<void> setLyricsTextAlign(LyricsTextAlign align) =>
+      update((AppSettings s) => s.copyWith(lyricsTextAlign: align));
+
+  /// Ширина колонки текста песни.
+  Future<void> setLyricsColumnWidth(LyricsColumnWidth width) =>
+      update((AppSettings s) => s.copyWith(lyricsColumnWidth: width));
+
+  /// Следует ли список за поющейся строкой сам.
+  Future<void> setLyricsAutoScroll(bool value) =>
+      update((AppSettings s) => s.copyWith(lyricsAutoScroll: value));
+
   /// Порядок источников текста (первый — приоритетный).
   Future<void> setLyricsProviderOrder(List<LyricsSource> order) =>
       update((AppSettings s) => s.copyWith(lyricsProviderOrder: order));

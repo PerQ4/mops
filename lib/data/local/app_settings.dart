@@ -122,6 +122,14 @@ class AppSettings {
   bool get lyricsLineBlur => lyrics.lyricsLineBlur;
   LyricsMode get lyricsMode => lyrics.lyricsMode;
   LyricsAnimationStyle get lyricsAnimationStyle => lyrics.lyricsAnimationStyle;
+  double get lyricsActiveLineScale => lyrics.lyricsActiveLineScale;
+  double get effectiveLyricsActiveLineScale => lyrics.effectiveActiveLineScale;
+  double get modeLyricsActiveLineScale => lyrics.modeActiveLineScale;
+  bool get hasCustomLyricsActiveLineScale => lyrics.hasCustomActiveLineScale;
+  double get lyricsInactiveOpacity => lyrics.lyricsInactiveOpacity;
+  LyricsTextAlign get lyricsTextAlign => lyrics.lyricsTextAlign;
+  LyricsColumnWidth get lyricsColumnWidth => lyrics.lyricsColumnWidth;
+  bool get lyricsAutoScroll => lyrics.lyricsAutoScroll;
   List<LyricsSource> get lyricsProviderOrder => lyrics.lyricsProviderOrder;
   List<LyricsSource> get lyricsDisabledProviders =>
       lyrics.lyricsDisabledProviders;
@@ -221,6 +229,11 @@ class AppSettings {
     bool? lyricsLineBlur,
     LyricsMode? lyricsMode,
     LyricsAnimationStyle? lyricsAnimationStyle,
+    double? lyricsActiveLineScale,
+    double? lyricsInactiveOpacity,
+    LyricsTextAlign? lyricsTextAlign,
+    LyricsColumnWidth? lyricsColumnWidth,
+    bool? lyricsAutoScroll,
     List<LyricsSource>? lyricsProviderOrder,
     List<LyricsSource>? lyricsDisabledProviders,
     bool? paxsenixAppleMusic,
@@ -330,6 +343,11 @@ class AppSettings {
         lyricsLineBlur: lyricsLineBlur,
         lyricsMode: lyricsMode,
         lyricsAnimationStyle: lyricsAnimationStyle,
+        lyricsActiveLineScale: lyricsActiveLineScale,
+        lyricsInactiveOpacity: lyricsInactiveOpacity,
+        lyricsTextAlign: lyricsTextAlign,
+        lyricsColumnWidth: lyricsColumnWidth,
+        lyricsAutoScroll: lyricsAutoScroll,
         lyricsProviderOrder: lyricsProviderOrder,
         lyricsDisabledProviders: lyricsDisabledProviders,
         paxsenixAppleMusic: paxsenixAppleMusic,
@@ -409,6 +427,11 @@ class AppSettings {
     'lyricsLineBlur',
     'lyricsMode',
     'lyricsAnimationStyle',
+    'lyricsActiveLineScale',
+    'lyricsInactiveOpacity',
+    'lyricsTextAlign',
+    'lyricsColumnWidth',
+    'lyricsAutoScroll',
     'lyricsProviderOrder',
     'lyricsDisabledProviders',
     'paxsenixAppleMusic',
