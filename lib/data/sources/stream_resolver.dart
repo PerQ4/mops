@@ -5,8 +5,10 @@ import 'package:flutter/foundation.dart';
 import 'package:http/http.dart' as http;
 import 'package:youtube_explode_dart/youtube_explode_dart.dart';
 
+import '../../core/audio/audio_engine.dart';
 import '../../core/innertube/innertube_client.dart';
 import '../local/app_settings.dart';
+import 'web_session_resolver.dart';
 import 'youtube_clients.dart';
 
 /// HTTP-клиент YouTube с добавленной авторизацией.
@@ -63,6 +65,7 @@ class ResolvedStream {
     this.isLive = false,
     this.userAgent,
     this.mimeType,
+    this.httpHeaders,
     this.localPath,
   });
 
@@ -73,6 +76,12 @@ class ResolvedStream {
 
   /// Пользовательский агент, с которым запрашивался поток.
   final String? userAgent;
+
+  /// Заголовки, без которых сервер поток не отдаст.
+  ///
+  /// Заполнены только у ссылки из веб-сессии: там нужны `User-Agent` и
+  /// `Cookie` страницы. Обычные ссылки YouTube работают без заголовков.
+  final Map<String, String>? httpHeaders;
 
   /// Тип содержимого (`audio/webm`, `audio/mp4`) — нужен посреднику.
   final String? mimeType;
@@ -146,7 +155,11 @@ class StreamLinkChecker {
   /// проверка ходила бы мимо только что включённого прокси.
   HttpOverrides? _overrides;
 
-  Future<StreamLinkProbe> check(Uri url, {String? userAgent}) async {
+  Future<StreamLinkProbe> check(
+    Uri url, {
+    String? userAgent,
+    Map<String, String>? headers,
+  }) async {
     // Не HTTP — проверять нечего: отказа сервера тут быть не может.
     if (url.scheme != 'http' && url.scheme != 'https') {
       return const StreamLinkProbe(StreamLinkState.unchecked);
@@ -169,6 +182,13 @@ class StreamLinkChecker {
       if (agent != null && agent.isNotEmpty) {
         request.headers.set(HttpHeaders.userAgentHeader, agent);
       }
+      // Ссылка из веб-сессии проверяется теми же заголовками, с которыми её
+      // получит плеер: иначе проверка судила бы о другом запросе.
+      headers?.forEach((String name, String value) {
+        if (name.toLowerCase() == 'user-agent') return;
+        if (value.isEmpty) return;
+        request.headers.set(name, value);
+      });
 
       final HttpClientResponse response =
           await request.close().timeout(left());
@@ -248,6 +268,13 @@ class StreamLinkChecker {
 
 /// Контракт получения потока. Реализации можно менять независимо от UI.
 abstract class StreamResolver {
+  /// Можно ли пользоваться этим источником сейчас.
+  ///
+  /// У веб-сессии путь зависит от подготовленного окружения WebView2: если
+  /// его нет, поднимать браузер бессмысленно, и вызывающий пропускает источник
+  /// вовсе, а не ждёт ошибку.
+  bool get isAvailable => true;
+
   Future<ResolvedStream> resolve(
     String videoId, {
     required AudioQuality quality,
@@ -349,10 +376,14 @@ class YoutubeStreamResolver implements StreamResolver {
     YoutubeExplode? library,
     this.localFile,
     this.fallbackLinks,
-  }) : _library = library ??
+    StreamResolver? webSession,
+  })  : _library = library ??
             YoutubeExplode(
               httpClient: AuthenticatedYoutubeClient(authHeaders),
-            );
+            ),
+        // Последний рубеж — плеер веб-сессии приложения. Создаётся сразу, но
+        // WebView поднимает только явный отказ сервера (см. [resolve]).
+        _webSession = webSession ?? WebSessionResolver();
 
   /// Клиент InnerTube — им выполняется запрос `player`.
   final InnerTubeClient innerTube;
@@ -378,6 +409,12 @@ class YoutubeStreamResolver implements StreamResolver {
 
   final YoutubeExplode _library;
 
+  /// Запасной резолвер через веб-сессию (WebView2 с cookie пользователя).
+  ///
+  /// Приходит из конструктора, чтобы тесты могли подставить заглушку; по
+  /// умолчанию — [WebSessionResolver].
+  final StreamResolver? _webSession;
+
   /// Какой клиент YouTube использовать для получения ссылки.
   final StreamSource clientChoice;
 
@@ -402,7 +439,11 @@ class YoutubeStreamResolver implements StreamResolver {
     final String key = '$videoId:${quality.name}:${clientChoice.name}:'
         '${preferContainer ?? 'any'}';
     final ResolvedStream? cached = _cache[key];
-    if (cached != null && !cached.isExpired) return cached;
+    if (cached != null && !cached.isExpired) {
+      // Заголовки могли вытесниться из хранилища движка, а ссылка из кэша
+      // осталась: без них плеер сходит за потоком как гость.
+      return _rememberHeaders(cached);
+    }
 
     final List<String> failures = <String>[];
     // Сетевые сбои отличаем от отказов YouTube: во втором случае совет
@@ -427,7 +468,7 @@ class YoutubeStreamResolver implements StreamResolver {
           source: profile.label,
         );
         if (pick.checked) _cache[key] = pick.stream;
-        return pick.stream;
+        return _rememberHeaders(pick.stream);
       } on _StreamRefused catch (refusal) {
         refusedCode = refusal.statusCode;
         failures.add('${profile.label}: $refusal');
@@ -450,7 +491,7 @@ class YoutubeStreamResolver implements StreamResolver {
           source: 'библиотека',
         );
         if (pick.checked) _cache[key] = pick.stream;
-        return pick.stream;
+        return _rememberHeaders(pick.stream);
       }
     } on _StreamRefused catch (refusal) {
       refusedCode = refusal.statusCode;
@@ -460,7 +501,6 @@ class YoutubeStreamResolver implements StreamResolver {
       failures.add('библиотека: $error');
     }
 
-    debugPrint('Не удалось получить поток для $videoId: ${failures.join("; ")}');
     // YouTube на часть видео отвечает «войдите, чтобы подтвердить, что вы не
     // бот» — и тогда честнее сказать это прямо, чем отправлять человека
     // проверять соединение, которое в порядке.
@@ -476,6 +516,25 @@ class YoutubeStreamResolver implements StreamResolver {
     // тип наружу не выходит.
     final bool offline = networkFailure ||
         failures.any((String f) => _looksLikeNetworkText(f));
+
+    // Последний рубеж — веб-сессия приложения: она играет тот же трек в
+    // браузере, поэтому её ссылка срабатывает там, где сервер отказал всем
+    // клиентам. Запускаем только при явном отказе сервера: при обрыве сети
+    // браузер не поможет, а поднимать WebView на каждый трек недопустимо.
+    if (!offline && (refusedCode != null || unavailable)) {
+      final ResolvedStream? fromWeb = await _resolveViaWebSession(
+        videoId,
+        quality: quality,
+        preferContainer: preferContainer,
+        failures: failures,
+      );
+      if (fromWeb != null) {
+        _cache[key] = _rememberHeaders(fromWeb);
+        return fromWeb;
+      }
+    }
+
+    debugPrint('Не удалось получить поток для $videoId: ${failures.join("; ")}');
 
     throw StreamResolutionException(
       needsLogin
@@ -500,6 +559,48 @@ class YoutubeStreamResolver implements StreamResolver {
     );
   }
 
+  /// Пробует добыть ссылку через веб-сессию приложения.
+  ///
+  /// Возвращает `null`, если источник недоступен или не справился: тогда
+  /// ошибка остаётся прежней, ведь браузер не отменяет отказ сервера —
+  /// просто не смог его обойти.
+  Future<ResolvedStream?> _resolveViaWebSession(
+    String videoId, {
+    required AudioQuality quality,
+    String? preferContainer,
+    required List<String> failures,
+  }) async {
+    final StreamResolver? web = _webSession;
+    if (web == null || !web.isAvailable) return null;
+
+    try {
+      final ResolvedStream stream = await web.resolve(
+        videoId,
+        quality: quality,
+        preferContainer: preferContainer,
+      );
+      debugPrint('[Поток] веб-сессия дала ссылку для $videoId');
+      return stream;
+    } on Object catch (error) {
+      failures.add('веб-сессия: $error');
+      debugPrint('[Поток] веб-сессия не помогла для $videoId: $error');
+      return null;
+    }
+  }
+
+  /// Запоминает заголовки ссылки для движка и возвращает её же.
+  ///
+  /// Движок получает от контроллера только адрес (см. `StreamRequestHeaders`),
+  /// поэтому заголовки нужно положить в общее хранилище на каждом пути, где
+  /// ссылка может уйти в плеер, — в том числе при выдаче из кэша.
+  ResolvedStream _rememberHeaders(ResolvedStream stream) {
+    StreamRequestHeaders.remember(stream.url, stream.httpHeaders);
+    return stream;
+  }
+
+  @override
+  bool get isAvailable => true;
+
   /// Проверяет ссылки по очереди и возвращает первую, которую сервер отдаёт.
   ///
   /// Отказ — только явный HTTP-ответ (не 2xx) или пустое тело. Если проверка
@@ -519,8 +620,11 @@ class YoutubeStreamResolver implements StreamResolver {
 
     for (int i = 0; i < limit; i++) {
       final ResolvedStream link = links[i];
-      final StreamLinkProbe probe =
-          await _checker.check(link.url, userAgent: link.userAgent);
+      final StreamLinkProbe probe = await _checker.check(
+        link.url,
+        userAgent: link.userAgent,
+        headers: link.httpHeaders,
+      );
       switch (probe.state) {
         case StreamLinkState.ok:
           return _Verified(link, checked: true);
@@ -793,5 +897,6 @@ class YoutubeStreamResolver implements StreamResolver {
     _cache.clear();
     _checker.dispose();
     _library.close();
+    _webSession?.dispose();
   }
 }

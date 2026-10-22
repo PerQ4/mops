@@ -694,9 +694,18 @@ class MediaKitEngine implements AudioEngine {
   }
 
   /// Собирает [Media] для сетевого адреса или локального файла.
+  ///
+  /// Заголовки получают только сетевые источники: `Media.httpHeaders` заставляет
+  /// media_kit выставить libmpv `http-header-fields`, а файлу это ни к чему и
+  /// добавило бы лишний хук на каждое открытие.
   Media _mediaFor(String source, bool isLocal, {Duration? start}) {
     final String uri = isLocal ? Uri.file(source).toString() : source;
-    return Media(uri, start: start);
+    final Map<String, String>? headers =
+        isLocal ? null : StreamRequestHeaders.forUrl(uri);
+    if (headers == null || headers.isEmpty) {
+      return Media(uri, start: start);
+    }
+    return Media(uri, start: start, httpHeaders: headers);
   }
 
   /// Включает защиту от ложного EOS на время перемотки.

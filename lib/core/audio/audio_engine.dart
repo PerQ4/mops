@@ -236,6 +236,47 @@ abstract class AudioEngine {
   Future<void> dispose();
 }
 
+/// Заголовки, которые плеер должен отправить вместе с потоком.
+///
+/// Почему отдельным хранилищем, а не полем [AudioEngine.load]. Движок получает
+/// от контроллера только адрес источника. Поток, добытый веб-сессией
+/// приложения, требует тех же `User-Agent` и `Cookie`, что были у страницы:
+/// без них медиасервер отвечает отказом. Резолвер запоминает их здесь по
+/// адресу, а движок забирает при открытии и отдаёт libmpv как
+/// `http-header-fields`.
+///
+/// Хранилище небольшое и перезаписывается по адресу: ссылки живут часами,
+/// а на один трек нужна одна запись.
+class StreamRequestHeaders {
+  StreamRequestHeaders._();
+
+  /// Сколько адресов помнить. Записи старше вытесняются: держать десятки
+  /// cookie-строк незачем, а ссылки на них всё равно истекают.
+  static const int _limit = 16;
+
+  static final Map<String, Map<String, String>> _byUrl =
+      <String, Map<String, String>>{};
+
+  /// Запоминает заголовки для адреса [url] ([headers] пустые — забыть).
+  static void remember(Uri url, Map<String, String>? headers) {
+    final String key = url.toString();
+    _byUrl.remove(key);
+    if (headers == null || headers.isEmpty) return;
+
+    _byUrl[key] = Map<String, String>.unmodifiable(headers);
+    while (_byUrl.length > _limit) {
+      _byUrl.remove(_byUrl.keys.first);
+    }
+  }
+
+  /// Заголовки, с которыми нужно открывать [source]; `null` — обычный поток.
+  static Map<String, String>? forUrl(String source) => _byUrl[source];
+
+  /// Очищает хранилище — только для тестов.
+  @visibleForTesting
+  static void clear() => _byUrl.clear();
+}
+
 /// Исключение с понятным пользователю текстом.
 class AudioEngineException implements Exception {
   AudioEngineException(this.message);
