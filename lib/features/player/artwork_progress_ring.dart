@@ -57,17 +57,17 @@ class ArtworkProgressRing extends ConsumerWidget {
 
   /// Амплитуда волны на стороне [_refSide].
   ///
-  /// Заметно меньше половины штриха, но не «ниточка»: волна должна читаться
-  /// как волна, а не как дрожание кромки.
-  static const double _refAmplitude = 2.8;
+  /// Почти с толщину штриха: волна должна читаться на кольце в 44 px, а не
+  /// намекать на рябь. Выше штриха нельзя — кромка начнёт рассыпаться.
+  static const double _refAmplitude = 3.2;
 
   /// Длина волны на стороне [_refSide].
   ///
-  /// Волна короткая — примерно треть толщины штриха на гребень. Эталонные 15
-  /// на 48 давали на кольце вокруг обложки всего десяток огромных горбов: на
-  /// кольце из 150 px длины волна в 14 px выглядит как бугор, а не как рябь.
-  /// Здесь гребней около тридцати, и волна видна и на островке, и в панели.
-  static const double _refWavelength = 11;
+  /// Мизерная — чуть меньше толщины штриха: гребни идут почти вплотную, как
+  /// скрученный шнур. Это не та «случайная рябь», что была в первой версии:
+  /// выборка теперь восемь точек на гребень, поэтому частые гребни рисуются
+  /// регулярно, а не как попало.
+  static const double _refWavelength = 2.5;
 
   /// Предел толщины кольца.
   ///
@@ -77,7 +77,7 @@ class ArtworkProgressRing extends ConsumerWidget {
   static const double _maxStroke = 6;
 
   /// Предел амплитуды волны — в тех же пропорциях к пределу штриха.
-  static const double _maxAmplitude = 4.5;
+  static const double _maxAmplitude = 5.5;
 
   /// Толщина кольца для обложки [side].
   static double strokeFor(double side) =>
@@ -89,7 +89,7 @@ class ArtworkProgressRing extends ConsumerWidget {
 
   /// Длина волны для обложки [side].
   static double wavelengthFor(double side) =>
-      (side * (_refWavelength / _refSide)).clamp(4.0, 52.0);
+      (side * (_refWavelength / _refSide)).clamp(1.5, 30.0);
 
   /// Габарит кольца вокруг обложки со стороной [side].
   ///
