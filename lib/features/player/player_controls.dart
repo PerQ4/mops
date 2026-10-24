@@ -8,6 +8,7 @@ import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:material_3_expressive/material_3_expressive.dart' as m3e;
 
 import '../../core/audio/audio_engine.dart';
+import '../../core/theme/layout.dart';
 import '../../core/theme/motion.dart';
 import '../../core/utils/format.dart';
 import '../../data/local/app_settings.dart';
@@ -29,11 +30,6 @@ const double _kThickInactiveTrackAlpha = 0.28;
 const double _kSimpleActiveTrackAlpha = 0.85;
 const double _kSimpleInactiveTrackAlpha = 0.15;
 
-/// Горизонтальный отступ содержимого плеера — `PlayerHorizontalPadding`
-/// (`constants/Dimensions.kt:45`). Используется полосой перемотки и её
-/// подписями времени.
-const double _kPlayerHorizontalPadding = 32;
-
 /// Границы и шаг темпа и питча — диалог `tempo_and_pitch` в ArchiveTune:
 /// 0.5–2.0 с шагом 0.05 (30 делений ползунка).
 const double kTempoPitchMin = 0.5;
@@ -45,12 +41,9 @@ const double kTempoPitchStep = 0.05;
 /// Используется и в панели плеера на десктопе, и в полноэкранном плеере на
 /// телефоне — поэтому живёт в одном месте.
 class PlayerSeekBar extends ConsumerStatefulWidget {
-  const PlayerSeekBar({super.key, required this.player, this.compact = false});
+  const PlayerSeekBar({super.key, required this.player});
 
   final PlayerUiState player;
-
-  /// Компактный вид: подписи времени меньше, без отметки качества.
-  final bool compact;
 
   @override
   ConsumerState<PlayerSeekBar> createState() => _PlayerSeekBarState();
@@ -113,15 +106,16 @@ class _PlayerSeekBarState extends ConsumerState<PlayerSeekBar> {
           fontFeatures: const <FontFeature>[FontFeature.tabularFigures()],
         );
 
-    // Боковой отступ — как `PlayerHorizontalPadding` в ArchiveTune (32),
-    // в панели вдвое уже (16). У «волнистого» он тоже нужен: внутренний
-    // отступ под рычажок убирается в самом стиле, а не снаружи.
-    final double sidePad = widget.compact ? 16 : _kPlayerHorizontalPadding;
+    // Боковой отступ — общий для всех поверхностей плеера (`playerInset`):
+    // раньше здесь было 32, в панели 16, а подписи времени стояли ещё на 4
+    // глубже дорожки, и края не совпадали ни между собой, ни с остальными
+    // блоками. Теперь дорожка, время и кнопки начинаются с одного числа.
+    const double sidePad = AppLayout.playerInset;
 
     return Column(
       children: <Widget>[
         Padding(
-          padding: EdgeInsets.symmetric(horizontal: sidePad),
+          padding: const EdgeInsets.symmetric(horizontal: sidePad),
           child: style == ProgressBarStyle.standard ||
                   style == ProgressBarStyle.wavy ||
                   style == ProgressBarStyle.circular
@@ -163,9 +157,10 @@ class _PlayerSeekBarState extends ConsumerState<PlayerSeekBar> {
                 ),
         ),
         Padding(
-          // Подписи времени стоят на 4 px глубже дорожки — как
-          // `PlayerTimeLabel` в ArchiveTune (`PlayerHorizontalPadding + 4`).
-          padding: EdgeInsets.symmetric(horizontal: sidePad + 4),
+          // Подписи времени стоят ровно под краями дорожки: тот же отступ,
+          // без прежних «+4», иначе левое и правое числа не совпадали с
+          // полосой.
+          padding: const EdgeInsets.symmetric(horizontal: sidePad),
           child: Row(
             children: <Widget>[
               Text(formatDurationClock(shown), style: label),
@@ -544,25 +539,15 @@ Future<void> showTempoPitchDialog(BuildContext context, WidgetRef ref) async {
 
 /// Кнопки транспорта: назад, играть/пауза, вперёд.
 ///
-/// Перемешивание и повтор сюда не входят: они переехали в строку с названием
-/// (рядом с лайком и «…»), поэтому строка транспорта остаётся крупной и чистой.
+/// Ряд состоит только из этих трёх кнопок: настройки воспроизведения
+/// (перемешивание, повтор, темп, эквалайзер) вынесены под него отдельной
+/// группой — [PlayerPlaybackModes]. Раньше темп и эквалайзер стояли справа от
+/// «играть», а перемешивание и повтор — слева, поэтому группа была
+/// перекошена, и центральная кнопка уезжала с центра блока.
 class PlayerTransportBar extends ConsumerWidget {
-  const PlayerTransportBar({
-    super.key,
-    required this.player,
-    this.dense = false,
-    this.showModes = false,
-  });
+  const PlayerTransportBar({super.key, required this.player});
 
   final PlayerUiState player;
-
-  /// Плотный вариант для боковой панели — меньше отступы.
-  final bool dense;
-
-  /// Показывать перемешивание и повтор прямо в транспорте. В боковой панели
-  /// они живут здесь (сверху их убрали, чтобы строка с названием не пухла),
-  /// а на полном экране — в строке с названием, поэтому там флаг выключен.
-  final bool showModes;
 
   @override
   Widget build(BuildContext context, WidgetRef ref) {
@@ -570,180 +555,167 @@ class PlayerTransportBar extends ConsumerWidget {
         ref.read(playerControllerProvider.notifier);
     final ColorScheme scheme = Theme.of(context).colorScheme;
 
-    // Размеры и отступы — из ArchiveTune, стиль плеера V4
+    // Размеры — из ArchiveTune, стиль плеера V4
     // (`ui/player/PlayerComponents.kt`, `PlayerPlaybackControls`):
-    // центр 88, боковые 56/46, зазор 12, иконки 44/28/22, радиусы 18/16.
-    const double baseLarge = 56;
-    const double baseSmall = 46;
-    const double baseGap = 12;
-    const double baseLargeIcon = 28;
-    const double baseSmallIcon = 22;
-    const double baseLargeRadius = 18;
-    const double baseSmallRadius = 16;
+    // центр 88, боковые 56, иконки 44/28, радиус 18.
+    const double skipSize = 56;
+    const double skipIcon = 28;
+    const double skipRadius = 18;
     const double centerSize = 88;
-    const double centerPadding = 40;
 
     final bool canPrevious = player.queue.isNotEmpty;
     final bool canNext = player.queue.isNotEmpty;
-    final bool repeatOn = player.repeat != PlayerRepeatMode.off;
 
     // Цвет «текста на фоне» и заливки кнопок — ролями схемы.
     final Color onBackground = scheme.onSurface;
     final Color buttonFill = scheme.primary;
     final Color onButtonFill = scheme.onPrimary;
 
-    return LayoutBuilder(
-      builder: (BuildContext context, BoxConstraints constraints) {
-        // Масштаб как в ArchiveTune: боковые группы должны поместиться рядом
-        // с центральной кнопкой. В узкой панели плеера прижимаем сильнее.
-        final double sideTotal =
-            (constraints.maxWidth - centerSize - centerPadding) / 2;
-        final double cap = dense ? 0.8 : 1.0;
-        final double scale = ((sideTotal - baseGap) / (baseLarge + baseSmall))
-            .clamp(0.6, cap);
-
-        final double large = baseLarge * scale;
-        final double small = baseSmall * scale;
-        final double gap = baseGap * scale;
-        final double largeIcon = baseLargeIcon * scale;
-        final double smallIcon = baseSmallIcon * scale;
-        final double largeRadius = baseLargeRadius * scale;
-        final double smallRadius = baseSmallRadius * scale;
-
-        Widget modeButton({
-          required String tooltip,
-          required IconData icon,
-          required bool selected,
-          required VoidCallback onPressed,
-        }) {
-          return _TransportButton(
-            tooltip: tooltip,
-            icon: icon,
-            size: small,
-            radius: smallRadius,
-            iconSize: smallIcon,
-            // Заливка приглушённая: 0.08 в покое, 0.2 во включённом виде.
-            background: onBackground.withValues(alpha: selected ? 0.2 : 0.08),
-            foreground: onBackground.withValues(alpha: selected ? 1 : 0.6),
-            onPressed: onPressed,
-          );
-        }
-
-        Widget skipButton({
-          required String tooltip,
-          required IconData icon,
-          required bool enabled,
-          required VoidCallback onPressed,
-        }) {
-          return _TransportButton(
-            tooltip: tooltip,
-            icon: icon,
-            size: large,
-            radius: largeRadius,
-            iconSize: largeIcon,
+    // FittedBox — на случай очень узкой панели: группа не переполняет ряд,
+    // а чуть ужимается. Обычно панель шире, и масштаб остаётся 1:1.
+    return FittedBox(
+      fit: BoxFit.scaleDown,
+      child: Row(
+        mainAxisSize: MainAxisSize.min,
+        children: <Widget>[
+          _TransportButton(
+            tooltip: 'Предыдущий',
+            icon: Icons.skip_previous_rounded,
+            size: skipSize,
+            radius: skipRadius,
+            iconSize: skipIcon,
             background: onBackground.withValues(alpha: 0.15),
-            foreground: onBackground.withValues(alpha: enabled ? 1 : 0.4),
-            onPressed: enabled ? onPressed : null,
-          );
-        }
+            foreground: onBackground.withValues(alpha: canPrevious ? 1 : 0.4),
+            onPressed: canPrevious ? controller.previous : null,
+          ),
+          // Один зазор внутри группы — между «назад», «играть» и «вперёд».
+          const SizedBox(width: AppLayout.playerGroupGap),
+          _TransportPlayButton(
+            playing: player.isPlaying,
+            loading: player.isLoading,
+            size: centerSize,
+            fill: buttonFill,
+            onFill: onButtonFill,
+            onPressed: controller.togglePlayPause,
+          ),
+          const SizedBox(width: AppLayout.playerGroupGap),
+          _TransportButton(
+            tooltip: 'Следующий',
+            icon: Icons.skip_next_rounded,
+            size: skipSize,
+            radius: skipRadius,
+            iconSize: skipIcon,
+            background: onBackground.withValues(alpha: 0.15),
+            foreground: onBackground.withValues(alpha: canNext ? 1 : 0.4),
+            onPressed: canNext ? controller.next : null,
+          ),
+        ],
+      ),
+    );
+  }
+}
 
-        return Row(
-          children: <Widget>[
-            Expanded(
-              // FittedBox: когда масштаб упирается в нижнюю границу, группа
-              // кнопок перестаёт влезать и RenderFlex даёт переполнение.
-              // Здесь она просто чуть ужимается — без полосы переполнения.
-              child: FittedBox(
-                fit: BoxFit.scaleDown,
-                alignment: Alignment.centerRight,
-                child: Row(
-                  mainAxisSize: MainAxisSize.min,
-                  children: <Widget>[
-                    if (showModes) ...<Widget>[
-                      modeButton(
-                        tooltip: player.shuffle
-                            ? 'Перемешивание включено'
-                            : 'Перемешать',
-                        icon: Icons.shuffle,
-                        selected: player.shuffle,
-                        onPressed: controller.toggleShuffle,
-                      ),
-                      SizedBox(width: gap),
-                    ],
-                    skipButton(
-                      tooltip: 'Предыдущий',
-                      icon: Icons.skip_previous_rounded,
-                      enabled: canPrevious,
-                      onPressed: controller.previous,
-                    ),
-                  ],
-                ),
-              ),
-            ),
-            Padding(
-              // Центральная кнопка не масштабируется и отделена отступом 20.
-              padding: const EdgeInsets.symmetric(horizontal: 20),
-              child: _TransportPlayButton(
-                playing: player.isPlaying,
-                loading: player.isLoading,
-                size: centerSize,
-                fill: buttonFill,
-                onFill: onButtonFill,
-                onPressed: controller.togglePlayPause,
-              ),
-            ),
-            Expanded(
-              // То же и для правой группы — см. пояснение слева.
-              child: FittedBox(
-                fit: BoxFit.scaleDown,
-                alignment: Alignment.centerLeft,
-                child: Row(
-                  mainAxisSize: MainAxisSize.min,
-                  children: <Widget>[
-                    skipButton(
-                      tooltip: 'Следующий',
-                      icon: Icons.skip_next_rounded,
-                      enabled: canNext,
-                      onPressed: controller.next,
-                    ),
-                    if (showModes) ...<Widget>[
-                      SizedBox(width: gap),
-                      modeButton(
-                        tooltip: player.repeat.label,
-                        icon: player.repeat == PlayerRepeatMode.one
-                            ? Icons.repeat_one
-                            : Icons.repeat,
-                        selected: repeatOn,
-                        onPressed: controller.cycleRepeat,
-                      ),
-                    ],
-                    // Темп и питч — всегда в блоке управления: это настройка
-                    // воспроизведения, а не режим очереди, поэтому она не
-                    // прячется за `showModes`.
-                    SizedBox(width: gap),
-                    _TempoButton(
-                      speed: player.playback.speed,
-                      pitch: player.playback.pitch,
-                      size: small,
-                      radius: smallRadius,
-                      iconSize: smallIcon,
-                      onPressed: () => showTempoPitchDialog(context, ref),
-                    ),
-                    // Эквалайзер — рядом с темпом: это тоже настройка
-                    // воспроизведения, а не конкретного трека.
-                    SizedBox(width: gap),
-                    _EqualizerButton(
-                      size: small,
-                      radius: smallRadius,
-                      iconSize: smallIcon,
-                    ),
-                  ],
-                ),
-              ),
-            ),
-          ],
-        );
-      },
+/// Настройки воспроизведения: перемешивание, повтор, темп, эквалайзер.
+///
+/// Отдельной строкой под транспортом, а не по бокам от «играть»: так у
+/// транспорта слева и справа одинаковое число кнопок, а сами настройки идут
+/// одной линией с равными интервалами. Порядок один и тот же в панели и на
+/// полном экране — мышечная память не переучивается.
+class PlayerPlaybackModes extends ConsumerWidget {
+  const PlayerPlaybackModes({
+    super.key,
+    required this.player,
+    this.size = 44,
+  });
+
+  final PlayerUiState player;
+
+  /// Сторона квадратной кнопки: 44 в панели и на полном экране.
+  final double size;
+
+  @override
+  Widget build(BuildContext context, WidgetRef ref) {
+    final PlayerController controller =
+        ref.read(playerControllerProvider.notifier);
+    final Color onBackground = Theme.of(context).colorScheme.onSurface;
+    final double radius = size * 0.32;
+    final double iconSize = size * 0.5;
+    final bool repeatOn = player.repeat != PlayerRepeatMode.off;
+    // Визуализатор — такая же настройка вида, как и остальные в этом ряду.
+    final bool visualizer = ref.watch(
+      settingsControllerProvider.select(
+        (AppSettings s) => s.visualizerEnabled,
+      ),
+    );
+
+    Widget modeButton({
+      required String tooltip,
+      required IconData icon,
+      required bool selected,
+      required VoidCallback onPressed,
+    }) {
+      return _TransportButton(
+        tooltip: tooltip,
+        icon: icon,
+        size: size,
+        radius: radius,
+        iconSize: iconSize,
+        // Заливка приглушённая: 0.08 в покое, 0.2 во включённом виде.
+        background: onBackground.withValues(alpha: selected ? 0.2 : 0.08),
+        foreground: onBackground.withValues(alpha: selected ? 1 : 0.6),
+        onPressed: onPressed,
+      );
+    }
+
+    // FittedBox — чтобы ряд не переполнял узкую панель (минимум 260), а
+    // просто чуть ужимался; обычно масштаб 1:1.
+    return FittedBox(
+      fit: BoxFit.scaleDown,
+      child: Row(
+        mainAxisSize: MainAxisSize.min,
+        children: <Widget>[
+          modeButton(
+            tooltip:
+                player.shuffle ? 'Перемешивание включено' : 'Перемешать',
+            icon: Icons.shuffle,
+            selected: player.shuffle,
+            onPressed: controller.toggleShuffle,
+          ),
+          const SizedBox(width: AppLayout.playerItemGap),
+          modeButton(
+            tooltip: player.repeat.label,
+            icon: player.repeat == PlayerRepeatMode.one
+                ? Icons.repeat_one
+                : Icons.repeat,
+            selected: repeatOn,
+            onPressed: controller.cycleRepeat,
+          ),
+          const SizedBox(width: AppLayout.playerItemGap),
+          modeButton(
+            tooltip: visualizer ? 'Визуализатор включён' : 'Визуализатор',
+            icon: Icons.bar_chart_rounded,
+            selected: visualizer,
+            onPressed: () => ref
+                .read(settingsControllerProvider.notifier)
+                .setVisualizerEnabled(!visualizer),
+          ),
+          const SizedBox(width: AppLayout.playerItemGap),
+          _TempoButton(
+            speed: player.playback.speed,
+            pitch: player.playback.pitch,
+            size: size,
+            radius: radius,
+            iconSize: iconSize,
+            onPressed: () => showTempoPitchDialog(context, ref),
+          ),
+          const SizedBox(width: AppLayout.playerItemGap),
+          _EqualizerButton(
+            size: size,
+            radius: radius,
+            iconSize: iconSize,
+          ),
+        ],
+      ),
     );
   }
 }

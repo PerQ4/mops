@@ -71,6 +71,25 @@ class FloatingDock extends ConsumerStatefulWidget {
   /// Отступ от краёв окна.
   static const double margin = 14;
 
+  /// Ширина островка плеера.
+  ///
+  /// Задана числом, а не по содержимому: транспорт должен стоять ровно по
+  /// центру, а для этого слева и справа от него нужны блоки одинаковой ширины.
+  /// Раньше островок складывался из блоков с зазорами на глаз, и транспорт
+  /// уезжал вправо ровно на разницу их ширин.
+  ///
+  /// 740 = 2 * 298 (боковые блоки) + 120 (транспорт) + 2 * 20 (зазоры групп)
+  /// + 2 * 12 (отступы островка) — см. `AppLayout.player*`.
+  ///
+  /// Ширина подобрана так, чтобы блок подписи оставался не уже прежних 220:
+  /// с `playerGroupGap` по бокам транспорта он получает 217, и обычное
+  /// название не начинает бежать строкой.
+  static const double playerIslandWidth = 740;
+
+  /// То же на окне уже широкой раскладки: действий на одно меньше (панели
+  /// справа там нет), поэтому блоки уже, иначе ряд действий разъезжается.
+  static const double playerIslandWidthCompact = 620;
+
   /// Ширина панели-ящика и навигации. ArchiveTune: до 420.
   static const double panelWidth = AppLayout.navBarMaxWidth;
   static const double panelMaxHeight = 420;
@@ -488,33 +507,56 @@ class _PlayerIslandState extends ConsumerState<_PlayerIsland> {
         backgroundStyle: backgroundStyle,
         child: SizedBox(
           height: FloatingDock.playerIslandHeight,
-          child: Row(
-            mainAxisSize: MainAxisSize.min,
-            children: <Widget>[
-              const SizedBox(width: 10),
-              _ArtworkWithProgress(track: track),
-              const SizedBox(width: 12),
-              // Ширина подписи ограничена: островок не должен растягиваться
-              // на всю ширину монитора.
-              SizedBox(
-                width: wide ? 220 : 150,
-                child: _IslandTitles(
-                  track: track,
-                  downloading: downloading,
-                  downloadProgress: downloadProgress,
-                  error: error,
-                  playing: isPlaying,
+          width: wide
+              ? FloatingDock.playerIslandWidth
+              : FloatingDock.playerIslandWidthCompact,
+          child: Padding(
+            padding: const EdgeInsets.symmetric(
+              horizontal: AppLayout.playerDockInset,
+            ),
+            // Половинки слева и справа от транспорта — `Expanded` с одинаковым
+            // весом: поэтому транспорт стоит ровно по центру островка, а не
+            // там, куда его сдвинул блок с названием. Внутри половин элементы
+            // прижаты к своим краям, так что отступы слева и справа совпадают.
+            child: Row(
+              children: <Widget>[
+                Expanded(
+                  child: Padding(
+                    padding: const EdgeInsets.only(
+                      right: AppLayout.playerGroupGap,
+                    ),
+                    child: Row(
+                      children: <Widget>[
+                        _ArtworkWithProgress(track: track),
+                        const SizedBox(width: AppLayout.playerItemGap),
+                        Expanded(
+                          child: _IslandTitles(
+                            track: track,
+                            downloading: downloading,
+                            downloadProgress: downloadProgress,
+                            error: error,
+                            playing: isPlaying,
+                          ),
+                        ),
+                      ],
+                    ),
+                  ),
                 ),
-              ),
-              _IslandControls(
-                isPlaying: isPlaying,
-                isLoading: isLoading,
-                queue: queue,
-                current: current,
-                wide: wide,
-              ),
-              const SizedBox(width: 8),
-            ],
+                _IslandTransport(
+                  isPlaying: isPlaying,
+                  isLoading: isLoading,
+                  queue: queue,
+                ),
+                Expanded(
+                  child: Padding(
+                    padding: const EdgeInsets.only(
+                      left: AppLayout.playerGroupGap,
+                    ),
+                    child: _IslandActions(current: current, wide: wide),
+                  ),
+                ),
+              ],
+            ),
           ),
         ),
       );
@@ -701,7 +743,7 @@ class _IslandTitles extends StatelessWidget {
       onTap: () => AppRoutes.nowPlaying(context),
       borderRadius: BorderRadius.circular(AppLayout.radiusS),
       child: Padding(
-        padding: const EdgeInsets.symmetric(horizontal: 4, vertical: 6),
+        padding: const EdgeInsets.symmetric(vertical: 6),
         child: Column(
           mainAxisAlignment: MainAxisAlignment.center,
           crossAxisAlignment: CrossAxisAlignment.start,
@@ -736,19 +778,79 @@ class _IslandTitles extends StatelessWidget {
   }
 }
 
-/// Управление внутри островка.
-class _IslandControls extends ConsumerWidget {
-  const _IslandControls({
+/// Транспорт островка: «предыдущий — играть — следующий».
+///
+/// Отдельной группой и с одним зазором внутри: раньше эти кнопки стояли
+/// вплотную к ряду второстепенных действий, из-за чего островок читался как
+/// одна длинная лента кнопок.
+class _IslandTransport extends ConsumerWidget {
+  const _IslandTransport({
     required this.isPlaying,
     required this.isLoading,
     required this.queue,
-    required this.current,
-    required this.wide,
   });
 
   final bool isPlaying;
   final bool isLoading;
   final List<Track> queue;
+
+  @override
+  Widget build(BuildContext context, WidgetRef ref) {
+    final PlayerController controller =
+        ref.read(playerControllerProvider.notifier);
+
+    return Row(
+      mainAxisSize: MainAxisSize.min,
+      children: <Widget>[
+        _IslandButton(
+          tooltip: 'Предыдущий',
+          icon: Icons.skip_previous_rounded,
+          iconSize: 24,
+          onPressed: queue.isEmpty ? null : controller.previous,
+        ),
+        const SizedBox(width: AppLayout.playerItemGap),
+        // Один индикатор загрузки на весь островок: пока идёт подготовка,
+        // вместо иконки воспроизведения показываем круг.
+        SizedBox(
+          width: 40,
+          height: 40,
+          child: isLoading
+              ? const Padding(
+                  padding: EdgeInsets.all(8),
+                  child: AppProgress(size: 24),
+                )
+              : IconButton.filled(
+                  tooltip: isPlaying ? 'Пауза' : 'Играть',
+                  iconSize: 24,
+                  icon: Icon(
+                    isPlaying
+                        ? Icons.pause_rounded
+                        : Icons.play_arrow_rounded,
+                  ),
+                  onPressed: controller.togglePlayPause,
+                ),
+        ),
+        const SizedBox(width: AppLayout.playerItemGap),
+        _IslandButton(
+          tooltip: 'Следующий',
+          icon: Icons.skip_next_rounded,
+          iconSize: 24,
+          onPressed: queue.isEmpty ? null : controller.next,
+        ),
+      ],
+    );
+  }
+}
+
+/// Второстепенные действия островка: лайк, визуализатор, очередь, панель, «…».
+///
+/// Ряд занимает всю правую половину островка, кнопки распределены по ней
+/// равномерно (`spaceBetween`): так интервалы между действиями одинаковые, а
+/// последняя кнопка стоит на том же отступе от края, что и обложка слева.
+/// Панель справа есть только в широкой раскладке — там кнопок пять, на узком
+/// окне четыре, и ряд всё равно остаётся равномерным.
+class _IslandActions extends ConsumerWidget {
+  const _IslandActions({required this.current, required this.wide});
 
   /// Текущий трек: нужен кнопкам лайка и «…».
   final Track? current;
@@ -757,8 +859,6 @@ class _IslandControls extends ConsumerWidget {
 
   @override
   Widget build(BuildContext context, WidgetRef ref) {
-    final PlayerController controller =
-        ref.read(playerControllerProvider.notifier);
     final PlayerPanelController panel = ref.read(playerPanelProvider.notifier);
     final PlayerPanelMode mode = ref.watch(playerPanelProvider);
     final ColorScheme scheme = Theme.of(context).colorScheme;
@@ -780,71 +880,47 @@ class _IslandControls extends ConsumerWidget {
         (Set<String> ids) => ids.contains(current?.id),
       ),
     );
+    // Визуализатор — настройка вида полного экрана, но переключать его удобно
+    // и отсюда: он стоит в общем ряду второстепенных действий.
+    final bool visualizer = ref.watch(
+      settingsControllerProvider.select(
+        (AppSettings s) => s.visualizerEnabled,
+      ),
+    );
 
     return Row(
-      mainAxisSize: MainAxisSize.min,
+      mainAxisAlignment: MainAxisAlignment.spaceBetween,
       children: <Widget>[
-        IconButton(
-          tooltip: 'Предыдущий',
-          iconSize: 24,
-          icon: const Icon(Icons.skip_previous_rounded),
-          onPressed: queue.isEmpty ? null : controller.previous,
-        ),
-        // Один индикатор загрузки на весь островок: пока идёт подготовка,
-        // вместо иконки воспроизведения показываем круг. Раньше их было
-        // несколько сразу — и в кольце, и поверх обложки, и здесь.
-        SizedBox(
-          width: 40,
-          height: 40,
-          child: isLoading
-              ? const Padding(
-                  padding: EdgeInsets.all(8),
-                  child: AppProgress(size: 24),
-                )
-              : IconButton.filled(
-                  tooltip: isPlaying ? 'Пауза' : 'Играть',
-                  iconSize: 24,
-                  icon: Icon(
-                    isPlaying
-                        ? Icons.pause_rounded
-                        : Icons.play_arrow_rounded,
-                  ),
-                  onPressed: controller.togglePlayPause,
-                ),
-        ),
-        IconButton(
-          tooltip: 'Следующий',
-          iconSize: 24,
-          icon: const Icon(Icons.skip_next_rounded),
-          onPressed: queue.isEmpty ? null : controller.next,
-        ),
-        IconButton(
+        _IslandButton(
           tooltip: liked ? 'Убрать из «Мне нравится»' : 'Нравится',
-          iconSize: 20,
-          icon: Icon(
-            liked ? Icons.favorite : Icons.favorite_border,
-            color: liked ? scheme.primary : null,
-          ),
+          icon: liked ? Icons.favorite : Icons.favorite_border,
+          color: liked ? scheme.primary : null,
           onPressed: signedIn && current != null
               ? () => _like(context, ref, current!)
               : null,
         ),
-        IconButton(
+        _IslandButton(
+          tooltip: visualizer ? 'Визуализатор включён' : 'Визуализатор',
+          icon: Icons.bar_chart_rounded,
+          isSelected: visualizer,
+          selectedIcon: Icons.bar_chart_rounded,
+          onPressed: () => ref
+              .read(settingsControllerProvider.notifier)
+              .setVisualizerEnabled(!visualizer),
+        ),
+        _IslandButton(
           tooltip: 'Очередь',
           isSelected: mode == PlayerPanelMode.queue,
-          iconSize: 20,
-          icon: const Icon(Icons.queue_music),
-          selectedIcon:
-              Icon(Icons.queue_music, size: 20, color: scheme.primary),
+          icon: Icons.queue_music,
+          selectedIcon: Icons.queue_music,
           onPressed: () => panel.toggle(PlayerPanelMode.queue),
         ),
         // Разворачивает островок в панель справа (свернуть её можно уже из
         // самой панели). Кнопка — только на широком экране.
         if (wide && panelEnabled)
-          IconButton(
+          _IslandButton(
             tooltip: 'Открыть панель плеера',
-            iconSize: 20,
-            icon: const Icon(Icons.vertical_split),
+            icon: Icons.vertical_split,
             onPressed: () {
               // Разворачиваем плеер в панель — всплывающий ящик закрываем,
               // иначе очередь висела бы и над островком, и в панели.
@@ -854,10 +930,9 @@ class _IslandControls extends ConsumerWidget {
           ),
         // «…» ведёт к исполнителю, альбому и действиям над текущим треком —
         // раньше из островка не было ни одного перехода к исполнителю.
-        IconButton(
+        _IslandButton(
           tooltip: 'Действия',
-          iconSize: 20,
-          icon: const Icon(Icons.more_vert),
+          icon: Icons.more_vert,
           onPressed: current == null
               ? null
               : () => showTrackMenu(context, current!),
@@ -890,6 +965,51 @@ class _IslandControls extends ConsumerWidget {
   }
 }
 
+/// Кнопка островка одного размера с остальными.
+///
+/// Раньше здесь стояли обычные `IconButton` (48) вперемешку с 40-пиксельной
+/// кнопкой воспроизведения: из-за разных габаритов ряд выглядел неровным.
+class _IslandButton extends StatelessWidget {
+  const _IslandButton({
+    required this.tooltip,
+    required this.icon,
+    required this.onPressed,
+    this.iconSize = 20,
+    this.selectedIcon,
+    this.isSelected = false,
+    this.color,
+  });
+
+  final String tooltip;
+  final IconData icon;
+  final VoidCallback? onPressed;
+  final double iconSize;
+  final IconData? selectedIcon;
+  final bool isSelected;
+  final Color? color;
+
+  @override
+  Widget build(BuildContext context) {
+    return IconButton(
+      tooltip: tooltip,
+      isSelected: isSelected,
+      iconSize: iconSize,
+      padding: EdgeInsets.zero,
+      visualDensity: VisualDensity.compact,
+      style: IconButton.styleFrom(
+        tapTargetSize: MaterialTapTargetSize.shrinkWrap,
+      ),
+      constraints: const BoxConstraints.tightFor(width: 40, height: 40),
+      color: color,
+      icon: Icon(icon),
+      selectedIcon: selectedIcon == null
+          ? null
+          : Icon(selectedIcon, size: iconSize),
+      onPressed: onPressed,
+    );
+  }
+}
+
 /// --------------------------------------------------------------- панель-ящик
 
 /// Раскрывающаяся вверх часть: очередь или текст.
@@ -911,7 +1031,7 @@ class _DockPanel extends ConsumerWidget {
       child: mode == PlayerPanelMode.none || track == null
           ? const SizedBox(width: FloatingDock.panelWidth)
           : Padding(
-              padding: const EdgeInsets.only(bottom: 10),
+              padding: const EdgeInsets.only(bottom: AppLayout.playerItemGap),
               child: SizedBox(
                 width: FloatingDock.panelWidth,
                 child: _DockSurface(
@@ -960,7 +1080,14 @@ class _PanelHeader extends ConsumerWidget {
         ref.read(playerPanelProvider.notifier);
 
     return Padding(
-      padding: const EdgeInsets.fromLTRB(16, 8, 8, 4),
+      // Один отступ слева и справа: раньше у шапки было 16 слева и 8 справа,
+      // и кнопка закрытия стояла ближе к краю, чем содержимое снизу.
+      padding: const EdgeInsets.fromLTRB(
+        AppLayout.playerDockInset,
+        8,
+        AppLayout.playerDockInset,
+        4,
+      ),
       child: Row(
         children: <Widget>[
           IconButton(

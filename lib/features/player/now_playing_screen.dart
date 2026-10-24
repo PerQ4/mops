@@ -114,22 +114,21 @@ class _NowPlayingScreenState extends ConsumerState<NowPlayingScreen> {
                                   ),
                                   Expanded(
                                     flex: 4,
-                                    child: Padding(
-                                      // Отступ справа: без него управление и
-                                      // очередь прилипали к краю окна.
-                                      padding: const EdgeInsets.only(right: 20),
-                                      // Очередь сверху — своя прокручиваемая
-                                      // область; шапку скрываем, название и
-                                      // действия уже есть в блоке управления.
-                                      child: _StackedControls(
-                                        reserve: _kQueueMinHeight,
-                                        track: track,
-                                        player: player,
+                                    // Очередь сверху — своя прокручиваемая
+                                    // область; шапку скрываем, название и
+                                    // действия уже есть в блоке управления.
+                                    // Боковые отступы задаёт сам блок
+                                    // управления (`playerInset`), поэтому
+                                    // внешнего отступа здесь нет: иначе
+                                    // справа он удвоился бы.
+                                    child: _StackedControls(
+                                      reserve: _kQueueMinHeight,
+                                      track: track,
+                                      player: player,
                                       flexible: const QueueList(
                                         showHeader: false,
                                         showCurrent: false,
                                         showCarousel: false,
-                                      ),
                                       ),
                                     ),
                                   ),
@@ -264,21 +263,30 @@ class _Controls extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
-    // Отступы между блоками — как в `PlayerControlsContent` (ArchiveTune):
-    // 12 после названия, 12 после полосы перемотки, 30 в самом низу.
-    // Боковой отступ — `PlayerHorizontalPadding` (32).
-    const EdgeInsets side = EdgeInsets.symmetric(horizontal: 32);
+    // Один и тот же боковой отступ у всех блоков (`playerInset`), а между
+    // блоками — один вертикальный шаг. Раньше название шло с 32 и 6, шкала с
+    // 32, транспорт с 32, а низ — с 30: края не совпадали ни между блоками,
+    // ни с правой панелью.
+    const EdgeInsets side = EdgeInsets.symmetric(
+      horizontal: AppLayout.playerInset,
+    );
     return Column(
       mainAxisSize: MainAxisSize.min,
       children: <Widget>[
         _InfoRow(track: track, player: player),
-        const SizedBox(height: 12),
+        const SizedBox(height: AppLayout.playerGroupGap),
         PlayerSeekBar(player: player),
-        const SizedBox(height: 12),
+        const SizedBox(height: AppLayout.playerItemGap),
         Padding(
           padding: side,
           child: PlayerTransportBar(player: player),
         ),
+        const SizedBox(height: AppLayout.playerItemGap),
+        Padding(
+          padding: side,
+          child: PlayerPlaybackModes(player: player),
+        ),
+        const SizedBox(height: AppLayout.playerGroupGap),
         const Padding(
           padding: side,
           child: PlayerVolumeControl(),
@@ -288,7 +296,7 @@ class _Controls extends StatelessWidget {
         // лишняя кнопка давала переполнение), а строкой состояние видно
         // текстом, без наведения на подсказку.
         const SleepTimerButton(),
-        const SizedBox(height: 30),
+        const SizedBox(height: AppLayout.playerVerticalInset),
       ],
     );
   }
@@ -614,9 +622,12 @@ class _ArtworkStage extends StatelessWidget {
     final List<String> variants = track.artworkFallbacks(kArtworkLarge);
 
     return Padding(
-      // Отступы обложки — `PlayerHorizontalPadding` по бокам (32) и 16 сверху
-      // и снизу, как `Thumbnail` в ArchiveTune.
-      padding: const EdgeInsets.symmetric(horizontal: 32, vertical: 16),
+      // Отступы обложки — тот же боковой `playerInset`, что у остальных
+      // блоков, и такой же сверху и снизу.
+      padding: const EdgeInsets.symmetric(
+        horizontal: AppLayout.playerInset,
+        vertical: AppLayout.playerVerticalInset,
+      ),
       child: Consumer(
         builder: (BuildContext context, WidgetRef ref, Widget? child) {
           final bool withVisualizer = ref.watch(
@@ -788,7 +799,12 @@ class _TopBar extends ConsumerWidget {
     final LyricsRequest request = LyricsRequest.fromTrack(track);
 
     return Padding(
-      padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 4),
+      // Тот же боковой отступ, что и у блока управления: кнопки шапки не
+      // должны начинаться с другого числа.
+      padding: const EdgeInsets.symmetric(
+        horizontal: AppLayout.playerInset,
+        vertical: 4,
+      ),
       child: Row(
         children: <Widget>[
           IconButton(
@@ -807,9 +823,8 @@ class _TopBar extends ConsumerWidget {
             selectedIcon: const Icon(Icons.lyrics, size: 20),
             onPressed: onToggleLyrics,
           ),
-          const SizedBox(width: 4),
+          const SizedBox(width: AppLayout.playerItemGap),
           LyricsMenuButton(request: request),
-          const SizedBox(width: 8),
         ],
       ),
     );
@@ -838,9 +853,6 @@ class _InfoRow extends ConsumerWidget {
       authControllerProvider.select((AuthState s) => s.isSignedIn),
     );
 
-    final PlayerController controller =
-        ref.read(playerControllerProvider.notifier);
-
     // Одно меню на «…» и правый клик по названию: так действия не разойдутся.
     void openMenu() => showTrackMenu(
           context,
@@ -852,104 +864,95 @@ class _InfoRow extends ConsumerWidget {
         );
 
     return Padding(
-      // Название и действия — с боковым отступом 32, как
-      // `PlayerHorizontalPadding` в `PlayerControlsContent`.
-      padding: const EdgeInsets.fromLTRB(32, 6, 8, 0),
-      child: Row(
-        crossAxisAlignment: CrossAxisAlignment.start,
+      // Все блоки управления начинаются с одного бокового отступа — слева и
+      // справа одинаково.
+      padding: const EdgeInsets.fromLTRB(
+        AppLayout.playerInset,
+        AppLayout.playerVerticalInset,
+        AppLayout.playerInset,
+        0,
+      ),
+      child: Column(
         children: <Widget>[
-          Expanded(
-            child: Column(
-              crossAxisAlignment: CrossAxisAlignment.start,
-              children: <Widget>[
-                GestureDetector(
-                  behavior: HitTestBehavior.opaque,
-                  onSecondaryTap: openMenu,
-                  child: Text(
-                    track.title,
-                    maxLines: 1,
-                    overflow: TextOverflow.ellipsis,
-                    // `PlayerTitleSection`: titleLarge, жирный.
-                    style: text.titleLarge?.copyWith(
-                      fontWeight: FontWeight.bold,
-                    ),
-                  ),
-                ),
-                const SizedBox(height: 6),
-                Row(
-                  children: <Widget>[
-                    Flexible(
-                      // Исполнитель — ссылка на его страницу. Ошибку плеера
-                      // показываем текстом: она не ссылка. Две строки и
-                      // подсказка при наведении — причина отказа бывает
-                      // длинной, в одну строку её не прочитать.
-                      child: player.error != null
-                          ? Tooltip(
-                              message: player.error!,
-                              child: Text(
-                                player.error!,
-                                maxLines: 2,
-                                overflow: TextOverflow.ellipsis,
-                                style: text.titleMedium
-                                    ?.copyWith(color: scheme.error),
-                              ),
-                            )
-                          : ArtistLine(
-                              artists: track.artists,
-                              // `PlayerTitleSection`: titleMedium (16 sp).
-                              style: text.titleMedium?.copyWith(
-                                color: scheme.onSurfaceVariant,
-                              ),
-                              // Переход сам сворачивает плеер (см. [AppRoutes]):
-                              // иначе страница оказалась бы под ним или легла
-                              // бы поверх вторым слоем.
-                              onArtistTap: (ArtistRef artist) =>
-                                  AppRoutes.artistFromMenu(context, artist.id!),
-                            ),
-                    ),
-                    const SizedBox(width: 8),
-                    QualityBadge(player: player),
-                  ],
-                ),
-              ],
+          // Название и исполнитель — по центру, как обложка, транспорт и
+          // действия ниже.
+          GestureDetector(
+            behavior: HitTestBehavior.opaque,
+            onSecondaryTap: openMenu,
+            child: Text(
+              track.title,
+              maxLines: 1,
+              overflow: TextOverflow.ellipsis,
+              textAlign: TextAlign.center,
+              // `PlayerTitleSection`: titleLarge, жирный.
+              style: text.titleLarge?.copyWith(fontWeight: FontWeight.bold),
             ),
           ),
-          const SizedBox(width: 12),
-          // Действия — как в стиле V4: квадраты 44 с радиусом 14, фон с
-          // альфой 0.12, иконка 22, зазор 10. Перемешивание и повтор
-          // переехали сюда из транспорта; рядом — клип, меню и лайк.
-          _PlayerActionButton(
-            tooltip: player.shuffle ? 'Перемешивание включено' : 'Перемешать',
-            icon: Icons.shuffle,
-            selected: player.shuffle,
-            onPressed: controller.toggleShuffle,
+          const SizedBox(height: 6),
+          Row(
+            mainAxisAlignment: MainAxisAlignment.center,
+            children: <Widget>[
+              Flexible(
+                // Исполнитель — ссылка на его страницу. Ошибку плеера
+                // показываем текстом: она не ссылка. Две строки и подсказка
+                // при наведении — причина отказа бывает длинной.
+                child: player.error != null
+                    ? Tooltip(
+                        message: player.error!,
+                        child: Text(
+                          player.error!,
+                          maxLines: 2,
+                          overflow: TextOverflow.ellipsis,
+                          textAlign: TextAlign.center,
+                          style:
+                              text.titleMedium?.copyWith(color: scheme.error),
+                        ),
+                      )
+                    : ArtistLine(
+                        artists: track.artists,
+                        // `PlayerTitleSection`: titleMedium (16 sp).
+                        style: text.titleMedium?.copyWith(
+                          color: scheme.onSurfaceVariant,
+                        ),
+                        textAlign: TextAlign.center,
+                        // Переход сам сворачивает плеер (см. [AppRoutes]):
+                        // иначе страница оказалась бы под ним или легла
+                        // бы поверх вторым слоем.
+                        onArtistTap: (ArtistRef artist) =>
+                            AppRoutes.artistFromMenu(context, artist.id!),
+                      ),
+              ),
+              const SizedBox(width: AppLayout.playerItemGap),
+              QualityBadge(player: player),
+            ],
           ),
-          const SizedBox(width: 10),
-          _PlayerActionButton(
-            tooltip: player.repeat.label,
-            icon: player.repeat == PlayerRepeatMode.one
-                ? Icons.repeat_one
-                : Icons.repeat,
-            selected: player.repeat != PlayerRepeatMode.off,
-            onPressed: controller.cycleRepeat,
-          ),
-          const SizedBox(width: 10),
-          // «…» открывает то же меню, что и из островка: исполнитель, альбом,
-          // очередь и лайк. rootNavigator: плеер сам лежит в корневом
-          // навигаторе — лист должен лежать там же, поверх плеера; переходы из
-          // него при этом сначала сворачивают плеер (см. [AppRoutes]).
-          _PlayerActionButton(
-            tooltip: 'Действия',
-            icon: Icons.more_vert,
-            onPressed: openMenu,
-          ),
-          const SizedBox(width: 10),
-          _PlayerActionButton(
-            tooltip: liked ? 'Убрать из «Мне нравится»' : 'Нравится',
-            icon: liked ? Icons.favorite : Icons.favorite_border,
-            selected: liked,
-            accent: true,
-            onPressed: signedIn ? () => _like(context, ref) : null,
+          const SizedBox(height: AppLayout.playerItemGap),
+          // Второстепенные действия — одной линией по центру. Перемешивание,
+          // повтор, темп и эквалайзер переехали под транспорт
+          // ([PlayerPlaybackModes]): иначе справа от «играть» кнопок было
+          // больше, чем слева, и транспорт читался перекошенным.
+          Row(
+            mainAxisAlignment: MainAxisAlignment.center,
+            children: <Widget>[
+              // Лайк — как в V4, но цветом ошибки, а не акцентом.
+              _PlayerActionButton(
+                tooltip: liked ? 'Убрать из «Мне нравится»' : 'Нравится',
+                icon: liked ? Icons.favorite : Icons.favorite_border,
+                selected: liked,
+                accent: true,
+                onPressed: signedIn ? () => _like(context, ref) : null,
+              ),
+              const SizedBox(width: AppLayout.playerItemGap),
+              // «…» открывает то же меню, что и из островка: исполнитель,
+              // альбом, очередь и лайк. rootNavigator: плеер сам лежит в
+              // корневом навигаторе — лист должен лежать там же, поверх
+              // плеера; переходы из него сначала сворачивают плеер.
+              _PlayerActionButton(
+                tooltip: 'Действия',
+                icon: Icons.more_vert,
+                onPressed: openMenu,
+              ),
+            ],
           ),
         ],
       ),

@@ -193,7 +193,7 @@ class _PlayerRightPanelState extends ConsumerState<PlayerRightPanel> {
           // растёт вместе с обложкой (`ArtworkProgressRing.outerRatio`),
           // поэтому ширину делим на этот множитель, а не вычитаем константу.
           final double availableWidth =
-              constraints.maxWidth - _PanelArtwork.horizontalPadding * 2;
+              constraints.maxWidth - AppLayout.playerInset * 2;
           final double artSide = math.min(
             (constraints.maxHeight * 0.30).clamp(96.0, 260.0),
             (availableWidth / ArtworkProgressRing.outerRatio)
@@ -223,22 +223,36 @@ class _PlayerRightPanelState extends ConsumerState<PlayerRightPanel> {
               ),
               // В режиме плеера — крупная обложка; в режиме очереди её нет,
               // всё место отдано списку.
-              if (mode == RightPanelMode.player)
+              if (mode == RightPanelMode.player) ...<Widget>[
                 _PanelArtwork(track: track, side: artSide),
-              PlayerSeekBar(player: player, compact: true),
+                const SizedBox(height: AppLayout.playerItemGap),
+              ],
+              PlayerSeekBar(player: player),
+              // Транспорт и настройки — одной колонкой по центру: отступы
+              // равны `playerInset`, поэтому края совпадают с обложкой,
+              // подписями и полосой перемотки.
+              const SizedBox(height: AppLayout.playerItemGap),
               Padding(
-                padding: const EdgeInsets.symmetric(horizontal: 8),
-                child: PlayerTransportBar(
-                  player: player,
-                  dense: true,
-                  showModes: true,
+                padding: const EdgeInsets.symmetric(
+                  horizontal: AppLayout.playerInset,
                 ),
+                child: PlayerTransportBar(player: player),
               ),
+              const SizedBox(height: AppLayout.playerItemGap),
+              Padding(
+                padding: const EdgeInsets.symmetric(
+                  horizontal: AppLayout.playerInset,
+                ),
+                child: PlayerPlaybackModes(player: player),
+              ),
+              const SizedBox(height: AppLayout.playerGroupGap),
               const Padding(
-                padding: EdgeInsets.symmetric(horizontal: 8),
+                padding: EdgeInsets.symmetric(
+                  horizontal: AppLayout.playerInset,
+                ),
                 child: PlayerVolumeControl(),
               ),
-              const SizedBox(height: 2),
+              const SizedBox(height: AppLayout.playerItemGap),
               Expanded(
                 child: showLyrics
                     ? LyricsView(
@@ -279,9 +293,6 @@ class _PanelArtwork extends StatelessWidget {
   final Track track;
   final double side;
 
-  /// Боковой отступ обложки в панели — из раскладки выше.
-  static const double horizontalPadding = 20;
-
   @override
   Widget build(BuildContext context) {
     final List<String> variants = track.artworkFallbacks(kArtworkLarge);
@@ -289,9 +300,11 @@ class _PanelArtwork extends StatelessWidget {
     final double extent = ArtworkProgressRing.extent(side);
 
     return Padding(
+      // Обложка — по центру колонки, с тем же боковым отступом, что и всё
+      // остальное в панели.
       padding: const EdgeInsets.symmetric(
-        horizontal: horizontalPadding,
-        vertical: 4,
+        horizontal: AppLayout.playerInset,
+        vertical: AppLayout.playerVerticalInset,
       ),
       child: Center(
         child: SizedBox(
@@ -347,7 +360,12 @@ class _NextTracks extends ConsumerWidget {
       crossAxisAlignment: CrossAxisAlignment.stretch,
       children: <Widget>[
         Padding(
-          padding: const EdgeInsets.fromLTRB(16, 10, 16, 2),
+          padding: const EdgeInsets.fromLTRB(
+            AppLayout.playerInset,
+            AppLayout.playerVerticalInset,
+            AppLayout.playerInset,
+            2,
+          ),
           child: Text(
             'Далее — ${tracks.length}',
             style: text.labelLarge?.copyWith(color: scheme.onSurfaceVariant),
@@ -355,7 +373,11 @@ class _NextTracks extends ConsumerWidget {
         ),
         Expanded(
           child: ListView.builder(
-            padding: const EdgeInsets.only(bottom: 8),
+            // Нижний отступ — как верхний у шапки панели: список не должен
+            // упираться в кромку панели.
+            padding: const EdgeInsets.only(
+              bottom: AppLayout.playerVerticalInset,
+            ),
             itemCount: tracks.length,
             itemBuilder: (BuildContext context, int index) {
               final Track track = tracks[index];
@@ -449,114 +471,179 @@ class _PanelTrackRow extends ConsumerWidget {
       );
     }
 
-    return Padding(
-      padding: const EdgeInsets.fromLTRB(16, 10, 6, 6),
-      child: SizedBox(
-        height: 72,
-        child: Row(
+    // Действия строки: один размер, один зазор. Раньше они шли по одной
+    // линии с названием вперемешку с текстом и без зазоров, а в режиме
+    // плеера — сдвигались вправо вслед за названием.
+    final List<Widget> actions = <Widget>[
+      action(
+        // Переключатель режима: обложка против списка.
+        tooltip: mode == RightPanelMode.player
+            ? 'Показать очередь'
+            : 'Показать обложку',
+        icon: mode == RightPanelMode.player
+            ? Icons.queue_music
+            : Icons.album_outlined,
+        onPressed: onToggleMode,
+      ),
+      action(
+        tooltip: showLyrics ? 'Скрыть текст' : 'Показать текст',
+        icon: Icons.lyrics_outlined,
+        selectedIcon: Icons.lyrics,
+        selected: showLyrics,
+        onPressed: onToggleLyrics,
+      ),
+      action(
+        tooltip: 'Свернуть в островок',
+        icon: Icons.keyboard_double_arrow_right_rounded,
+        onPressed: onClose,
+      ),
+      action(
+        tooltip: liked ? 'Убрать из «Мне нравится»' : 'Нравится',
+        icon: liked ? Icons.favorite : Icons.favorite_border,
+        selected: liked,
+        onPressed: signedIn ? () => _like(context, ref) : null,
+      ),
+      action(
+        tooltip: 'Действия',
+        icon: Icons.more_vert,
+        onPressed: () => showTrackMenu(context, track),
+      ),
+    ];
+
+    /// Ряд действий по центру колонки: интервалы одинаковые, края ряда
+    /// совпадают с остальными блоками панели.
+    Widget actionsRow() {
+      return Row(
+        mainAxisAlignment: MainAxisAlignment.center,
+        children: <Widget>[
+          for (int i = 0; i < actions.length; i++) ...<Widget>[
+            if (i > 0) const SizedBox(width: AppLayout.playerItemGap),
+            actions[i],
+          ],
+        ],
+      );
+    }
+
+    /// Исполнитель или ошибка плеера. Ошибка — не ссылка, поэтому это
+    /// обычный текст; в режиме плеера подписи выровнены по центру.
+    Widget subtitle(TextAlign align) {
+      if (player.error != null) {
+        return Tooltip(
+          message: player.error!,
+          child: Text(
+            player.error!,
+            maxLines: 2,
+            overflow: TextOverflow.ellipsis,
+            textAlign: align,
+            style: text.bodySmall?.copyWith(color: scheme.error),
+          ),
+        );
+      }
+      // Исполнитель — ссылка на его страницу, как и везде, где он написан.
+      // Две строки и подсказка при наведении: причина отказа бывает длинной,
+      // и в одну строку её не прочитать.
+      return ArtistLine(
+        artists: track.artists,
+        textAlign: align,
+        style: text.bodySmall?.copyWith(color: scheme.onSurfaceVariant),
+      );
+    }
+
+    if (mode != RightPanelMode.player) {
+      // Режим очереди: сверху строка с миниатюрой, ниже — действия. Действия
+      // вынесены из строки, иначе на минимальной ширине панели (260) они
+      // выдавливали подпись в ноль.
+      return Padding(
+        padding: const EdgeInsets.fromLTRB(
+          AppLayout.playerInset,
+          AppLayout.playerVerticalInset,
+          AppLayout.playerInset,
+          AppLayout.playerItemGap,
+        ),
+        child: Column(
           children: <Widget>[
-            if (showArtwork) ...<Widget>[
-              // Правый клик по миниатюре — то же меню трека, что у «…».
-              GestureDetector(
-                behavior: HitTestBehavior.opaque,
-                onSecondaryTap: () => showTrackMenu(context, track),
-                child: ClipRRect(
-                  borderRadius: BorderRadius.circular(10),
-                  child: SizedBox(
-                    width: 56,
-                    height: 56,
-                    child: Artwork(
-                      url: variants.isEmpty ? null : variants.first,
-                      fallbacks: variants.length > 1
-                          ? variants.sublist(1)
-                          : const <String>[],
-                      radius: BorderRadius.circular(10),
-                    ),
-                  ),
-                ),
-              ),
-              const SizedBox(width: 12),
-            ],
-            Expanded(
-              child: Column(
-                mainAxisAlignment: MainAxisAlignment.center,
-                crossAxisAlignment: CrossAxisAlignment.start,
-                children: <Widget>[
-                  // Название — тоже цель для правого клика: это подпись
-                  // играющего трека, и меню здесь ждут в первую очередь.
+            Row(
+              children: <Widget>[
+                if (showArtwork) ...<Widget>[
+                  // Правый клик по миниатюре — то же меню трека, что у «…».
                   GestureDetector(
                     behavior: HitTestBehavior.opaque,
                     onSecondaryTap: () => showTrackMenu(context, track),
-                    child: MarqueeText(
-                      track.title,
-                      // Прокрутка стоит на паузе вместе с треком.
-                      playing: player.isPlaying,
-                      style: text.titleMedium?.copyWith(
-                        fontWeight: FontWeight.w700,
+                    child: ClipRRect(
+                      borderRadius: BorderRadius.circular(10),
+                      child: SizedBox(
+                        width: 56,
+                        height: 56,
+                        child: Artwork(
+                          url: variants.isEmpty ? null : variants.first,
+                          fallbacks: variants.length > 1
+                              ? variants.sublist(1)
+                              : const <String>[],
+                          radius: BorderRadius.circular(10),
+                        ),
                       ),
                     ),
                   ),
-                  const SizedBox(height: 2),
-                  // Исполнитель — ссылка на его страницу, как и везде, где
-                  // он написан. Ошибку плеера показываем текстом: она не
-                  // ссылка. Две строки и подсказка при наведении: причина
-                  // отказа бывает длинной («YouTube требует вход в аккаунт…»),
-                  // и в одну строку её не прочитать.
-                  if (player.error != null)
-                    Tooltip(
-                      message: player.error!,
-                      child: Text(
-                        player.error!,
-                        maxLines: 2,
-                        overflow: TextOverflow.ellipsis,
-                        style: text.bodySmall?.copyWith(color: scheme.error),
-                      ),
-                    )
-                  else
-                    ArtistLine(
-                      artists: track.artists,
-                      style: text.bodySmall?.copyWith(
-                        color: scheme.onSurfaceVariant,
-                      ),
-                    ),
+                  const SizedBox(width: AppLayout.playerItemGap),
                 ],
-              ),
+                Expanded(
+                  child: Column(
+                    mainAxisAlignment: MainAxisAlignment.center,
+                    crossAxisAlignment: CrossAxisAlignment.start,
+                    children: <Widget>[
+                      // Название — тоже цель для правого клика: это подпись
+                      // играющего трека, и меню здесь ждут в первую очередь.
+                      GestureDetector(
+                        behavior: HitTestBehavior.opaque,
+                        onSecondaryTap: () => showTrackMenu(context, track),
+                        child: MarqueeText(
+                          track.title,
+                          // Прокрутка стоит на паузе вместе с треком.
+                          playing: player.isPlaying,
+                          style: text.titleMedium?.copyWith(
+                            fontWeight: FontWeight.w700,
+                          ),
+                        ),
+                      ),
+                      const SizedBox(height: 2),
+                      subtitle(TextAlign.start),
+                    ],
+                  ),
+                ),
+              ],
             ),
-            action(
-              // Переключатель режима: обложка против списка.
-              tooltip: mode == RightPanelMode.player
-                  ? 'Показать очередь'
-                  : 'Показать обложку',
-              icon: mode == RightPanelMode.player
-                  ? Icons.queue_music
-                  : Icons.album_outlined,
-              onPressed: onToggleMode,
-            ),
-            action(
-              tooltip: showLyrics ? 'Скрыть текст' : 'Показать текст',
-              icon: Icons.lyrics_outlined,
-              selectedIcon: Icons.lyrics,
-              selected: showLyrics,
-              onPressed: onToggleLyrics,
-            ),
-            action(
-              tooltip: 'Свернуть в островок',
-              icon: Icons.keyboard_double_arrow_right_rounded,
-              onPressed: onClose,
-            ),
-            action(
-              tooltip: liked ? 'Убрать из «Мне нравится»' : 'Нравится',
-              icon: liked ? Icons.favorite : Icons.favorite_border,
-              selected: liked,
-              onPressed: signedIn ? () => _like(context, ref) : null,
-            ),
-            action(
-              tooltip: 'Действия',
-              icon: Icons.more_vert,
-              onPressed: () => showTrackMenu(context, track),
-            ),
+            const SizedBox(height: AppLayout.playerItemGap),
+            actionsRow(),
           ],
         ),
+      );
+    }
+
+    // Режим плеера: название, исполнитель и действия — по центру колонки,
+    // крупная обложка стоит ниже.
+    return Padding(
+      padding: const EdgeInsets.fromLTRB(
+        AppLayout.playerInset,
+        AppLayout.playerVerticalInset,
+        AppLayout.playerInset,
+        0,
+      ),
+      child: Column(
+        children: <Widget>[
+          GestureDetector(
+            behavior: HitTestBehavior.opaque,
+            onSecondaryTap: () => showTrackMenu(context, track),
+            child: MarqueeText(
+              track.title,
+              playing: player.isPlaying,
+              style: text.titleMedium?.copyWith(fontWeight: FontWeight.w700),
+            ),
+          ),
+          const SizedBox(height: 2),
+          subtitle(TextAlign.center),
+          const SizedBox(height: AppLayout.playerItemGap),
+          actionsRow(),
+        ],
       ),
     );
   }
