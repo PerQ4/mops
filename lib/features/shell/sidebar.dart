@@ -22,14 +22,58 @@ import '../playlist/playlist_screen.dart';
 import 'content_navigator.dart';
 import 'destinations.dart';
 
+// --------------------------------------------------------------- отступы панели
+//
+// Один источник горизонтальных отступов на всю панель. Раньше строки, поиск,
+// заголовки и навигация отсчитывались от 6/8/12/14/16 каждый по-своему, и левый
+// край выглядел «лестницей». Теперь любая «карточка» (подсветка строки, поле
+// поиска, строка навигации) прижата к краю на [_inset], а её содержимое — ещё
+// на [_rowPad]. Отсюда же считаются заголовки, поэтому название категории
+// стоит ровно над названием строки.
+
+/// Отступ от края панели до фона строки.
+const double _inset = 8;
+
+/// Внутренний отступ строки: от края подсветки до обложки и текста.
+const double _rowPad = 8;
+
+/// Горизонталь, по которой выровнены тексты: заголовок категории, название
+/// строки, подпись поиска, счётчик и кнопка сортировки.
+const double _textInset = _inset + _rowPad;
+
+/// Зазор между кнопками шапки и между подписью и первой кнопкой.
+const double _headerGap = 4;
+
+/// Высота строки шапки. Одна на заголовок с кнопками и на раскрытый поиск,
+/// иначе при открытии поиска панель дёргалась бы по высоте.
+const double _headerHeight = 44;
+
+/// Ширина, при которой в шапке помещается «Библиотека» рядом со всеми
+/// кнопками. Уже — подпись прячем: обрезанное «Б…» выглядело поломкой.
+const double _headerTitleMinWidth = 250;
+
+/// Предел ширины счётчика категории. В `AppLayout` он 96, но «123 исполнителя»
+/// в него не влезает и обрезается многоточием; здесь счётчик стоит один.
+const double _categoryCountMaxWidth = 120;
+
+/// Высота закреплённого заголовка категории вместе с отступами.
+const double _categoryHeaderHeight = 36;
+
+/// Высота поля поиска.
+const double _searchHeight = 36;
+
 /// Постоянная левая панель широкой раскладки.
 ///
 /// Форма взята у Spotify Desktop и боковой панели swiftify: сверху заголовок
-/// библиотеки, ниже — поиск, сортировка и один прокручиваемый список, в котором
-/// категории идут друг под другом («Плейлисты» → плейлисты, «Альбомы» →
-/// альбомы, «Исполнители» → исполнители). У каждого элемента — контекстное меню:
-/// открыть, играть, сохранить/убрать, а у своих плейлистов ещё переименовать и
-/// удалить.
+/// библиотеки с кнопками и поиском, ниже — сортировка и один прокручиваемый
+/// список, в котором категории идут друг под другом («Плейлисты» → плейлисты,
+/// «Альбомы» → альбомы, «Исполнители» → исполнители). Заголовок категории
+/// закрепляется сверху, пока видна его секция, и сворачивает её по клику.
+/// У каждого элемента — контекстное меню: открыть, играть, сохранить/убрать, а
+/// у своих плейлистов ещё переименовать и удалить.
+///
+/// Горизонтальные отступы считаются от одной константы [_inset], поэтому левый
+/// и правый край строк, заголовков и навигации совпадают.
 ///
 /// «Настройки» вынесены в самый низ панели, отдельным пунктом под списком — как
 /// «Settings» в swiftify.
@@ -41,8 +85,9 @@ import 'destinations.dart';
 ///
 /// Панель сворачивается в узкую полосу с обложками (состояние запоминается в
 /// настройках — иначе при каждом переходе в широкую раскладку панель
-/// разворачивалась бы заново). Порядок сортировки и строка поиска — сессионные:
-/// они живут в [librarySidebarProvider].
+/// разворачивалась бы заново). Порядок сортировки, строка поиска и свёрнутые
+/// категории — сессионные: они живут в [librarySidebarProvider] и
+/// [_collapsedSectionsProvider].
 class LibrarySidebar extends ConsumerStatefulWidget {
   const LibrarySidebar({super.key});
 
@@ -61,10 +106,28 @@ class _LibrarySidebarState extends ConsumerState<LibrarySidebar> {
   /// не теряется — строка поиска переживает сворачивание.
   final TextEditingController _search = TextEditingController();
 
+  /// Раскрыт ли поиск. В обычном виде шапка — заголовок и кнопки, поиск
+  /// открывается по значку и занимает строку целиком. Высоту шапки оба
+  /// состояния делят, поэтому она не прыгает.
+  bool _searchOpen = false;
+
   @override
   void dispose() {
     _search.dispose();
     super.dispose();
+  }
+
+  /// Открывает и закрывает поиск.
+  ///
+  /// При закрытии запрос сбрасывается: спрятанный фильтр оставлял бы список
+  /// отфильтрованным без единого намёка, почему строк так мало.
+  void _toggleSearch() {
+    final bool open = !_searchOpen;
+    setState(() => _searchOpen = open);
+    if (!open) {
+      _search.clear();
+      ref.read(librarySidebarProvider.notifier).setQuery('');
+    }
   }
 
   /// Переключает свёрнутость панели и запоминает выбор.
@@ -87,20 +150,17 @@ class _LibrarySidebarState extends ConsumerState<LibrarySidebar> {
     final ColorScheme scheme = Theme.of(context).colorScheme;
     final double window = context.layoutWidth;
     final bool savedCollapsed = ref.watch(
-      settingsControllerProvider.select(
-        (AppSettings s) => s.sidebarCollapsed,
-      ),
+      settingsControllerProvider.select((AppSettings s) => s.sidebarCollapsed),
     );
     // Выбор в сеансе важнее умолчания: иначе на среднем окне панель после
     // клика по кнопке тут же сворачивалась бы обратно.
-    final bool collapsed = ref.watch(sidebarCollapseOverrideProvider) ??
+    final bool collapsed =
+        ref.watch(sidebarCollapseOverrideProvider) ??
         AppLayout.sidebarCollapsedByDefault(window, saved: savedCollapsed);
     // Навигация переезжает в панель, только пока сама панель есть: на узком
     // окне её нет, и там разделы живут в плавающем островке.
     final bool navInPanel = ref.watch(
-      settingsControllerProvider.select(
-        (AppSettings s) => s.sidebarNavigation,
-      ),
+      settingsControllerProvider.select((AppSettings s) => s.sidebarNavigation),
     );
     final double saved = ref.watch(
       settingsControllerProvider.select((AppSettings s) => s.sidebarWidth),
@@ -108,8 +168,10 @@ class _LibrarySidebarState extends ConsumerState<LibrarySidebar> {
     // Предел зависит от окна: на 1100 панель в 480 пикселей съедала бы
     // половину. Ту же границу соблюдаем и при перетаскивании за кромку.
     final double limit = AppLayout.sidebarWidthLimit(window);
-    final double expanded =
-        (_dragging ?? saved).clamp(AppLayout.sidebarMinWidth, limit);
+    final double expanded = (_dragging ?? saved).clamp(
+      AppLayout.sidebarMinWidth,
+      limit,
+    );
 
     // Ширину анимируем: содержимое справа подстраивается плавно, без рывка.
     // Во время перетаскивания анимация выключена — панель идёт за курсором.
@@ -133,12 +195,13 @@ class _LibrarySidebarState extends ConsumerState<LibrarySidebar> {
                   _SidebarHeader(
                     collapsed: collapsed,
                     onToggle: () => _toggleCollapsed(collapsed),
+                    search: _search,
+                    searchOpen: _searchOpen,
+                    onSearchToggle: _toggleSearch,
                   ),
                   if (navInPanel) _SidebarNavigation(collapsed: collapsed),
                   Expanded(
-                    child: collapsed
-                        ? _CollapsedLibrary()
-                        : _ExpandedLibrary(search: _search),
+                    child: collapsed ? _CollapsedLibrary() : _ExpandedLibrary(),
                   ),
                   // «Настройки» — в самом низу панели, отдельным пунктом под
                   // списком (как «Settings» в swiftify), а не в общем списке.
@@ -160,9 +223,8 @@ class _LibrarySidebarState extends ConsumerState<LibrarySidebar> {
                     behavior: HitTestBehavior.translucent,
                     onHorizontalDragUpdate: (DragUpdateDetails details) {
                       setState(() {
-                        _dragging =
-                            ((_dragging ?? saved) + details.delta.dx)
-                                .clamp(AppLayout.sidebarMinWidth, limit);
+                        _dragging = ((_dragging ?? saved) + details.delta.dx)
+                            .clamp(AppLayout.sidebarMinWidth, limit);
                       });
                     },
                     onHorizontalDragEnd: (DragEndDetails _) {
@@ -187,13 +249,22 @@ class _LibrarySidebarState extends ConsumerState<LibrarySidebar> {
   }
 }
 
-/// Шапка панели: заголовок и кнопки обновления и сворачивания.
+/// Шапка панели: заголовок, кнопки и поиск в одной строке.
 ///
 /// В свёрнутом виде остаётся только кнопка — она же и разворачивает панель.
 /// Прятать заголовок, но оставлять кнопку важно: иначе развернуть панель
 /// было бы нечем.
+///
+/// Высота строки постоянна ([_headerHeight]) в обоих состояниях поиска:
+/// открытие поля не сдвигает список под шапкой.
 class _SidebarHeader extends ConsumerWidget {
-  const _SidebarHeader({required this.collapsed, required this.onToggle});
+  const _SidebarHeader({
+    required this.collapsed,
+    required this.onToggle,
+    required this.search,
+    required this.searchOpen,
+    required this.onSearchToggle,
+  });
 
   final bool collapsed;
 
@@ -201,49 +272,117 @@ class _SidebarHeader extends ConsumerWidget {
   /// ширина окна и сохранённая настройка.
   final VoidCallback onToggle;
 
+  final TextEditingController search;
+  final bool searchOpen;
+  final VoidCallback onSearchToggle;
+
   @override
   Widget build(BuildContext context, WidgetRef ref) {
     final bool signedIn = ref.watch(
       authControllerProvider.select((AuthState s) => s.isSignedIn),
     );
-    final IconButton toggle = IconButton(
+    final Widget toggle = _HeaderIcon(
       tooltip: collapsed ? 'Развернуть библиотеку' : 'Свернуть библиотеку',
-      iconSize: 20,
-      icon: Icon(collapsed ? Icons.chevron_right : Icons.chevron_left),
+      icon: collapsed ? Icons.chevron_right : Icons.chevron_left,
       onPressed: onToggle,
     );
 
     if (collapsed) {
-      return Padding(
-        padding: const EdgeInsets.only(top: 4, bottom: 4),
+      return SizedBox(
+        height: _headerHeight,
         child: Center(child: toggle),
       );
     }
 
     return Padding(
-      padding: const EdgeInsets.fromLTRB(10, 4, 4, 0),
-      child: Row(
-        children: <Widget>[
-          const Expanded(child: _SectionLabel('Библиотека')),
-          // Обновление и создание показываем только вошедшему: без входа
-          // список всё равно пуст, и кнопки делали бы нечего.
-          if (signedIn) ...<Widget>[
-            IconButton(
-              tooltip: 'Создать плейлист',
-              iconSize: 20,
-              icon: const Icon(Icons.playlist_add),
-              onPressed: () => createPlaylistWithDialog(context, ref),
-            ),
-            IconButton(
-              tooltip: 'Обновить библиотеку',
-              iconSize: 18,
-              icon: const Icon(Icons.refresh),
-              onPressed: () => refreshLibrary(ref),
-            ),
-          ],
-          toggle,
-        ],
+      padding: const EdgeInsets.symmetric(horizontal: _inset),
+      child: SizedBox(
+        height: _headerHeight,
+        // Обе строки живут в одном стеке и меняются местами, поэтому высота
+        // шапки не зависит от того, открыт поиск или нет.
+        child: AnimatedSwitcher(
+          duration: AppMotion.rowActions.duration,
+          switchInCurve: AppMotion.rowActions.curve,
+          switchOutCurve: AppMotion.rowActions.curve,
+          child: searchOpen
+              ? _LibrarySearchField(
+                  key: const ValueKey<String>('sidebar-search'),
+                  controller: search,
+                  onClose: onSearchToggle,
+                )
+              : LayoutBuilder(
+                  key: const ValueKey<String>('sidebar-actions'),
+                  builder: (BuildContext context, BoxConstraints constraints) {
+                    // На 220 заголовок сжимался до «Б…» — подпись прячем,
+                    // ряд кнопок остаётся ровным и прижатым к правому краю.
+                    final bool showTitle =
+                        constraints.maxWidth >= _headerTitleMinWidth;
+                    return Row(
+                      children: <Widget>[
+                        if (showTitle)
+                          const Expanded(child: _SectionLabel('Библиотека'))
+                        else
+                          const Spacer(),
+                        _HeaderIcon(
+                          tooltip: 'Поиск в библиотеке',
+                          icon: Icons.search,
+                          onPressed: onSearchToggle,
+                        ),
+                        // Обновление и создание показываем только вошедшему:
+                        // без входа список всё равно пуст, и кнопки делали бы
+                        // нечего.
+                        if (signedIn) ...<Widget>[
+                          const SizedBox(width: _headerGap),
+                          _HeaderIcon(
+                            tooltip: 'Создать плейлист',
+                            icon: Icons.playlist_add,
+                            onPressed: () =>
+                                createPlaylistWithDialog(context, ref),
+                          ),
+                          const SizedBox(width: _headerGap),
+                          _HeaderIcon(
+                            tooltip: 'Обновить библиотеку',
+                            icon: Icons.refresh,
+                            onPressed: () => refreshLibrary(ref),
+                          ),
+                        ],
+                        const SizedBox(width: _headerGap),
+                        toggle,
+                      ],
+                    );
+                  },
+                ),
+        ),
       ),
+    );
+  }
+}
+
+/// Кнопка шапки: одинаковый квадрат и одинаковый зазор у всех, чтобы ряд
+/// значков не разъезжался из-за стандартных 48 пикселей `IconButton`.
+class _HeaderIcon extends StatelessWidget {
+  const _HeaderIcon({
+    required this.tooltip,
+    required this.icon,
+    required this.onPressed,
+  });
+
+  final String tooltip;
+  final IconData icon;
+  final VoidCallback onPressed;
+
+  @override
+  Widget build(BuildContext context) {
+    return IconButton(
+      tooltip: tooltip,
+      iconSize: 20,
+      padding: EdgeInsets.zero,
+      constraints: const BoxConstraints.tightFor(width: 36, height: 36),
+      style: IconButton.styleFrom(
+        tapTargetSize: MaterialTapTargetSize.shrinkWrap,
+      ),
+      icon: Icon(icon),
+      onPressed: onPressed,
     );
   }
 }
@@ -257,7 +396,7 @@ class _SectionLabel extends StatelessWidget {
   Widget build(BuildContext context) {
     final ColorScheme scheme = Theme.of(context).colorScheme;
     return Padding(
-      padding: const EdgeInsets.fromLTRB(22, 18, 16, 6),
+      padding: const EdgeInsets.symmetric(horizontal: _rowPad),
       child: Text(
         title,
         // Подпись не должна вылезать за панель: при узкой ширине (и во время
@@ -275,11 +414,9 @@ class _SectionLabel extends StatelessWidget {
   }
 }
 
-/// Развёрнутая панель: поиск, разделы и список выбранного раздела.
+/// Развёрнутая панель: разделы и список выбранного раздела.
 class _ExpandedLibrary extends ConsumerWidget {
-  const _ExpandedLibrary({required this.search});
-
-  final TextEditingController search;
+  const _ExpandedLibrary();
 
   @override
   Widget build(BuildContext context, WidgetRef ref) {
@@ -299,13 +436,13 @@ class _ExpandedLibrary extends ConsumerWidget {
     }
 
     final LibrarySidebarState state = ref.watch(librarySidebarProvider);
-    final LibrarySidebarController controller =
-        ref.read(librarySidebarProvider.notifier);
+    final LibrarySidebarController controller = ref.read(
+      librarySidebarProvider.notifier,
+    );
 
     return Column(
       crossAxisAlignment: CrossAxisAlignment.stretch,
       children: <Widget>[
-        _LibrarySearchField(controller: search, query: state.query),
         // Список один на все категории: переключателя разделов больше нет.
         Expanded(
           child: _LibraryList(state: state, onSort: controller.setSort),
@@ -316,19 +453,28 @@ class _ExpandedLibrary extends ConsumerWidget {
 }
 
 /// Строка поиска по своей библиотеке — фильтрует список на месте.
+///
+/// Живёт в шапке панели и занимает её строку целиком: ширину задаёт `Expanded`
+/// шапки, высоту — [_searchHeight]. Крестик закрывает поиск (и сбрасывает
+/// запрос) — так в шапке не появляется второй такой же крестик рядом.
 class _LibrarySearchField extends ConsumerWidget {
-  const _LibrarySearchField({required this.controller, required this.query});
+  const _LibrarySearchField({
+    super.key,
+    required this.controller,
+    required this.onClose,
+  });
 
   final TextEditingController controller;
-  final String query;
+  final VoidCallback onClose;
 
   @override
   Widget build(BuildContext context, WidgetRef ref) {
     final ColorScheme scheme = Theme.of(context).colorScheme;
-    return Padding(
-      padding: const EdgeInsets.fromLTRB(12, 0, 12, 6),
+    return SizedBox(
+      height: _searchHeight,
       child: TextField(
         controller: controller,
+        autofocus: true,
         textInputAction: TextInputAction.search,
         style: Theme.of(context).textTheme.bodyMedium,
         decoration: InputDecoration(
@@ -336,28 +482,23 @@ class _LibrarySearchField extends ConsumerWidget {
           hintText: 'Поиск в библиотеке',
           filled: true,
           fillColor: scheme.surfaceContainerHighest.withValues(alpha: 0.5),
-          contentPadding: const EdgeInsets.symmetric(vertical: 10),
+          contentPadding: const EdgeInsets.symmetric(vertical: 8),
           prefixIcon: const Icon(Icons.search, size: 18),
           prefixIconConstraints: const BoxConstraints(
-            minWidth: 36,
-            minHeight: 36,
-          ),
-          suffixIcon: query.isEmpty
-              ? null
-              : IconButton(
-                  tooltip: 'Очистить',
-                  iconSize: 16,
-                  icon: const Icon(Icons.close),
-                  onPressed: () {
-                    // `clear` не зовёт `onChanged` — сбрасываем запрос сами,
-                    // иначе список остался бы отфильтрованным.
-                    controller.clear();
-                    ref.read(librarySidebarProvider.notifier).setQuery('');
-                  },
-                ),
-          suffixIconConstraints: const BoxConstraints(
             minWidth: 32,
             minHeight: 32,
+          ),
+          suffixIcon: IconButton(
+            tooltip: 'Закрыть поиск',
+            iconSize: 16,
+            padding: EdgeInsets.zero,
+            constraints: const BoxConstraints.tightFor(width: 28, height: 28),
+            icon: const Icon(Icons.close),
+            onPressed: onClose,
+          ),
+          suffixIconConstraints: const BoxConstraints(
+            minWidth: 28,
+            minHeight: 28,
           ),
           border: OutlineInputBorder(
             borderRadius: BorderRadius.circular(AppLayout.radiusM),
@@ -402,7 +543,7 @@ class _SidebarNavigation extends ConsumerWidget {
             onTap: () => selectShellDestination(ref, destination.index),
           ),
         const SizedBox(height: 6),
-        const Divider(height: 1, indent: 12, endIndent: 12),
+        const Divider(height: 1, indent: _textInset, endIndent: _textInset),
       ],
     );
   }
@@ -424,7 +565,7 @@ class _SidebarFooter extends StatelessWidget {
       crossAxisAlignment: CrossAxisAlignment.stretch,
       mainAxisSize: MainAxisSize.min,
       children: <Widget>[
-        const Divider(height: 1, indent: 12, endIndent: 12),
+        const Divider(height: 1, indent: _textInset, endIndent: _textInset),
         _NavRow(
           icon: Icons.settings_outlined,
           selectedIcon: Icons.settings,
@@ -464,7 +605,7 @@ class _NavRow extends StatelessWidget {
     final BorderRadius radius = BorderRadius.circular(AppLayout.radiusM);
 
     return Padding(
-      padding: const EdgeInsets.fromLTRB(8, 1, 8, 1),
+      padding: const EdgeInsets.symmetric(horizontal: _inset, vertical: 1),
       child: Tooltip(
         // В развёрнутой панели подпись и так видна — подсказка не нужна.
         message: collapsed ? label : '',
@@ -479,7 +620,7 @@ class _NavRow extends StatelessWidget {
                     borderRadius: radius,
                   )
                 : null,
-            padding: EdgeInsets.symmetric(horizontal: collapsed ? 0 : 12),
+            padding: EdgeInsets.symmetric(horizontal: collapsed ? 0 : _rowPad),
             child: Row(
               mainAxisAlignment: collapsed
                   ? MainAxisAlignment.center
@@ -500,12 +641,13 @@ class _NavRow extends StatelessWidget {
                       maxLines: 1,
                       overflow: TextOverflow.ellipsis,
                       style: Theme.of(context).textTheme.bodyMedium?.copyWith(
-                            color: selected
-                                ? scheme.onSecondaryContainer
-                                : scheme.onSurface,
-                            fontWeight:
-                                selected ? FontWeight.w600 : FontWeight.w500,
-                          ),
+                        color: selected
+                            ? scheme.onSecondaryContainer
+                            : scheme.onSurface,
+                        fontWeight: selected
+                            ? FontWeight.w600
+                            : FontWeight.w500,
+                      ),
                     ),
                   ),
                 ],
@@ -539,8 +681,9 @@ class _LibraryList extends ConsumerWidget {
 
   @override
   Widget build(BuildContext context, WidgetRef ref) {
-    final AsyncValue<LibraryPlaylists> playlists =
-        ref.watch(likedPlaylistsProvider);
+    final AsyncValue<LibraryPlaylists> playlists = ref.watch(
+      likedPlaylistsProvider,
+    );
     final AsyncValue<List<Album>> albums = ref.watch(likedAlbumsProvider);
     final AsyncValue<List<Artist>> artists = ref.watch(libraryArtistsProvider);
 
@@ -560,43 +703,39 @@ class _LibraryList extends ConsumerWidget {
       return _loadingView(context, compact: compact);
     }
 
-    final List<_LibEntry> entries = <_LibEntry>[];
+    final List<_LibGroup> groups = <_LibGroup>[];
     // Порядок важен: он же порядок заголовков сверху вниз.
-    final int found = _appendCategory<Playlist>(
-          entries: entries,
-          compact: compact,
+    final int found =
+        _addGroup<Playlist>(
+          groups: groups,
           state: state,
-          header: LibrarySection.playlists.label,
+          section: LibrarySection.playlists,
           countLabel: playlistCountLabel,
-          emptyText: 'Плейлистов нет',
-          source: playlists.whenData(
-            (LibraryPlaylists data) => data.playlists,
-          ),
+          emptyText: 'Плейлистов пока нет',
+          source: playlists.whenData((LibraryPlaylists data) => data.playlists),
           titleOf: (Playlist p) => p.title,
           ownerOf: (Playlist p) => p.author ?? '',
           rowBuilder: (Playlist p, bool compact) =>
               _PlaylistRow(playlist: p, compact: compact),
         ) +
-        _appendCategory<Album>(
-          entries: entries,
-          compact: compact,
+        _addGroup<Album>(
+          groups: groups,
           state: state,
-          header: LibrarySection.albums.label,
+          section: LibrarySection.albums,
           countLabel: _albumCountLabel,
-          emptyText: 'Альбомов нет',
+          emptyText: 'Альбомов пока нет',
           source: albums,
           titleOf: (Album a) => a.title,
           ownerOf: (Album a) => a.artistLine,
           rowBuilder: (Album a, bool compact) =>
               _AlbumRow(album: a, compact: compact),
         ) +
-        _appendCategory<Artist>(
-          entries: entries,
-          compact: compact,
+        _addGroup<Artist>(
+          groups: groups,
           state: state,
-          header: LibrarySection.artists.label,
+          section: LibrarySection.artists,
           countLabel: artistCountLabel,
-          emptyText: 'Исполнителей нет',
+          emptyText: 'Исполнителей пока нет',
           source: artists,
           titleOf: (Artist a) => a.name,
           ownerOf: (Artist a) => a.name,
@@ -605,14 +744,21 @@ class _LibraryList extends ConsumerWidget {
         );
 
     if (compact) {
+      // В полосе значков категории не подписаны — разделяем их чертой.
+      final List<Widget Function(bool compact)> rail =
+          <Widget Function(bool compact)>[];
+      for (final _LibGroup group in groups) {
+        if (group.rows.isEmpty) continue;
+        if (rail.isNotEmpty) rail.add((bool _) => const _RailDivider());
+        rail.addAll(group.rows);
+      }
       return ListView.builder(
         // Прокрутка одна на весь список: категории идут подряд, отдельного
         // «раздела» с собственным смещением больше нет.
         key: const PageStorageKey<String>('library-rail'),
         padding: const EdgeInsets.only(bottom: 12),
-        itemCount: entries.length,
-        itemBuilder: (BuildContext context, int index) =>
-            _entry(entries[index], true),
+        itemCount: rail.length,
+        itemBuilder: (BuildContext context, int index) => rail[index](true),
       );
     }
 
@@ -623,7 +769,8 @@ class _LibraryList extends ConsumerWidget {
     );
 
     // Ищем, но совпадений нет ни в одной категории: вместо трёх заголовков с
-    // нулями показываем одну понятную подсказку.
+    // нулями показываем одну понятную подсказку. Пустые строки категорий при
+    // этом не рисуются вовсе — иначе подсказка дублировалась бы трижды.
     if (state.query.isNotEmpty && found == 0) {
       return Column(
         crossAxisAlignment: CrossAxisAlignment.stretch,
@@ -636,17 +783,57 @@ class _LibraryList extends ConsumerWidget {
       );
     }
 
+    final Set<LibrarySection> collapsedSections = ref.watch(
+      _collapsedSectionsProvider,
+    );
+    final _CollapsedSectionsController sections = ref.read(
+      _collapsedSectionsProvider.notifier,
+    );
+
     return Column(
       crossAxisAlignment: CrossAxisAlignment.stretch,
       children: <Widget>[
         toolbar,
         Expanded(
-          child: ListView.builder(
+          child: CustomScrollView(
             key: const PageStorageKey<String>('library-list'),
-            padding: const EdgeInsets.only(bottom: 12),
-            itemCount: entries.length,
-            itemBuilder: (BuildContext context, int index) =>
-                _entry(entries[index], false),
+            slivers: <Widget>[
+              for (final _LibGroup group in groups)
+                SliverMainAxisGroup(
+                  slivers: <Widget>[
+                    // Заголовок закрепляется сверху, пока видна его категория,
+                    // и уступает место следующему: в длинном списке всегда
+                    // понятно, какая это категория.
+                    SliverPersistentHeader(
+                      pinned: true,
+                      delegate: _CategoryHeaderDelegate(
+                        title: group.section.label,
+                        count: group.count,
+                        countLabel: group.countLabel(group.count),
+                        collapsed: collapsedSections.contains(group.section),
+                        onTap: () => sections.toggle(group.section),
+                      ),
+                    ),
+                    if (collapsedSections.contains(group.section))
+                      const SliverToBoxAdapter(child: SizedBox.shrink())
+                    else if (group.rows.isEmpty)
+                      // Пустую категорию подписываем только без фильтра: при
+                      // поиске ноль уже виден в счётчике заголовка.
+                      SliverToBoxAdapter(
+                        child: state.query.isEmpty
+                            ? _CategoryEmpty(text: group.emptyText)
+                            : const SizedBox.shrink(),
+                      )
+                    else
+                      SliverList.builder(
+                        itemCount: group.rows.length,
+                        itemBuilder: (BuildContext context, int index) =>
+                            group.rows[index](false),
+                      ),
+                  ],
+                ),
+              const SliverPadding(padding: EdgeInsets.only(bottom: 12)),
+            ],
           ),
         ),
       ],
@@ -654,16 +841,34 @@ class _LibraryList extends ConsumerWidget {
   }
 }
 
-/// Добавляет в плоский список заголовок категории и её строки.
+/// Категория библиотеки вместе с её отфильтрованными строками.
+final class _LibGroup {
+  _LibGroup({
+    required this.section,
+    required this.count,
+    required this.countLabel,
+    required this.emptyText,
+    required this.rows,
+  });
+
+  final LibrarySection section;
+  final int count;
+  final String Function(int count) countLabel;
+  final String emptyText;
+
+  /// Строки: `compact` — свёрнутая полоса с одними обложками.
+  final List<Widget Function(bool compact)> rows;
+}
+
+/// Добавляет категорию в список групп.
 ///
 /// Возвращает число показанных строк (с учётом фильтра). Каждая категория
 /// приходит своим провайдером, поэтому «склеиваем» их здесь, а не в слое
 /// состояния: провайдеры независимы и грузятся параллельно.
-int _appendCategory<T>({
-  required List<_LibEntry> entries,
-  required bool compact,
+int _addGroup<T>({
+  required List<_LibGroup> groups,
   required LibrarySidebarState state,
-  required String header,
+  required LibrarySection section,
   required String Function(int count) countLabel,
   required String emptyText,
   required AsyncValue<List<T>> source,
@@ -676,129 +881,207 @@ int _appendCategory<T>({
   // не подменяются одним состоянием на весь список.
   if (data == null) return 0;
 
-  final List<T> visible =
-      _arrange(data, state: state, title: titleOf, owner: ownerOf);
-
-  if (compact) {
-    if (visible.isEmpty) return 0;
-    // В полосе значков категории не подписаны — разделяем их чертой.
-    if (entries.isNotEmpty) entries.add(const _LibGapEntry());
-    for (final T item in visible) {
-      entries.add(_LibRowEntry((bool c) => rowBuilder(item, c)));
-    }
-    return visible.length;
-  }
-
-  entries.add(_LibHeaderEntry(title: header, count: countLabel(visible.length)));
-  if (visible.isEmpty) {
-    // Пустую категорию подписываем только без фильтра: при поиске ноль уже
-    // виден в счётчике заголовка.
-    if (state.query.isEmpty) {
-      entries.add(_LibRowEntry((bool _) => _CategoryEmpty(text: emptyText)));
-    }
-    return 0;
-  }
-  for (final T item in visible) {
-    entries.add(_LibRowEntry((bool c) => rowBuilder(item, c)));
-  }
+  final List<T> visible = _arrange(
+    data,
+    state: state,
+    title: titleOf,
+    owner: ownerOf,
+  );
+  groups.add(
+    _LibGroup(
+      section: section,
+      count: visible.length,
+      countLabel: countLabel,
+      emptyText: emptyText,
+      rows: <Widget Function(bool compact)>[
+        for (final T item in visible)
+          (bool compact) => rowBuilder(item, compact),
+      ],
+    ),
+  );
   return visible.length;
 }
 
-/// Элемент плоского списка библиотеки: заголовок категории, строка или
-/// разделитель между категориями в свёрнутой полосе.
-@immutable
-sealed class _LibEntry {
-  const _LibEntry();
+/// Свёрнутые категории библиотеки.
+///
+/// Состояние сессионное и в настройки не пишется: это временный взгляд на
+/// список, а не оформление. Живёт в Riverpod, а не в `State` списка, потому что
+/// `_LibraryList` пересоздаётся при сворачивании панели — иначе категории
+/// разворачивались бы сами.
+class _CollapsedSectionsController extends Notifier<Set<LibrarySection>> {
+  @override
+  Set<LibrarySection> build() => const <LibrarySection>{};
+
+  void toggle(LibrarySection section) {
+    final Set<LibrarySection> next = Set<LibrarySection>.of(state);
+    if (!next.remove(section)) next.add(section);
+    state = next;
+  }
 }
 
-final class _LibHeaderEntry extends _LibEntry {
-  const _LibHeaderEntry({required this.title, required this.count});
-
-  final String title;
-  final String count;
-}
-
-final class _LibRowEntry extends _LibEntry {
-  const _LibRowEntry(this.build);
-
-  /// Строит строку: `compact` — свёрнутая полоса с одними обложками.
-  final Widget Function(bool compact) build;
-}
+final NotifierProvider<_CollapsedSectionsController, Set<LibrarySection>>
+_collapsedSectionsProvider =
+    NotifierProvider<_CollapsedSectionsController, Set<LibrarySection>>(
+      _CollapsedSectionsController.new,
+    );
 
 /// Разделитель между категориями в свёрнутой полосе.
-final class _LibGapEntry extends _LibEntry {
-  const _LibGapEntry();
+class _RailDivider extends StatelessWidget {
+  const _RailDivider();
+
+  @override
+  Widget build(BuildContext context) {
+    return const Padding(
+      padding: EdgeInsets.symmetric(horizontal: _textInset, vertical: 4),
+      child: Divider(height: 1),
+    );
+  }
 }
 
-/// Отрисовывает элемент плоского списка.
-Widget _entry(_LibEntry entry, bool compact) => switch (entry) {
-      _LibHeaderEntry(:final String title, :final String count) =>
-        _CategoryHeader(title: title, count: count),
-      _LibRowEntry(:final Widget Function(bool compact) build) => build(compact),
-      _LibGapEntry() => const Padding(
-          padding: EdgeInsets.symmetric(horizontal: 16, vertical: 4),
-          child: Divider(height: 1),
-        ),
-    };
-
-/// Заголовок категории в списке: название и счётчик строк.
+/// Заголовок категории в списке: название, счётчик и признак свёрнутости.
 ///
 /// Счётчик стоит справа и ограничен по ширине: длинная подпись («123
-/// исполнителя») иначе выдавила бы название категории.
+/// исполнителя») иначе выдавила бы название категории. В свёрнутой категории
+/// он остаётся единственным содержимым — по нему видно, сколько строк скрыто.
 class _CategoryHeader extends StatelessWidget {
-  const _CategoryHeader({required this.title, required this.count});
+  const _CategoryHeader({
+    required this.title,
+    required this.count,
+    required this.countLabel,
+    required this.collapsed,
+  });
 
   final String title;
-  final String count;
+  final int count;
+
+  /// «14 плейлистов» — подпись для широкой панели. На узкой остаётся число:
+  /// иначе подпись съедала название категории.
+  final String countLabel;
+  final bool collapsed;
 
   @override
   Widget build(BuildContext context) {
     final ColorScheme scheme = Theme.of(context).colorScheme;
-    final TextStyle? titleStyle =
-        Theme.of(context).textTheme.labelLarge?.copyWith(
-              color: scheme.onSurfaceVariant,
-              fontWeight: FontWeight.w700,
-              letterSpacing: 0.4,
-            );
+    final TextStyle? titleStyle = Theme.of(context).textTheme.labelLarge
+        ?.copyWith(
+          color: scheme.onSurfaceVariant,
+          fontWeight: FontWeight.w700,
+          letterSpacing: 0.4,
+        );
     final TextStyle? countStyle = Theme.of(context).textTheme.labelSmall
         ?.copyWith(color: scheme.onSurfaceVariant);
 
-    return Padding(
-      padding: const EdgeInsets.fromLTRB(
-        16,
-        AppLayout.sidebarCategoryTopGap,
-        16,
-        AppLayout.sidebarCategoryBottomGap,
-      ),
-      child: Row(
-        children: <Widget>[
-          Flexible(
-            child: Text(
-              title,
-              maxLines: 1,
-              softWrap: false,
-              overflow: TextOverflow.ellipsis,
-              style: titleStyle,
+    return SizedBox(
+      height: _categoryHeaderHeight,
+      child: LayoutBuilder(
+        builder: (BuildContext context, BoxConstraints constraints) {
+          final String countText = constraints.maxWidth < 260
+              ? '$count'
+              : countLabel;
+          return Padding(
+            padding: const EdgeInsets.fromLTRB(_textInset, 8, _textInset, 4),
+            child: Row(
+              children: <Widget>[
+                // Название забирает свободное место, поэтому счётчик и стрелка
+                // прижаты к правому краю, а не липнут к названию.
+                Expanded(
+                  child: Text(
+                    title,
+                    maxLines: 1,
+                    softWrap: false,
+                    overflow: TextOverflow.ellipsis,
+                    style: titleStyle,
+                  ),
+                ),
+                const SizedBox(width: 6),
+                ConstrainedBox(
+                  constraints: const BoxConstraints(
+                    maxWidth: _categoryCountMaxWidth,
+                  ),
+                  child: Text(
+                    countText,
+                    maxLines: 1,
+                    softWrap: false,
+                    textAlign: TextAlign.right,
+                    overflow: TextOverflow.ellipsis,
+                    style: countStyle,
+                  ),
+                ),
+                const SizedBox(width: 2),
+                // Стрелка подсказывает, что заголовок нажимается, и показывает
+                // состояние: вниз — развёрнуто, вправо — свёрнуто.
+                AnimatedRotation(
+                  turns: collapsed ? -0.25 : 0,
+                  duration: AppMotion.rowActions.duration,
+                  curve: AppMotion.rowActions.curve,
+                  child: Icon(
+                    Icons.expand_more,
+                    size: 16,
+                    color: scheme.onSurfaceVariant,
+                  ),
+                ),
+              ],
             ),
-          ),
-          const SizedBox(width: 6),
-          ConstrainedBox(
-            constraints: const BoxConstraints(
-              maxWidth: AppLayout.sidebarCategoryCountMaxWidth,
-            ),
-            child: Text(
-              count,
-              maxLines: 1,
-              softWrap: false,
-              textAlign: TextAlign.right,
-              overflow: TextOverflow.ellipsis,
-              style: countStyle,
-            ),
-          ),
-        ],
+          );
+        },
       ),
     );
   }
+}
+
+/// Закреплённый заголовок категории.
+///
+/// `pinned` держит его сверху, пока видна секция, и следующий заголовок
+/// выталкивает предыдущий — как `sticky_headers`, но без новой зависимости.
+class _CategoryHeaderDelegate extends SliverPersistentHeaderDelegate {
+  const _CategoryHeaderDelegate({
+    required this.title,
+    required this.count,
+    required this.countLabel,
+    required this.collapsed,
+    required this.onTap,
+  });
+
+  final String title;
+  final int count;
+  final String countLabel;
+  final bool collapsed;
+  final VoidCallback onTap;
+
+  @override
+  double get minExtent => _categoryHeaderHeight;
+
+  @override
+  double get maxExtent => _categoryHeaderHeight;
+
+  @override
+  Widget build(
+    BuildContext context,
+    double shrinkOffset,
+    bool overlapsContent,
+  ) {
+    return Material(
+      // Фон обязан быть непрозрачным и совпадать с панелью: иначе под
+      // закреплённым заголовком просвечивали бы уезжающие строки.
+      color: Theme.of(context).colorScheme.surfaceContainer,
+      child: InkWell(
+        onTap: onTap,
+        child: _CategoryHeader(
+          title: title,
+          count: count,
+          countLabel: countLabel,
+          collapsed: collapsed,
+        ),
+      ),
+    );
+  }
+
+  @override
+  bool shouldRebuild(covariant _CategoryHeaderDelegate oldDelegate) =>
+      oldDelegate.title != title ||
+      oldDelegate.count != count ||
+      oldDelegate.countLabel != countLabel ||
+      oldDelegate.collapsed != collapsed;
 }
 
 /// Пустая категория: одна приглушённая строка вместо списка.
@@ -811,7 +1094,7 @@ class _CategoryEmpty extends StatelessWidget {
   Widget build(BuildContext context) {
     final ColorScheme scheme = Theme.of(context).colorScheme;
     return Padding(
-      padding: const EdgeInsets.fromLTRB(16, 4, 16, 8),
+      padding: const EdgeInsets.fromLTRB(_textInset, 4, _textInset, 8),
       child: Text(
         text,
         maxLines: 2,
@@ -846,52 +1129,61 @@ class _LibraryToolbar extends StatelessWidget {
         ?.copyWith(color: scheme.onSurfaceVariant);
 
     return Padding(
-      padding: const EdgeInsets.fromLTRB(16, 6, 6, 0),
-      child: Row(
-        children: <Widget>[
-          Expanded(
-            child: Text(
-              found == null ? '' : 'Найдено: $found',
-              maxLines: 1,
-              overflow: TextOverflow.ellipsis,
-              style: style,
-            ),
-          ),
-          PopupMenuButton<LibrarySort>(
-            tooltip: 'Сортировка',
-            onSelected: onSort,
-            // Сортировка одна на весь список: у «вкладок» больше нет своей.
-            itemBuilder: (BuildContext context) => <PopupMenuEntry<LibrarySort>>[
-              for (final LibrarySort option in LibrarySort.values)
-                CheckedPopupMenuItem<LibrarySort>(
-                  value: option,
-                  checked: option == sort,
-                  child: Text(option.label),
+      padding: const EdgeInsets.fromLTRB(_textInset, 2, _textInset, 0),
+      child: LayoutBuilder(
+        builder: (BuildContext context, BoxConstraints constraints) {
+          // Подпись сортировки показываем, только когда для неё хватает места:
+          // на 220 она обрезалась до «По дате добавл…» и выглядела поломкой.
+          final bool showSortLabel = constraints.maxWidth >= 240;
+          return Row(
+            children: <Widget>[
+              Expanded(
+                child: Text(
+                  found == null ? '' : 'Найдено: $found',
+                  maxLines: 1,
+                  overflow: TextOverflow.ellipsis,
+                  style: style,
                 ),
-            ],
-            child: Padding(
-              padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 6),
-              child: Row(
-                mainAxisSize: MainAxisSize.min,
-                children: <Widget>[
-                  Icon(Icons.sort, size: 16, color: scheme.onSurfaceVariant),
-                  const SizedBox(width: 6),
-                  // Подпись ограничена: при узкой панели она иначе выдавила бы
-                  // счётчик и вылезла за край.
-                  ConstrainedBox(
-                    constraints: const BoxConstraints(maxWidth: 120),
-                    child: Text(
-                      sort.label,
-                      maxLines: 1,
-                      overflow: TextOverflow.ellipsis,
-                      style: style,
-                    ),
-                  ),
-                ],
               ),
-            ),
-          ),
-        ],
+              PopupMenuButton<LibrarySort>(
+                tooltip: 'Сортировка: ${sort.label}',
+                onSelected: onSort,
+                // Сортировка одна на весь список: у «вкладок» больше нет своей.
+                itemBuilder: (BuildContext context) =>
+                    <PopupMenuEntry<LibrarySort>>[
+                      for (final LibrarySort option in LibrarySort.values)
+                        CheckedPopupMenuItem<LibrarySort>(
+                          value: option,
+                          checked: option == sort,
+                          child: Text(option.label),
+                        ),
+                    ],
+                child: Padding(
+                  padding: const EdgeInsets.symmetric(vertical: 6),
+                  child: Row(
+                    mainAxisSize: MainAxisSize.min,
+                    children: <Widget>[
+                      Icon(
+                        Icons.sort,
+                        size: 16,
+                        color: scheme.onSurfaceVariant,
+                      ),
+                      if (showSortLabel) ...<Widget>[
+                        const SizedBox(width: 6),
+                        Text(
+                          sort.label,
+                          maxLines: 1,
+                          overflow: TextOverflow.ellipsis,
+                          style: style,
+                        ),
+                      ],
+                    ],
+                  ),
+                ),
+              ),
+            ],
+          );
+        },
       ),
     );
   }
@@ -941,9 +1233,7 @@ class _LibraryRowState extends ConsumerState<_LibraryRow> {
     final ColorScheme scheme = Theme.of(context).colorScheme;
     final TextTheme text = Theme.of(context).textTheme;
     final bool compactRows = ref.watch(
-      settingsControllerProvider.select(
-        (AppSettings s) => s.compactRows,
-      ),
+      settingsControllerProvider.select((AppSettings s) => s.compactRows),
     );
     // Плотный режим сжимает строку целиком: высоту, обложку (её размер задают
     // строки-владельцы) и кегль подписи. Одной высоты было бы мало — текст
@@ -964,124 +1254,147 @@ class _LibraryRowState extends ConsumerState<_LibraryRow> {
 
     return SizedBox(
       height: rowHeight,
-      child: MouseRegion(
-        onEnter: (_) => setState(() => _hovered = true),
-        onExit: (_) => setState(() => _hovered = false),
-        child: InkWell(
-          onTap: widget.onTap,
-          onFocusChange: (bool focused) => setState(() => _focused = focused),
-          // Правый клик — то же меню, что у «…», но у курсора: кнопка
-          // появляется только при наведении и фокусе, и целиться в неё после
-          // клика не нужно.
-          onSecondaryTapUp: (TapUpDetails details) =>
-              _openMenuAt(details.globalPosition),
-          child: Container(
-            decoration: widget.active
-                ? BoxDecoration(
-                    color: scheme.secondaryContainer,
-                    borderRadius: BorderRadius.circular(AppLayout.radiusS),
-                  )
-                : null,
-            margin: EdgeInsets.symmetric(horizontal: 6, vertical: rowMargin),
-            padding: const EdgeInsets.symmetric(horizontal: 8),
-            child: Row(
-              children: <Widget>[
-                widget.leading,
-                SizedBox(width: rowGap),
-                Expanded(
-                  child: Column(
-                    mainAxisAlignment: MainAxisAlignment.center,
-                    crossAxisAlignment: CrossAxisAlignment.start,
-                    children: <Widget>[
-                      Text(
-                        widget.title,
-                        maxLines: 1,
-                        overflow: TextOverflow.ellipsis,
-                        style: (compactRows ? text.bodyMedium : text.bodyLarge)
-                            ?.copyWith(
-                          fontWeight: FontWeight.w600,
-                          color: widget.active
-                              ? scheme.onSecondaryContainer
-                              : scheme.onSurface,
-                        ),
-                      ),
-                      if (widget.subtitle != null) ...<Widget>[
-                        SizedBox(
-                          height: compactRows
-                              ? AppLayout.trackTitleGapCompact
-                              : AppLayout.trackTitleGap,
-                        ),
+      child: Padding(
+        padding: const EdgeInsets.symmetric(horizontal: _inset),
+        child: MouseRegion(
+          onEnter: (_) => setState(() => _hovered = true),
+          onExit: (_) => setState(() => _hovered = false),
+          child: InkWell(
+            onTap: widget.onTap,
+            borderRadius: BorderRadius.circular(AppLayout.radiusS),
+            onFocusChange: (bool focused) => setState(() => _focused = focused),
+            // Правый клик — то же меню, что у «…», но у курсора: кнопка
+            // появляется только при наведении и фокусе, и целиться в неё после
+            // клика не нужно.
+            onSecondaryTapUp: (TapUpDetails details) =>
+                _openMenuAt(details.globalPosition),
+            child: Container(
+              decoration: widget.active
+                  ? BoxDecoration(
+                      color: scheme.secondaryContainer,
+                      borderRadius: BorderRadius.circular(AppLayout.radiusS),
+                    )
+                  : null,
+              margin: EdgeInsets.symmetric(vertical: rowMargin),
+              padding: const EdgeInsets.symmetric(horizontal: _rowPad),
+              child: Row(
+                children: <Widget>[
+                  widget.leading,
+                  SizedBox(width: rowGap),
+                  Expanded(
+                    child: Column(
+                      mainAxisAlignment: MainAxisAlignment.center,
+                      crossAxisAlignment: CrossAxisAlignment.start,
+                      children: <Widget>[
                         Text(
-                          widget.subtitle!,
+                          widget.title,
                           maxLines: 1,
                           overflow: TextOverflow.ellipsis,
-                          style: (compactRows ? text.labelSmall : text.bodySmall)
-                              ?.copyWith(
-                            color: widget.active
-                                ? scheme.onSecondaryContainer.withValues(
-                                    alpha: 0.7,
-                                  )
-                                : scheme.onSurfaceVariant,
-                          ),
+                          style:
+                              (compactRows ? text.bodyMedium : text.bodyLarge)
+                                  ?.copyWith(
+                                    fontWeight: FontWeight.w600,
+                                    color: widget.active
+                                        ? scheme.onSecondaryContainer
+                                        : scheme.onSurface,
+                                  ),
                         ),
-                      ],
-                    ],
-                  ),
-                ),
-                AnimatedSize(
-                  duration: AppMotion.rowActions.duration,
-                  curve: AppMotion.rowActions.curve,
-                  alignment: Alignment.centerRight,
-                  child: showActions
-                      ? Row(
-                          mainAxisSize: MainAxisSize.min,
-                          children: <Widget>[
-                            if (widget.onPlay != null)
-                              _busy
-                                  ? const SizedBox(
-                                      width: 32,
-                                      height: 32,
-                                      child: Center(
-                                        child: AppProgress(size: 24),
-                                      ),
-                                    )
-                                  : IconButton(
-                                      tooltip: 'Играть',
-                                      iconSize: 20,
-                                      padding: EdgeInsets.zero,
-                                      // Кнопки действий компактны: на узкой
-                                      // панели (220) стандартные 48 пикселей
-                                      // оставляли названию считаные пиксели.
-                                      constraints: const BoxConstraints.tightFor(
-                                        width: 32,
-                                        height: 32,
-                                      ),
-                                      style: IconButton.styleFrom(
-                                        tapTargetSize:
-                                            MaterialTapTargetSize.shrinkWrap,
-                                      ),
-                                      icon: const Icon(Icons.play_arrow_rounded),
-                                      onPressed: _play,
+                        if (widget.subtitle != null) ...<Widget>[
+                          SizedBox(
+                            height: compactRows
+                                ? AppLayout.trackTitleGapCompact
+                                : AppLayout.trackTitleGap,
+                          ),
+                          Text(
+                            widget.subtitle!,
+                            maxLines: 1,
+                            overflow: TextOverflow.ellipsis,
+                            style:
+                                (compactRows ? text.labelSmall : text.bodySmall)
+                                    ?.copyWith(
+                                      color: widget.active
+                                          ? scheme.onSecondaryContainer
+                                                .withValues(alpha: 0.7)
+                                          : scheme.onSurfaceVariant,
                                     ),
-                            PopupMenuButton<_EntryAction>(
-                              tooltip: 'Действия',
-                              iconSize: 20,
-                              padding: EdgeInsets.zero,
-                              style: IconButton.styleFrom(
-                                minimumSize: const Size(32, 32),
-                                maximumSize: const Size(32, 32),
-                                tapTargetSize: MaterialTapTargetSize.shrinkWrap,
-                              ),
-                              icon: const Icon(Icons.more_vert),
-                              onSelected: widget.onMenu,
-                              itemBuilder: (BuildContext context) =>
-                                  _menuItems(scheme),
+                          ),
+                        ],
+                      ],
+                    ),
+                  ),
+                  AnimatedSize(
+                    duration: AppMotion.rowActions.duration,
+                    curve: AppMotion.rowActions.curve,
+                    alignment: Alignment.centerRight,
+                    child: showActions
+                        // Ширину ведёт AnimatedSize, а прозрачность — отдельная
+                        // анимация появления: так кнопки проявляются, а не
+                        // выскакивают, и название не дёргается дважды.
+                        ? TweenAnimationBuilder<double>(
+                            tween: Tween<double>(begin: 0, end: 1),
+                            duration: AppMotion.rowActions.duration,
+                            curve: AppMotion.rowActions.curve,
+                            builder: (
+                              BuildContext context,
+                              double opacity,
+                              Widget? child,
+                            ) => Opacity(opacity: opacity, child: child),
+                            child: Row(
+                              mainAxisSize: MainAxisSize.min,
+                              children: <Widget>[
+                                if (widget.onPlay != null)
+                                  _busy
+                                      ? const SizedBox(
+                                          width: 32,
+                                          height: 32,
+                                          child: Center(
+                                            child: AppProgress(size: 24),
+                                          ),
+                                        )
+                                      : IconButton(
+                                          tooltip: 'Играть',
+                                          iconSize: 20,
+                                          padding: EdgeInsets.zero,
+                                          // Кнопки действий компактны: на узкой
+                                          // панели (220) стандартные 48
+                                          // пикселей оставляли названию считаные
+                                          // пиксели.
+                                          constraints:
+                                              const BoxConstraints.tightFor(
+                                                width: 32,
+                                                height: 32,
+                                              ),
+                                          style: IconButton.styleFrom(
+                                            tapTargetSize: MaterialTapTargetSize
+                                                .shrinkWrap,
+                                          ),
+                                          icon: const Icon(
+                                            Icons.play_arrow_rounded,
+                                          ),
+                                          onPressed: _play,
+                                        ),
+                                PopupMenuButton<_EntryAction>(
+                                  tooltip: 'Действия',
+                                  iconSize: 20,
+                                  padding: EdgeInsets.zero,
+                                  style: IconButton.styleFrom(
+                                    minimumSize: const Size(32, 32),
+                                    maximumSize: const Size(32, 32),
+                                    tapTargetSize:
+                                        MaterialTapTargetSize.shrinkWrap,
+                                  ),
+                                  icon: const Icon(Icons.more_vert),
+                                  onSelected: widget.onMenu,
+                                  itemBuilder: (BuildContext context) =>
+                                      _menuItems(scheme),
+                                ),
+                              ],
                             ),
-                          ],
-                        )
-                      : const SizedBox.shrink(),
-                ),
-              ],
+                          )
+                        : const SizedBox.shrink(),
+                  ),
+                ],
+              ),
             ),
           ),
         ),
@@ -1106,7 +1419,9 @@ class _LibraryRowState extends ConsumerState<_LibraryRow> {
               const SizedBox(width: 12),
               Text(
                 entry.label,
-                style: entry.destructive ? TextStyle(color: scheme.error) : null,
+                style: entry.destructive
+                    ? TextStyle(color: scheme.error)
+                    : null,
               ),
             ],
           ),
@@ -1176,9 +1491,7 @@ class _PlaylistRowState extends ConsumerState<_PlaylistRow> {
     );
     // Размер обложки меняется вместе со строкой: в плотном режиме она меньше.
     final bool compactRows = ref.watch(
-      settingsControllerProvider.select(
-        (AppSettings s) => s.compactRows,
-      ),
+      settingsControllerProvider.select((AppSettings s) => s.compactRows),
     );
     final double artworkSize = compactRows
         ? AppLayout.libraryArtworkCompact
@@ -1198,9 +1511,7 @@ class _PlaylistRowState extends ConsumerState<_PlaylistRow> {
     // Чужой плейлист сервер честно отклонит — данных о владении у списка нет.
     final bool editable = !LibrarySource.isLikedPlaylist(_playlist.id);
     final bool saved = ref.watch(
-      savedIdsProvider.select(
-        (Set<String> ids) => ids.contains(_playlist.id),
-      ),
+      savedIdsProvider.select((Set<String> ids) => ids.contains(_playlist.id)),
     );
 
     return _LibraryRow(
@@ -1301,8 +1612,10 @@ class _PlaylistRowState extends ConsumerState<_PlaylistRow> {
   /// Переименование: диалог и подтверждение те же, что на странице плейлиста.
   Future<void> _rename() async {
     final ScaffoldMessengerState messenger = ScaffoldMessenger.of(context);
-    final String? title =
-        await showRenamePlaylistDialog(context, _playlist.title);
+    final String? title = await showRenamePlaylistDialog(
+      context,
+      _playlist.title,
+    );
     if (title == null) return;
     try {
       await ref.read(librarySourceProvider).renamePlaylist(_playlist.id, title);
@@ -1343,8 +1656,8 @@ class _PlaylistRowState extends ConsumerState<_PlaylistRow> {
       final Playlist full = _playlist.tracks.isNotEmpty
           ? _playlist
           : LibrarySource.isLikedPlaylist(_playlist.id)
-              ? await ref.read(likedSongsPlaylistProvider.future)
-              : await ref.read(catalogSourceProvider).playlist(_playlist.id);
+          ? await ref.read(likedSongsPlaylistProvider.future)
+          : await ref.read(catalogSourceProvider).playlist(_playlist.id);
       if (full.tracks.isEmpty) {
         messenger.showSnackBar(
           const SnackBar(content: Text('В плейлисте нет треков')),
@@ -1383,9 +1696,7 @@ class _AlbumRowState extends ConsumerState<_AlbumRow> {
       ),
     );
     final bool compactRows = ref.watch(
-      settingsControllerProvider.select(
-        (AppSettings s) => s.compactRows,
-      ),
+      settingsControllerProvider.select((AppSettings s) => s.compactRows),
     );
     final double artworkSize = compactRows
         ? AppLayout.libraryArtworkCompact
@@ -1469,8 +1780,7 @@ class _AlbumRowState extends ConsumerState<_AlbumRow> {
   Future<void> _setSaved(bool saved) async {
     final ScaffoldMessengerState messenger = ScaffoldMessenger.of(context);
     try {
-      final Album full =
-          await ref.read(catalogSourceProvider).album(_album.id);
+      final Album full = await ref.read(catalogSourceProvider).album(_album.id);
       final String? playlistId = full.audioPlaylistId;
       if (playlistId == null || playlistId.isEmpty) {
         messenger.showSnackBar(
@@ -1498,8 +1808,7 @@ class _AlbumRowState extends ConsumerState<_AlbumRow> {
   Future<void> _play() async {
     final ScaffoldMessengerState messenger = ScaffoldMessenger.of(context);
     try {
-      final Album full =
-          await ref.read(catalogSourceProvider).album(_album.id);
+      final Album full = await ref.read(catalogSourceProvider).album(_album.id);
       if (full.tracks.isEmpty) {
         messenger.showSnackBar(
           const SnackBar(content: Text('В альбоме нет треков')),
@@ -1535,13 +1844,12 @@ class _ArtistRowState extends ConsumerState<_ArtistRow> {
     final bool active = ref.watch(
       playerControllerProvider.select(
         (PlayerUiState s) =>
-            s.current?.artists.any((ArtistRef a) => a.id == _artist.id) ?? false,
+            s.current?.artists.any((ArtistRef a) => a.id == _artist.id) ??
+            false,
       ),
     );
     final bool compactRows = ref.watch(
-      settingsControllerProvider.select(
-        (AppSettings s) => s.compactRows,
-      ),
+      settingsControllerProvider.select((AppSettings s) => s.compactRows),
     );
     final double artworkSize = compactRows
         ? AppLayout.libraryArtworkCompact
@@ -1559,7 +1867,9 @@ class _ArtistRowState extends ConsumerState<_ArtistRow> {
     }
 
     final bool subscribed = ref.watch(
-      subscribedIdsProvider.select((Set<String> ids) => ids.contains(_artist.id)),
+      subscribedIdsProvider.select(
+        (Set<String> ids) => ids.contains(_artist.id),
+      ),
     );
 
     return _LibraryRow(
@@ -1615,9 +1925,7 @@ class _ArtistRowState extends ConsumerState<_ArtistRow> {
   Future<void> _toggleSubscription({required bool subscribed}) async {
     final ScaffoldMessengerState messenger = ScaffoldMessenger.of(context);
     try {
-      await ref
-          .read(subscribedIdsProvider.notifier)
-          .toggle(_artist.id);
+      await ref.read(subscribedIdsProvider.notifier).toggle(_artist.id);
       messenger.showSnackBar(
         SnackBar(
           content: Text(
@@ -1635,8 +1943,9 @@ class _ArtistRowState extends ConsumerState<_ArtistRow> {
   Future<void> _play() async {
     final ScaffoldMessengerState messenger = ScaffoldMessenger.of(context);
     try {
-      final Artist full =
-          await ref.read(catalogSourceProvider).artist(_artist.id);
+      final Artist full = await ref
+          .read(catalogSourceProvider)
+          .artist(_artist.id);
       if (full.topTracks.isEmpty) {
         messenger.showSnackBar(
           const SnackBar(content: Text('У исполнителя нет треков')),
@@ -1675,8 +1984,9 @@ class _CollapsedLibrary extends ConsumerWidget {
     }
 
     final LibrarySidebarState state = ref.watch(librarySidebarProvider);
-    final LibrarySidebarController controller =
-        ref.read(librarySidebarProvider.notifier);
+    final LibrarySidebarController controller = ref.read(
+      librarySidebarProvider.notifier,
+    );
     return _LibraryList(
       state: state,
       onSort: controller.setSort,
@@ -1710,26 +2020,28 @@ class _CompactEntry extends StatelessWidget {
   Widget build(BuildContext context) {
     final ColorScheme scheme = Theme.of(context).colorScheme;
 
-    return Padding(
-      padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 3),
-      child: Tooltip(
-        message: title,
-        child: InkWell(
-          onTap: onTap,
-          borderRadius: BorderRadius.circular(AppLayout.radiusS),
-          child: Container(
-            padding: const EdgeInsets.all(4),
-            decoration: active
-                ? BoxDecoration(
-                    color: scheme.secondaryContainer,
-                    borderRadius: BorderRadius.circular(AppLayout.radiusS),
-                  )
-                : null,
-            child: Artwork(
-              url: url,
-              size: 40,
-              radius: BorderRadius.circular(circular ? 20 : 8),
-              icon: icon,
+    return Center(
+      child: Padding(
+        padding: const EdgeInsets.symmetric(horizontal: _inset, vertical: 3),
+        child: Tooltip(
+          message: title,
+          child: InkWell(
+            onTap: onTap,
+            borderRadius: BorderRadius.circular(AppLayout.radiusS),
+            child: Container(
+              padding: const EdgeInsets.all(4),
+              decoration: active
+                  ? BoxDecoration(
+                      color: scheme.secondaryContainer,
+                      borderRadius: BorderRadius.circular(AppLayout.radiusS),
+                    )
+                  : null,
+              child: Artwork(
+                url: url,
+                size: 40,
+                radius: BorderRadius.circular(circular ? 20 : 8),
+                icon: icon,
+              ),
             ),
           ),
         ),
@@ -1782,23 +2094,25 @@ List<T> _arrange<T>(
   final List<T> visible = needle.isEmpty
       ? List<T>.of(items)
       : items
-          .where((T item) =>
-              title(item).toLowerCase().contains(needle) ||
-              owner(item).toLowerCase().contains(needle))
-          .toList();
+            .where(
+              (T item) =>
+                  title(item).toLowerCase().contains(needle) ||
+                  owner(item).toLowerCase().contains(needle),
+            )
+            .toList();
 
   switch (state.sort) {
     case LibrarySort.recent:
       break;
     case LibrarySort.title:
       visible.sort(
-        (T a, T b) =>
-            title(a).toLowerCase().compareTo(title(b).toLowerCase()),
+        (T a, T b) => title(a).toLowerCase().compareTo(title(b).toLowerCase()),
       );
     case LibrarySort.owner:
       visible.sort((T a, T b) {
-        final int byOwner =
-            owner(a).toLowerCase().compareTo(owner(b).toLowerCase());
+        final int byOwner = owner(a)
+            .toLowerCase()
+            .compareTo(owner(b).toLowerCase());
         return byOwner != 0
             ? byOwner
             : title(a).toLowerCase().compareTo(title(b).toLowerCase());
@@ -1873,7 +2187,7 @@ class _Hint extends StatelessWidget {
     final ColorScheme scheme = Theme.of(context).colorScheme;
 
     return Padding(
-      padding: const EdgeInsets.fromLTRB(22, 12, 22, 12),
+      padding: const EdgeInsets.fromLTRB(_textInset, 12, _textInset, 12),
       child: Column(
         crossAxisAlignment: CrossAxisAlignment.start,
         mainAxisSize: MainAxisSize.min,
