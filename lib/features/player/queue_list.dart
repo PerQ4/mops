@@ -150,6 +150,9 @@ class QueueList extends ConsumerWidget {
                   // В очереди свайп выключен: трек уже здесь, а горизонтальный
                   // жест мешал бы перетаскиванию строк.
                   enableSwipe: false,
+                  // Только в очереди подписи гаснут вместо многоточия: в
+                  // альбомах, поиске и на главной остаётся прежний вид.
+                  fadeOverflow: true,
                 ),
               ),
             ],
@@ -210,6 +213,7 @@ class QueueList extends ConsumerWidget {
                     isDimmed: true,
                     onTap: () => controller.jumpTo(index),
                     enableSwipe: false,
+                    fadeOverflow: true,
                   );
                 },
               ),
@@ -543,6 +547,7 @@ class _ReorderableTile extends StatelessWidget {
             // иначе из очереди не открыть меню трека.
             // Свайп выключен: здесь он конфликтовал бы с перетаскиванием.
             enableSwipe: false,
+            fadeOverflow: true,
             trailing: Row(
               mainAxisSize: MainAxisSize.min,
               children: <Widget>[

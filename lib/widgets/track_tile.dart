@@ -12,6 +12,7 @@ import '../state/catalog_providers.dart';
 import '../state/player_controller.dart';
 import '../state/providers.dart';
 import 'artwork.dart';
+import 'fade_text.dart';
 import 'track_menu.dart';
 
 /// Строка трека в списке.
@@ -34,6 +35,7 @@ class TrackTile extends ConsumerWidget {
     this.showDuration = true,
     this.leadingNumber,
     this.enableSwipe = true,
+    this.fadeOverflow = false,
   });
 
   final Track track;
@@ -59,6 +61,13 @@ class TrackTile extends ConsumerWidget {
   /// «в очередь». В очереди выключаем: там эти действия дублируют саму
   /// очередь, а горизонтальный жест мешал бы перетаскиванию.
   final bool enableSwipe;
+
+  /// Плавное затухание названия и подписи у правого края вместо многоточия.
+  ///
+  /// Включается только в очереди: строка там упирается в кнопки и ручку
+  /// перетаскивания, и жёсткий обрыв названия с «…» выглядел грубее плавного
+  /// ухода. В альбомах, поиске и на главной остаётся многоточие.
+  final bool fadeOverflow;
 
   @override
   Widget build(BuildContext context, WidgetRef ref) {
@@ -86,6 +95,13 @@ class TrackTile extends ConsumerWidget {
     final Color subtitleColor = isCurrent
         ? scheme.onSecondaryContainer.withValues(alpha: 0.7)
         : scheme.onSurfaceVariant;
+    // Стиль заголовка собирается до раскладки: его получает и обычный
+    // `Text`, и затухающий `FadeText` в очереди.
+    final TextStyle? titleStyle =
+        (compactRows ? text.bodyMedium : text.bodyLarge)?.copyWith(
+      color: isDimmed ? titleColor.withValues(alpha: 0.6) : titleColor,
+      fontWeight: FontWeight.w600,
+    );
     final double artworkSize = compactRows
         ? AppLayout.trackArtworkCompact
         : AppLayout.trackArtwork;
@@ -176,20 +192,19 @@ class TrackTile extends ConsumerWidget {
                       mainAxisAlignment: MainAxisAlignment.center,
                       crossAxisAlignment: CrossAxisAlignment.start,
                       children: <Widget>[
-                        Text(
-                          track.title,
-                          maxLines: 1,
-                          overflow: TextOverflow.ellipsis,
-                          style: (compactRows
-                                  ? text.bodyMedium
-                                  : text.bodyLarge)
-                              ?.copyWith(
-                            color: isDimmed
-                                ? titleColor.withValues(alpha: 0.6)
-                                : titleColor,
-                            fontWeight: FontWeight.w600,
+                        if (fadeOverflow)
+                          FadeText(
+                            text: track.title,
+                            maxLines: 1,
+                            style: titleStyle,
+                          )
+                        else
+                          Text(
+                            track.title,
+                            maxLines: 1,
+                            overflow: TextOverflow.ellipsis,
+                            style: titleStyle,
                           ),
-                        ),
                         SizedBox(
                           height: compactRows
                               ? AppLayout.trackTitleGapCompact
@@ -206,6 +221,7 @@ class TrackTile extends ConsumerWidget {
                                 subtitleOverride: subtitleOverride,
                                 showDuration: showDuration,
                                 unavailable: unavailable,
+                                fadeOverflow: fadeOverflow,
                                 style: (compactRows
                                         ? text.labelSmall
                                         : text.bodySmall)
@@ -296,7 +312,8 @@ String _withDuration(String base, Duration duration, bool show) {
 
 /// Подпись строки: имена исполнителей кликабельны и ведут на их страницы,
 /// альбом — просто текст. Собирается как `Text.rich`, поэтому длинные
-/// подписи по-прежнему обрезаются многоточием, а не переносятся.
+/// подписи не переносятся, а обрезаются: в очереди хвост гаснет, в остальных
+/// списках — многоточие.
 class _TrackSubtitle extends StatefulWidget {
   const _TrackSubtitle({
     required this.track,
@@ -304,6 +321,7 @@ class _TrackSubtitle extends StatefulWidget {
     this.subtitleOverride,
     this.showDuration = true,
     this.unavailable = false,
+    this.fadeOverflow = false,
   });
 
   final Track track;
@@ -316,6 +334,9 @@ class _TrackSubtitle extends StatefulWidget {
   /// Длительность идёт частью подписи (через « • »), а не отдельным хвостом —
   /// так устроена подпись в `SongListItem`/`MediaMetadataListItem`.
   final bool showDuration;
+
+  /// Гасить хвост подписи вместо многоточия — только в очереди, см. `TrackTile`.
+  final bool fadeOverflow;
 
   @override
   State<_TrackSubtitle> createState() => _TrackSubtitleState();
@@ -345,7 +366,7 @@ class _TrackSubtitleState extends State<_TrackSubtitle> {
       // всё равно дописываем через « • », как это делает `joinByBullet`.
       final String text =
           _withDuration(override, widget.track.duration, widget.showDuration);
-      return Text.rich(
+      return _line(
         TextSpan(
           children: <InlineSpan>[
             TextSpan(text: text),
@@ -356,9 +377,6 @@ class _TrackSubtitleState extends State<_TrackSubtitle> {
               ),
           ],
         ),
-        maxLines: 1,
-        overflow: TextOverflow.ellipsis,
-        style: widget.style,
       );
     }
 
@@ -405,8 +423,16 @@ class _TrackSubtitleState extends State<_TrackSubtitle> {
       );
     }
 
+    return _line(TextSpan(children: spans));
+  }
+
+  /// Одна строка подписи: в очереди хвост гаснет, в остальных списках — «…».
+  Widget _line(InlineSpan span) {
+    if (widget.fadeOverflow) {
+      return FadeText(inlineSpan: span, style: widget.style, maxLines: 1);
+    }
     return Text.rich(
-      TextSpan(children: spans),
+      span,
       maxLines: 1,
       overflow: TextOverflow.ellipsis,
       style: widget.style,
