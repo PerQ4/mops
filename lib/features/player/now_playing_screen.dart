@@ -282,20 +282,36 @@ class _Controls extends StatelessWidget {
           child: PlayerTransportBar(player: player),
         ),
         const SizedBox(height: AppLayout.playerItemGap),
+        // Режимы и таймер сна — одной строкой: раньше это были две отдельные
+        // строки, и блок управления вырастал на высоту ещё одного ряда. Слева
+        // режимы, справа таймер: состояние таймера читается текстом, а его
+        // место на краю не мешает частым кнопкам.
         Padding(
           padding: side,
-          child: PlayerPlaybackModes(player: player),
+          child: Row(
+            children: <Widget>[
+              // `Expanded` + `Align` — тот же `Spacer` между группами, но
+              // режимы ещё и ужимаются: на узком окне ряд кнопок не
+              // переполняет строку, а таймер остаётся целым.
+              Expanded(
+                child: Align(
+                  alignment: Alignment.centerLeft,
+                  child: PlayerPlaybackModes(
+                    player: player,
+                    size: AppLayout.playerCompactAction,
+                  ),
+                ),
+              ),
+              const SizedBox(width: AppLayout.playerItemGap),
+              const SleepTimerButton(),
+            ],
+          ),
         ),
         const SizedBox(height: AppLayout.playerGroupGap),
         const Padding(
           padding: side,
           child: PlayerVolumeControl(),
         ),
-        // Таймер сна — строкой под громкостью, а не пятой кнопкой в ряду
-        // действий: на узком экране тот ряд уже упирается в край (на 412 px
-        // лишняя кнопка давала переполнение), а строкой состояние видно
-        // текстом, без наведения на подсказку.
-        const SleepTimerButton(),
         const SizedBox(height: AppLayout.playerVerticalInset),
       ],
     );
@@ -863,97 +879,123 @@ class _InfoRow extends ConsumerWidget {
           onMediaInfo: () => showMediaInfoDialog(context),
         );
 
+    // Кнопки действий одной группой: слева от названия стоит такая же по
+    // ширине пустая полоса, поэтому центр заголовка совпадает с центром блока,
+    // хотя справа от него кнопки.
+    final double actionsWidth = AppLayout.playerCompactAction * 2 +
+        AppLayout.playerItemGap;
+    final Widget actions = Row(
+      mainAxisSize: MainAxisSize.min,
+      children: <Widget>[
+        // Лайк — как в V4, но цветом ошибки, а не акцентом.
+        _PlayerActionButton(
+          tooltip: liked ? 'Убрать из «Мне нравится»' : 'Нравится',
+          icon: liked ? Icons.favorite : Icons.favorite_border,
+          selected: liked,
+          accent: true,
+          onPressed: signedIn ? () => _like(context, ref) : null,
+        ),
+        const SizedBox(width: AppLayout.playerItemGap),
+        // «…» открывает то же меню, что и из островка: исполнитель, альбом,
+        // очередь и лайк. rootNavigator: плеер сам лежит в корневом
+        // навигаторе — лист должен лежать там же, поверх плеера; переходы из
+        // него сначала сворачивают плеер.
+        _PlayerActionButton(
+          tooltip: 'Действия',
+          icon: Icons.more_vert,
+          onPressed: openMenu,
+        ),
+      ],
+    );
+
     return Padding(
       // Все блоки управления начинаются с одного бокового отступа — слева и
-      // справа одинаково.
+      // справа одинаково. Верхний отступ — шаг внутри блока
+      // (`playerItemGap`): шапка должна быть плотной, но не прилипать к
+      // верхней панели.
       padding: const EdgeInsets.fromLTRB(
         AppLayout.playerInset,
-        AppLayout.playerVerticalInset,
+        AppLayout.playerItemGap,
         AppLayout.playerInset,
         0,
       ),
-      child: Column(
+      // Название, исполнитель и действия — одной строкой. Раньше действия
+      // стояли под названием третьей строкой и вместе с крупным кеглем
+      // занимали 122 px; теперь высоту задаёт только текст (56–80 px).
+      child: Row(
         children: <Widget>[
-          // Название и исполнитель — по центру, как обложка, транспорт и
-          // действия ниже.
-          GestureDetector(
-            behavior: HitTestBehavior.opaque,
-            onSecondaryTap: openMenu,
-            child: Text(
-              track.title,
-              maxLines: 1,
-              overflow: TextOverflow.ellipsis,
-              textAlign: TextAlign.center,
-              // `PlayerTitleSection`: titleLarge, жирный.
-              style: text.titleLarge?.copyWith(fontWeight: FontWeight.bold),
+          SizedBox(width: actionsWidth + AppLayout.playerItemGap),
+          Expanded(
+            child: Column(
+              mainAxisSize: MainAxisSize.min,
+              children: <Widget>[
+                // Название и исполнитель — по центру, как обложка, транспорт
+                // и действия.
+                GestureDetector(
+                  behavior: HitTestBehavior.opaque,
+                  onSecondaryTap: openMenu,
+                  child: Text(
+                    track.title,
+                    maxLines: 2,
+                    overflow: TextOverflow.ellipsis,
+                    textAlign: TextAlign.center,
+                    // На ступень ниже прежнего `titleLarge`: крупное название
+                    // отбирало у обложки и очереди около тридцати пикселей
+                    // высоты, а несёт только ориентир.
+                    style: text.titleMedium
+                        ?.copyWith(fontWeight: FontWeight.w700),
+                  ),
+                ),
+                // Название и подпись — одна пара, поэтому зазор между ними
+                // меньше шага блока: 8 px разрывали бы их на две строки.
+                const SizedBox(height: 2),
+                Row(
+                  mainAxisAlignment: MainAxisAlignment.center,
+                  children: <Widget>[
+                    Flexible(
+                      // Исполнитель — ссылка на его страницу. Ошибку плеера
+                      // показываем текстом: она не ссылка. Подсказка при
+                      // наведении остаётся — причина отказа бывает длинной,
+                      // а строка одна.
+                      child: player.error != null
+                          ? Tooltip(
+                              message: player.error!,
+                              child: Text(
+                                player.error!,
+                                maxLines: 1,
+                                overflow: TextOverflow.ellipsis,
+                                textAlign: TextAlign.center,
+                                style: text.bodySmall
+                                    ?.copyWith(color: scheme.error),
+                              ),
+                            )
+                          : ArtistLine(
+                              artists: track.artists,
+                              // Как подпись под названием: второй строки у
+                              // блока больше нет.
+                              style: text.bodySmall?.copyWith(
+                                color: scheme.onSurfaceVariant,
+                              ),
+                              textAlign: TextAlign.center,
+                              // Переход сам сворачивает плеер (см.
+                              // [AppRoutes]): иначе страница оказалась бы под
+                              // ним или легла бы поверх вторым слоем.
+                              onArtistTap: (ArtistRef artist) =>
+                                  AppRoutes.artistFromMenu(
+                                    context,
+                                    artist.id!,
+                                  ),
+                            ),
+                    ),
+                    const SizedBox(width: AppLayout.playerItemGap),
+                    QualityBadge(player: player),
+                  ],
+                ),
+              ],
             ),
           ),
-          const SizedBox(height: 6),
-          Row(
-            mainAxisAlignment: MainAxisAlignment.center,
-            children: <Widget>[
-              Flexible(
-                // Исполнитель — ссылка на его страницу. Ошибку плеера
-                // показываем текстом: она не ссылка. Две строки и подсказка
-                // при наведении — причина отказа бывает длинной.
-                child: player.error != null
-                    ? Tooltip(
-                        message: player.error!,
-                        child: Text(
-                          player.error!,
-                          maxLines: 2,
-                          overflow: TextOverflow.ellipsis,
-                          textAlign: TextAlign.center,
-                          style:
-                              text.titleMedium?.copyWith(color: scheme.error),
-                        ),
-                      )
-                    : ArtistLine(
-                        artists: track.artists,
-                        // `PlayerTitleSection`: titleMedium (16 sp).
-                        style: text.titleMedium?.copyWith(
-                          color: scheme.onSurfaceVariant,
-                        ),
-                        textAlign: TextAlign.center,
-                        // Переход сам сворачивает плеер (см. [AppRoutes]):
-                        // иначе страница оказалась бы под ним или легла
-                        // бы поверх вторым слоем.
-                        onArtistTap: (ArtistRef artist) =>
-                            AppRoutes.artistFromMenu(context, artist.id!),
-                      ),
-              ),
-              const SizedBox(width: AppLayout.playerItemGap),
-              QualityBadge(player: player),
-            ],
-          ),
-          const SizedBox(height: AppLayout.playerItemGap),
-          // Второстепенные действия — одной линией по центру. Перемешивание,
-          // повтор, темп и эквалайзер переехали под транспорт
-          // ([PlayerPlaybackModes]): иначе справа от «играть» кнопок было
-          // больше, чем слева, и транспорт читался перекошенным.
-          Row(
-            mainAxisAlignment: MainAxisAlignment.center,
-            children: <Widget>[
-              // Лайк — как в V4, но цветом ошибки, а не акцентом.
-              _PlayerActionButton(
-                tooltip: liked ? 'Убрать из «Мне нравится»' : 'Нравится',
-                icon: liked ? Icons.favorite : Icons.favorite_border,
-                selected: liked,
-                accent: true,
-                onPressed: signedIn ? () => _like(context, ref) : null,
-              ),
-              const SizedBox(width: AppLayout.playerItemGap),
-              // «…» открывает то же меню, что и из островка: исполнитель,
-              // альбом, очередь и лайк. rootNavigator: плеер сам лежит в
-              // корневом навигаторе — лист должен лежать там же, поверх
-              // плеера; переходы из него сначала сворачивают плеер.
-              _PlayerActionButton(
-                tooltip: 'Действия',
-                icon: Icons.more_vert,
-                onPressed: openMenu,
-              ),
-            ],
-          ),
+          const SizedBox(width: AppLayout.playerItemGap),
+          actions,
         ],
       ),
     );
@@ -981,11 +1023,12 @@ class _InfoRow extends ConsumerWidget {
   }
 }
 
-/// Действие в строке с названием — квадрат 44 с радиусом 14, как `Surface`
-/// в `PlayerTopActions` (ArchiveTune, стиль V4).
+/// Действие в шапке полного экрана — компактный квадрат
+/// ([AppLayout.playerCompactAction]) с радиусом около трети стороны.
 ///
 /// Фон: 0.12 в покое и 0.2 во включённом виде (для лайка — `error` с 0.25);
-/// иконка 22, выбранная — цветом акцента.
+/// иконка — `playerCompactActionIcon`, выбранная — цветом акцента. Полноразмерные
+/// 44 были третьей по высоте строкой шапки, хотя это второстепенные действия.
 class _PlayerActionButton extends StatelessWidget {
   const _PlayerActionButton({
     required this.tooltip,
@@ -1014,8 +1057,12 @@ class _PlayerActionButton extends StatelessWidget {
     final Color foreground = selected
         ? (accent ? scheme.error : scheme.primary)
         : scheme.onSurface;
-    final BorderRadius shape = BorderRadius.circular(14);
+    final double side = AppLayout.playerCompactAction;
+    final BorderRadius shape = BorderRadius.circular(side * 0.32);
 
+    // Свой квадрат поверх `Material`, а не `IconButton`: у выключенной
+    // кнопки `IconButton` гасит и заливку, и лайк без входа в аккаунт
+    // выглядел бы голой иконкой, выпадая из ряда.
     return Tooltip(
       message: tooltip,
       child: Material(
@@ -1026,9 +1073,15 @@ class _PlayerActionButton extends StatelessWidget {
           borderRadius: shape,
           onTap: onPressed,
           child: SizedBox(
-            width: 44,
-            height: 44,
-            child: Center(child: Icon(icon, size: 22, color: foreground)),
+            width: side,
+            height: side,
+            child: Center(
+              child: Icon(
+                icon,
+                size: AppLayout.playerCompactActionIcon,
+                color: foreground,
+              ),
+            ),
           ),
         ),
       ),

@@ -615,23 +615,31 @@ class PlayerTransportBar extends ConsumerWidget {
   }
 }
 
-/// Настройки воспроизведения: перемешивание, повтор, темп, эквалайзер.
+/// Настройки воспроизведения: перемешивание, повтор, визуализатор, темп,
+/// эквалайзер.
 ///
 /// Отдельной строкой под транспортом, а не по бокам от «играть»: так у
 /// транспорта слева и справа одинаковое число кнопок, а сами настройки идут
 /// одной линией с равными интервалами. Порядок один и тот же в панели и на
-/// полном экране — мышечная память не переучивается.
+/// полном экране — мышечная память не переучивается. В полном экране эта
+/// строка делит место с таймером сна, поэтому там кнопки компактнее
+/// ([size] = `AppLayout.playerCompactAction`).
 class PlayerPlaybackModes extends ConsumerWidget {
   const PlayerPlaybackModes({
     super.key,
     required this.player,
     this.size = 44,
+    this.gap = AppLayout.playerItemGap,
   });
 
   final PlayerUiState player;
 
-  /// Сторона квадратной кнопки: 44 в панели и на полном экране.
+  /// Сторона квадратной кнопки: 44 в панели и 32 в шапке полного экрана.
   final double size;
+
+  /// Зазор между кнопками. По умолчанию общий для группы; полный экран
+  /// оставляет его же — ряд режимов там стоит на одной линии с таймером сна.
+  final double gap;
 
   @override
   Widget build(BuildContext context, WidgetRef ref) {
@@ -639,7 +647,10 @@ class PlayerPlaybackModes extends ConsumerWidget {
         ref.read(playerControllerProvider.notifier);
     final Color onBackground = Theme.of(context).colorScheme.onSurface;
     final double radius = size * 0.32;
-    final double iconSize = size * 0.5;
+    // Иконка — половина кнопки, но не мельче компактного размера: у
+    // компактной кнопки половинного кегля не хватало, чтобы значки читались.
+    final double iconSize =
+        math.max(size * 0.5, AppLayout.playerCompactActionIcon);
     final bool repeatOn = player.repeat != PlayerRepeatMode.off;
     // Визуализатор — такая же настройка вида, как и остальные в этом ряду.
     final bool visualizer = ref.watch(
@@ -681,7 +692,7 @@ class PlayerPlaybackModes extends ConsumerWidget {
             selected: player.shuffle,
             onPressed: controller.toggleShuffle,
           ),
-          const SizedBox(width: AppLayout.playerItemGap),
+          SizedBox(width: gap),
           modeButton(
             tooltip: player.repeat.label,
             icon: player.repeat == PlayerRepeatMode.one
@@ -690,7 +701,7 @@ class PlayerPlaybackModes extends ConsumerWidget {
             selected: repeatOn,
             onPressed: controller.cycleRepeat,
           ),
-          const SizedBox(width: AppLayout.playerItemGap),
+          SizedBox(width: gap),
           modeButton(
             tooltip: visualizer ? 'Визуализатор включён' : 'Визуализатор',
             icon: Icons.bar_chart_rounded,
@@ -699,7 +710,7 @@ class PlayerPlaybackModes extends ConsumerWidget {
                 .read(settingsControllerProvider.notifier)
                 .setVisualizerEnabled(!visualizer),
           ),
-          const SizedBox(width: AppLayout.playerItemGap),
+          SizedBox(width: gap),
           _TempoButton(
             speed: player.playback.speed,
             pitch: player.playback.pitch,
@@ -708,7 +719,7 @@ class PlayerPlaybackModes extends ConsumerWidget {
             iconSize: iconSize,
             onPressed: () => showTempoPitchDialog(context, ref),
           ),
-          const SizedBox(width: AppLayout.playerItemGap),
+          SizedBox(width: gap),
           _EqualizerButton(
             size: size,
             radius: radius,

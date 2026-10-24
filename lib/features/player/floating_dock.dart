@@ -396,7 +396,8 @@ class _PlayerIsland extends ConsumerStatefulWidget {
   ConsumerState<_PlayerIsland> createState() => _PlayerIslandState();
 }
 
-class _PlayerIslandState extends ConsumerState<_PlayerIsland> {
+class _PlayerIslandState extends ConsumerState<_PlayerIsland>
+    with SingleTickerProviderStateMixin {
   /// Накопленное смещение свайпа. Порог считаем в конце жеста, поэтому
   /// промежуточное значение нужно держать между вызовами.
   double _dragDx = 0;
@@ -406,32 +407,102 @@ class _PlayerIslandState extends ConsumerState<_PlayerIsland> {
   /// анимации, после отпускания — возвращается пружиной.
   bool _dragging = false;
 
+  /// Смещение в момент отпускания. Возврат ведёт [AnimationController], и по
+  /// одному его значению считаются сразу сдвиг и обрезка: иначе трансформация
+  /// ехала бы пружиной, а левая часть восстанавливала размер рывком.
+  double _releasedDx = 0;
+  double _releasedDy = 0;
+
+  /// Возврат островка на место — та же кривая и длительность, что у прежнего
+  /// неявного `AnimatedContainer` ([AppMotion.dockReturn]).
+  late final AnimationController _return = AnimationController(
+    vsync: this,
+    duration: AppMotion.dockReturn.duration,
+  );
+
+  @override
+  void dispose() {
+    _return.dispose();
+    super.dispose();
+  }
+
   /// Эталонная ширина для прогресса жеста: островок меняет ширину от подписи,
   /// поэтому берём постоянную величину, а не текущую.
   static const double _referenceWidth = 260;
 
   /// Прогресс жеста, −1…1 по горизонтали.
-  double get _progress => (_dragDx / _referenceWidth).clamp(-1.0, 1.0);
+  double _progressOf(double dx) => (dx / _referenceWidth).clamp(-1.0, 1.0);
 
   /// Прогресс свайпа вниз, 0…1.
-  double get _downProgress => (_dragDy / 120).clamp(0.0, 1.0);
+  double _downProgressOf(double dy) => (dy / 120).clamp(0.0, 1.0);
+
+  /// Видимое смещение по горизонтали: на жесте — за пальцем, после
+  /// отпускания — к нулю по кривой возврата.
+  ///
+  /// Кривая с перелётом, поэтому «остаток» на мгновение становится
+  /// отрицательным — островок чуть уезжает вправо, как раньше. Обрезка считается
+  /// уже от этого значения и снизу ограничена нулём.
+  double get _visibleDx => _dragging
+      ? _dragDx
+      : _releasedDx *
+          (1 - AppMotion.dockReturn.curve.transform(_return.value));
+
+  double get _visibleDy => _dragging
+      ? _dragDy
+      : _releasedDy *
+          (1 - AppMotion.dockReturn.curve.transform(_return.value));
 
   void _publishSwipe() {
-    widget.swipe.value = Offset(_progress, _downProgress);
+    widget.swipe.value = Offset(_progressOf(_dragDx), _downProgressOf(_dragDy));
+  }
+
+  /// Начало жеста. Если островок ещё возвращается, продолжаем с того места,
+  /// где он виден, — иначе он прыгнул бы к исходной точке.
+  void _beginDrag() {
+    if (_return.isAnimating) {
+      _dragDx = _visibleDx;
+      _dragDy = _visibleDy;
+      _return.stop();
+      _releasedDx = 0;
+      _releasedDy = 0;
+    }
+    _dragging = true;
   }
 
   /// Возвращает островок на место и гасит отклик соседнего островка.
+  ///
+  /// Анимируется не только трансформация: контроллер ведёт и обрезку, поэтому
+  /// клипер снимается лишь когда inset дошёл до нуля, а не сразу после
+  /// отпускания.
   void _resetDrag() {
+    final double dx = _dragDx;
+    final double dy = _dragDy;
     setState(() {
+      _releasedDx = dx;
+      _releasedDy = dy;
       _dragDx = 0;
       _dragDy = 0;
       _dragging = false;
     });
     _publishSwipe();
+    // Курсор не сдвинулся (тап, отменённый жест) — возвращать нечего.
+    if (dx.abs() < 0.01 && dy.abs() < 0.01) return;
+    _return.duration = AppMotion.dockReturn.duration;
+    _return.forward(from: 0);
   }
 
   @override
   Widget build(BuildContext context) {
+    // Возврат пересчитывает весь островок по кадру контроллера: от одного
+    // значения зависят и сдвиг, и обрезка, и подсветка — разойтись они не
+    // могут.
+    return AnimatedBuilder(
+      animation: _return,
+      builder: (BuildContext context, Widget? child) => _build(context),
+    );
+  }
+
+  Widget _build(BuildContext context) {
     // Позицию сюда не подмешиваем: её слушает только кольцо прогресса
     // (`ArtworkProgressRing`), и тик позиции не должен перестраивать весь
     // островок. Запись сравнивается по значению, поэтому подписка срабатывает
@@ -467,23 +538,28 @@ class _PlayerIslandState extends ConsumerState<_PlayerIsland> {
       ),
     );
 
+    // Видимое смещение: пока тянем — точно за пальцем, при возврате — по
+    // кривой контроллера. От него считаются и сдвиг, и обрезка, и подсветка.
+    final double dx = _visibleDx;
+    final double dy = _visibleDy;
+
     // Насколько жест набран: подмешиваем акцент к поверхности островка, чтобы
     // свайп было видно. Раньше островок на движение не отвечал никак.
-    final double tint =
-        (_progress.abs() * 0.7 + _downProgress * 0.5).clamp(0.0, 1.0);
+    final double tint = (_progressOf(dx).abs() * 0.7 +
+            _downProgressOf(dy) * 0.5)
+        .clamp(0.0, 1.0);
 
     // Свайп от навигации (вправо) — островок отрывается от неё, и левый край
     // становится таким же круглым, как правый. Если навигации рядом нет вовсе,
     // край круглый сразу.
-    final double awayNav = widget.navHidden
-        ? 1.0
-        : (_dragDx / 140).clamp(0.0, 1.0);
+    final double awayNav =
+        widget.navHidden ? 1.0 : (dx / 140).clamp(0.0, 1.0);
 
     // Свайп К навигации (влево) — блок ОБРЕЗАЕТСЯ справа вместе с содержимым:
     // ширина становится меньше, а левый край с минимальным скруглением (стык)
     // остаётся ровно на месте. Сдвигать блок было неверно: ширина не менялась,
     // и стык уезжал вместе с ним.
-    final double shrink = (-_dragDx * 0.9).clamp(0.0, 260.0);
+    final double shrink = (-dx * 0.9).clamp(0.0, 260.0);
 
     final BorderRadius radius = BorderRadius.only(
       topLeft: Radius.circular(
@@ -576,7 +652,7 @@ class _PlayerIslandState extends ConsumerState<_PlayerIsland> {
       behavior: HitTestBehavior.opaque,
       onHorizontalDragUpdate: (DragUpdateDetails details) {
         setState(() {
-          _dragging = true;
+          _beginDrag();
           _dragDx += details.delta.dx;
         });
         _publishSwipe();
@@ -585,7 +661,7 @@ class _PlayerIslandState extends ConsumerState<_PlayerIsland> {
       onHorizontalDragEnd: _onSwipeEnd,
       onVerticalDragUpdate: (DragUpdateDetails details) {
         setState(() {
-          _dragging = true;
+          _beginDrag();
           // Вниз — уборка очереди: тянем только вниз, вверх не заводим.
           _dragDy = (_dragDy + details.delta.dy).clamp(0.0, 240.0);
         });
@@ -596,7 +672,7 @@ class _PlayerIslandState extends ConsumerState<_PlayerIsland> {
       // исчезает, потому что играть больше нечего.
       onVerticalDragEnd: (DragEndDetails details) {
         final bool clear = (details.primaryVelocity ?? 0) > 250 ||
-            _downProgress >= 0.6;
+            _downProgressOf(_dragDy) >= 0.6;
         _resetDrag();
         if (clear) {
           unawaited(
@@ -605,22 +681,17 @@ class _PlayerIslandState extends ConsumerState<_PlayerIsland> {
         }
       },
       onTap: () => AppRoutes.nowPlaying(context),
-      child: AnimatedContainer(
-        // Пока ведём пальцем — следуем за ним без задержки; после отпускания
-        // островок возвращается на место пружиной ([AppMotion.dockReturn]:
-        // `easeOutBack` даёт лёгкий «перелёт», как у выразительных компонентов
-        // Material 3).
-        duration:
-            _dragging ? Duration.zero : AppMotion.dockReturn.duration,
-        curve: AppMotion.dockReturn.curve,
-        transform: Matrix4.translationValues(
-          // Влево — едем вместе с обрезкой: капсула уходит под навигацию, а
-          // левый край (обрез) остаётся на её границе. Вправо — лёгкий сдвиг,
-          // там обрезки нет.
-          _dragDx > 0 ? _dragDx * 0.32 : -shrink,
-          _dragDy * 0.30,
-          0,
-        ),
+      // Сдвиг и обрезка — одно движение: пока тянем, смещение берётся прямо из
+      // жеста (без задержки), после отпускания его ведёт контроллер возврата
+      // (`easeOutBack` даёт лёгкий «перелёт», как у выразительных компонентов
+      // Material 3).
+      child: Transform.translate(
+        // Влево — едем вместе с обрезкой: капсула уходит под навигацию, а
+        // левый край (обрез) остаётся на её границе. Вправо — лёгкий сдвиг,
+        // там обрезки нет.
+        offset: Offset(dx > 0 ? dx * 0.32 : -shrink, dy * 0.30),
+        // Клипер снимается только когда обрезки не осталось: пока inset
+        // возвращается к нулю, левая часть открывается вместе с трансформацией.
         child: shrink <= 0.5
             ? islandWithJoint
             : ClipRRect(
@@ -842,13 +913,13 @@ class _IslandTransport extends ConsumerWidget {
   }
 }
 
-/// Второстепенные действия островка: лайк, визуализатор, очередь, панель, «…».
+/// Второстепенные действия островка: лайк, очередь, панель, «…».
 ///
 /// Ряд занимает всю правую половину островка, кнопки распределены по ней
 /// равномерно (`spaceBetween`): так интервалы между действиями одинаковые, а
 /// последняя кнопка стоит на том же отступе от края, что и обложка слева.
-/// Панель справа есть только в широкой раскладке — там кнопок пять, на узком
-/// окне четыре, и ряд всё равно остаётся равномерным.
+/// Панель справа есть только в широкой раскладке — там кнопок четыре, на
+/// узком окне три, и ряд всё равно остаётся равномерным.
 class _IslandActions extends ConsumerWidget {
   const _IslandActions({required this.current, required this.wide});
 
@@ -880,13 +951,6 @@ class _IslandActions extends ConsumerWidget {
         (Set<String> ids) => ids.contains(current?.id),
       ),
     );
-    // Визуализатор — настройка вида полного экрана, но переключать его удобно
-    // и отсюда: он стоит в общем ряду второстепенных действий.
-    final bool visualizer = ref.watch(
-      settingsControllerProvider.select(
-        (AppSettings s) => s.visualizerEnabled,
-      ),
-    );
 
     return Row(
       mainAxisAlignment: MainAxisAlignment.spaceBetween,
@@ -898,15 +962,6 @@ class _IslandActions extends ConsumerWidget {
           onPressed: signedIn && current != null
               ? () => _like(context, ref, current!)
               : null,
-        ),
-        _IslandButton(
-          tooltip: visualizer ? 'Визуализатор включён' : 'Визуализатор',
-          icon: Icons.bar_chart_rounded,
-          isSelected: visualizer,
-          selectedIcon: Icons.bar_chart_rounded,
-          onPressed: () => ref
-              .read(settingsControllerProvider.notifier)
-              .setVisualizerEnabled(!visualizer),
         ),
         _IslandButton(
           tooltip: 'Очередь',
