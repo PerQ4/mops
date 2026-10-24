@@ -1,13 +1,15 @@
 import 'package:flutter/material.dart';
 
 import '../../core/theme/layout.dart';
+import 'media_wide.dart';
 
 /// Страница медиа: альбом, исполнитель, плейлист.
 ///
 /// На узком и среднем окне — одна колонка: шапка сверху, содержимое под ней,
-/// как в ArchiveTune. На широком окне шапка перестаёт быть огромным блоком во
-/// всю высоту: обложка с действиями уходит в колонку слева, а список треков
-/// встаёт справа и виден сразу, без прокрутки под шапку.
+/// как в ArchiveTune. На широком окне страница тоже одноколоночная, но шапка
+/// превращается в баннер на всю ширину, а список идёт под ним отдельной
+/// центрированной колонкой. Одной прокруткой: две независимые полосы и
+/// разделитель на всю высоту читались как две панели, а не как одна страница.
 ///
 /// Зачем общий виджет: содержимое у трёх страниц разное, а правило раскладки
 /// одно. Держать его копией в каждом экране — значит гарантированно получить
@@ -17,24 +19,30 @@ class MediaPage extends StatelessWidget {
     super.key,
     required this.title,
     required this.heroBuilder,
-    required this.slivers,
+    required this.sliverBuilder,
     this.actions = const <Widget>[],
+    this.description,
   });
 
-  /// Заголовок в шапке страницы.
+  /// Заголовок в шапке страницы. На широком окне не показывается: там имя
+  /// страницы уже есть в баннере, и дубль в шапке только спорил с ним.
   final String title;
 
   /// Действия шапки (у плейлиста — «…»).
   final List<Widget> actions;
 
-  /// Шапка страницы. [wide] — рисовать её колонкой слева, а не во всю ширину.
+  /// Шапка страницы. [wide] — рисовать баннером на всю ширину.
   final Widget Function(BuildContext context, bool wide) heroBuilder;
 
-  /// Содержимое под шапкой: заголовок секции, список треков, ленты.
+  /// Содержимое под шапкой: заголовки секций, список треков, ленты.
   ///
-  /// На широком окне эти слюды уходят в правую колонку и прокручиваются
-  /// отдельно от шапки — поэтому треки не прячутся за ней.
-  final List<Widget> slivers;
+  /// Строится вместе с признаком [wide]: на широком окне список — таблица с
+  /// подписанными колонками, на узком — прежние строки с обложкой.
+  final List<Widget> Function(BuildContext context, bool wide) sliverBuilder;
+
+  /// Описание под баннером. Показывается только на широком окне: на узком
+  /// оно живёт внутри шапки и в отдельном блоке не нуждается.
+  final String? description;
 
   @override
   Widget build(BuildContext context) {
@@ -46,69 +54,64 @@ class MediaPage extends StatelessWidget {
     if (!wide) {
       return CustomScrollView(
         slivers: <Widget>[
-          _appBar(),
+          _appBar(context, wide: false),
           SliverToBoxAdapter(child: heroBuilder(context, false)),
-          ...slivers,
+          ...sliverBuilder(context, false),
           _footer(),
         ],
       );
     }
 
+    final String? text = description?.trim();
     return LayoutBuilder(
       builder: (BuildContext context, BoxConstraints constraints) {
-        final double heroWidth =
-            AppLayout.heroColumnWidth(constraints.maxWidth);
+        final double inset = mediaContentInset(constraints.maxWidth);
         return CustomScrollView(
           slivers: <Widget>[
-            _appBar(),
-            SliverFillRemaining(
-              // Ребёнок — не один список, а ряд из двух: `hasScrollBody: true`
-              // даёт ему ровно высоту под шапкой, и обе колонки скроллятся
-              // сами, не растягивая страницу.
-              hasScrollBody: true,
-              child: Row(
-                crossAxisAlignment: CrossAxisAlignment.stretch,
-                children: <Widget>[
-                  SizedBox(
-                    width: heroWidth,
-                    child: SingleChildScrollView(
-                      padding: const EdgeInsets.fromLTRB(
-                        AppLayout.gutter,
-                        AppLayout.gutter,
-                        AppLayout.gutter,
-                        // Запас под плавающий островок: он лежит поверх
-                        // содержимого и на широком окне тоже.
-                        AppLayout.floatingDockClearance,
-                      ),
-                      child: heroBuilder(context, true),
-                    ),
-                  ),
-                  const VerticalDivider(width: 1),
-                  Expanded(
-                    child: CustomScrollView(
-                      slivers: <Widget>[
-                        ...slivers,
-                        _footer(),
-                      ],
-                    ),
-                  ),
-                ],
+            _appBar(context, wide: true),
+            SliverToBoxAdapter(child: heroBuilder(context, true)),
+            if (text != null && text.isNotEmpty)
+              SliverToBoxAdapter(
+                child: Padding(
+                  padding: EdgeInsets.symmetric(horizontal: inset),
+                  child: MediaDescription(text: text),
+                ),
               ),
-            ),
+            // Небольшой зазор после баннера: его градиент заканчивается
+            // цветом поверхности, и список не должен липнуть к краю.
+            const SliverToBoxAdapter(child: SizedBox(height: 8)),
+            for (final Widget sliver in sliverBuilder(context, true))
+              SliverPadding(
+                padding: EdgeInsets.symmetric(horizontal: inset),
+                sliver: sliver,
+              ),
+            _footer(),
           ],
         );
       },
     );
   }
 
-  /// Шапка одинакова в обеих раскладках: на широком окне она просто
-  /// растягивается над двумя колонками.
-  Widget _appBar() {
+  /// Шапка страницы. На широком окне — только «назад» и действия: заголовок
+  /// уже в баннере.
+  Widget _appBar(BuildContext context, {required bool wide}) {
+    final ColorScheme scheme = Theme.of(context).colorScheme;
     return SliverAppBar(
       pinned: true,
       expandedHeight: AppLayout.appBarHeight,
-      title: Text(title, maxLines: 1, overflow: TextOverflow.ellipsis),
+      title: wide
+          ? null
+          : Text(title, maxLines: 1, overflow: TextOverflow.ellipsis),
       actions: actions.isEmpty ? null : actions,
+      // На широком окне шапка прозрачна по цвету и не видна на фоне страницы;
+      // тонкая линия отделяет её от уезжающего под неё баннера и списка.
+      shape: wide
+          ? Border(
+              bottom: BorderSide(
+                color: scheme.outlineVariant.withValues(alpha: 0.18),
+              ),
+            )
+          : null,
     );
   }
 

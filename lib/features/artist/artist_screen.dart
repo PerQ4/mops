@@ -14,6 +14,7 @@ import '../../widgets/media_card.dart';
 import '../../widgets/track_tile.dart';
 import '../album/media_hero.dart';
 import '../album/media_page.dart';
+import '../album/media_wide.dart';
 import '../common/navigation.dart';
 import '../../widgets/empty_state.dart';
 import 'artist_hero.dart';
@@ -35,7 +36,9 @@ class _SubscribeButton extends ConsumerWidget {
       authControllerProvider.select((AuthState s) => s.isSignedIn),
     );
     final bool subscribed = ref.watch(
-      subscribedIdsProvider.select((Set<String> ids) => ids.contains(channelId)),
+      subscribedIdsProvider.select(
+        (Set<String> ids) => ids.contains(channelId),
+      ),
     );
 
     return HeroCircleButton(
@@ -52,9 +55,9 @@ class _SubscribeButton extends ConsumerWidget {
                     .toggle(channelId);
               } on Object catch (error) {
                 if (context.mounted) {
-                  ScaffoldMessenger.of(context).showSnackBar(
-                    SnackBar(content: Text(describeError(error))),
-                  );
+                  ScaffoldMessenger.of(
+                    context,
+                  ).showSnackBar(SnackBar(content: Text(describeError(error))));
                 }
               }
             },
@@ -83,7 +86,9 @@ class _BlockArtistButton extends ConsumerWidget {
     );
 
     return HeroCircleButton(
-      icon: blocked ? Icons.person_add_alt_1_outlined : Icons.person_off_outlined,
+      icon: blocked
+          ? Icons.person_add_alt_1_outlined
+          : Icons.person_off_outlined,
       tooltip: blocked ? 'Разблокировать' : 'Заблокировать исполнителя',
       size: 52,
       onPressed: () => _toggleArtistBlock(
@@ -247,92 +252,122 @@ class _ArtistBody extends ConsumerWidget {
     final String? audience = artist.subscribers;
     final String catalog = artistCatalogLine(artist);
 
-    final bool isEmpty = !hasTracks &&
+    final bool isEmpty =
+        !hasTracks &&
         artist.albums.isEmpty &&
         artist.singles.isEmpty &&
         artist.related.isEmpty;
 
     final String? description = artist.description?.trim();
 
+    // Порядок действий как в ArchiveTune: перемешать, слушать, добавить
+    // (`ArtistScreen.kt:504-585`, `MediaDetailHero.kt:341-409`); подписка и
+    // блокировка — наши. Один список на обе раскладки.
+    final List<Widget> actions = <Widget>[
+      HeroCircleButton(
+        icon: Icons.shuffle,
+        tooltip: 'Перемешать',
+        size: 52,
+        onPressed: hasTracks
+            ? () => ref
+                  .read(playerControllerProvider.notifier)
+                  .playQueue(top, shuffle: true)
+            : null,
+      ),
+      HeroPlayButton(
+        label: isCurrentArtist && playing ? 'Пауза' : 'Слушать',
+        icon: isCurrentArtist && playing ? Icons.pause : Icons.play_arrow,
+        onPressed: !hasTracks
+            ? null
+            : () {
+                final PlayerController controller = ref.read(
+                  playerControllerProvider.notifier,
+                );
+                if (isCurrentArtist && playing) {
+                  controller.togglePlayPause();
+                } else {
+                  controller.playQueue(top);
+                }
+              },
+      ),
+      HeroCircleButton(
+        icon: Icons.playlist_add,
+        tooltip: 'В очередь',
+        size: 52,
+        onPressed: hasTracks ? () => _enqueueAll(ref, top) : null,
+      ),
+      // Подписка на канал — как кнопка «Подписаться» в YouTube Music.
+      _SubscribeButton(channelId: artist.id),
+      _BlockArtistButton(artistId: artist.id, artistName: artist.name),
+    ];
+
+    Widget blockedBanner(BuildContext context) => _BlockedBanner(
+      onUnblock: () => _toggleArtistBlock(
+        context,
+        ref,
+        artistId: artist.id,
+        artistName: artist.name,
+        blocked: true,
+      ),
+    );
+
+    final int topCount = top.length > _topTracksLimit
+        ? _topTracksLimit
+        : top.length;
+
     return MediaPage(
       title: artist.name,
-      heroBuilder: (BuildContext context, bool wide) => ArtistHero(
-        // На широком окне шапка стоит колонкой слева, а треки — справа.
-        column: wide,
-        name: artist.name,
-        // Крупная обложка: `ArtistHeroArtworkSizePx` = 1200
-        // (ArtistScreen.kt:1152).
-        imageUrl: artist.thumbnails.sized(1200),
-        audience: audience,
-        catalog: catalog,
-        // Порядок действий как в ArchiveTune: перемешать, слушать,
-        // добавить (`ArtistScreen.kt:504-585`, `MediaDetailHero.kt:341-409`).
-        actions: <Widget>[
-          HeroCircleButton(
-            icon: Icons.shuffle,
-            tooltip: 'Перемешать',
-            size: 52,
-            onPressed: hasTracks
-                ? () => ref
-                    .read(playerControllerProvider.notifier)
-                    .playQueue(top, shuffle: true)
-                : null,
-          ),
-          HeroPlayButton(
-            label: isCurrentArtist && playing ? 'Пауза' : 'Слушать',
-            icon: isCurrentArtist && playing ? Icons.pause : Icons.play_arrow,
-            onPressed: !hasTracks
-                ? null
-                : () {
-                    final PlayerController controller =
-                        ref.read(playerControllerProvider.notifier);
-                    if (isCurrentArtist && playing) {
-                      controller.togglePlayPause();
-                    } else {
-                      controller.playQueue(top);
-                    }
-                  },
-          ),
-          HeroCircleButton(
-            icon: Icons.playlist_add,
-            tooltip: 'В очередь',
-            size: 52,
-            onPressed: hasTracks ? () => _enqueueAll(ref, top) : null,
-          ),
-          // Подписка на канал — как кнопка «Подписаться» в YouTube Music.
-          _SubscribeButton(channelId: artist.id),
-          _BlockArtistButton(
-            artistId: artist.id,
-            artistName: artist.name,
-          ),
-        ],
-      ),
-      slivers: <Widget>[
-        if (blocked)
-          SliverToBoxAdapter(
-            child: _BlockedBanner(
-              onUnblock: () => _toggleArtistBlock(
-                context,
-                ref,
-                artistId: artist.id,
-                artistName: artist.name,
-                blocked: true,
-              ),
-            ),
-          ),
-        // Описание — отдельным блоком под шапкой, а не внутри неё
-        // (ArtistScreen.kt:590-617).
-        if (description != null && description.isNotEmpty)
+      // На узком окне описание остаётся отдельным блоком под шапкой
+      // (ArtistScreen.kt:590-617), на широком — сворачиваемым блоком под
+      // баннером, который рисует сама страница.
+      description: description,
+      heroBuilder: (BuildContext context, bool wide) {
+        if (wide) {
+          return MediaBanner(
+            label: 'Исполнитель',
+            title: artist.name,
+            // Крупная обложка: `ArtistHeroArtworkSizePx` = 1200
+            // (ArtistScreen.kt:1152).
+            imageUrl: artist.thumbnails.sized(1200),
+            // У исполнителя подпись — аудитория и каталог, а не имя.
+            meta: audience,
+            metaSecondary: catalog,
+            fallbackIcon: Icons.person,
+            circular: true,
+            actions: actions,
+          );
+        }
+        return ArtistHero(
+          name: artist.name,
+          imageUrl: artist.thumbnails.sized(1200),
+          audience: audience,
+          catalog: catalog,
+          actions: actions,
+        );
+      },
+      sliverBuilder: (BuildContext context, bool wide) => <Widget>[
+        if (blocked) SliverToBoxAdapter(child: blockedBanner(context)),
+        if (!wide && description != null && description.isNotEmpty)
           SliverToBoxAdapter(child: ArtistDescription(text: description)),
         if (hasTracks) ...<Widget>[
           const SliverToBoxAdapter(child: _SectionTitle('Популярные треки')),
+          if (wide) const SliverToBoxAdapter(child: MediaTrackListHeader()),
           SliverList.builder(
-            itemCount: top.length > _topTracksLimit
-                ? _topTracksLimit
-                : top.length,
+            itemCount: topCount,
             itemBuilder: (BuildContext context, int index) {
               final Track track = top[index];
               final bool isCurrent = current?.id == track.id;
+              if (wide) {
+                return MediaTrackRow(
+                  track: track,
+                  number: index + 1,
+                  isCurrent: isCurrent,
+                  isPlaying: isCurrent && playing,
+                  onTap: () => ref
+                      .read(playerControllerProvider.notifier)
+                      .playTrack(track, context: top),
+                );
+              }
               // Обложка вместо номера и меню «…» справа — как `YouTubeListItem`
               // в секции популярных треков (ArtistScreen.kt:815-871).
               return TrackTile(
@@ -352,15 +387,27 @@ class _ArtistBody extends ConsumerWidget {
         ],
         if (artist.albums.isNotEmpty)
           SliverToBoxAdapter(
-            child: _CardRow(title: 'Альбомы', albums: artist.albums),
+            child: _CardRow(
+              title: 'Альбомы',
+              albums: artist.albums,
+              wide: wide,
+            ),
           ),
         if (artist.singles.isNotEmpty)
           SliverToBoxAdapter(
-            child: _CardRow(title: 'Синглы и мини-альбомы', albums: artist.singles),
+            child: _CardRow(
+              title: 'Синглы и мини-альбомы',
+              albums: artist.singles,
+              wide: wide,
+            ),
           ),
         if (artist.related.isNotEmpty)
           SliverToBoxAdapter(
-            child: _ArtistRow(title: 'Похожие исполнители', artists: artist.related),
+            child: _ArtistRow(
+              title: 'Похожие исполнители',
+              artists: artist.related,
+              wide: wide,
+            ),
           ),
         if (isEmpty)
           const SliverToBoxAdapter(
@@ -369,8 +416,7 @@ class _ArtistBody extends ConsumerWidget {
               child: EmptyState(
                 icon: Icons.person_outline,
                 title: 'Ничего не найдено',
-                subtitle:
-                    'YouTube Music не вернул треки и альбомы этого исполнителя.',
+                subtitle: 'YouTube Music не вернул треки и альбомы этого исполнителя.',
               ),
             ),
           ),
@@ -380,8 +426,9 @@ class _ArtistBody extends ConsumerWidget {
 
   /// Кладёт популярные треки в конец очереди.
   void _enqueueAll(WidgetRef ref, List<Track> tracks) {
-    final PlayerController controller =
-        ref.read(playerControllerProvider.notifier);
+    final PlayerController controller = ref.read(
+      playerControllerProvider.notifier,
+    );
     for (final Track track in tracks) {
       controller.enqueue(track);
     }
@@ -406,9 +453,9 @@ class _SectionTitle extends StatelessWidget {
         maxLines: 1,
         overflow: TextOverflow.ellipsis,
         style: Theme.of(context).textTheme.titleLarge?.copyWith(
-              fontWeight: FontWeight.w700,
-              color: Theme.of(context).colorScheme.primary,
-            ),
+          fontWeight: FontWeight.w700,
+          color: Theme.of(context).colorScheme.primary,
+        ),
       ),
     );
   }
@@ -418,23 +465,25 @@ class _SectionTitle extends StatelessWidget {
 /// `Dimensions.kt:39` (128), как у `GridItem` (`Items.kt:285`).
 const double _gridArtworkSize = AppLayout.gridThumbnailHeight;
 
-/// Высота ленты альбомов: обложка 128 плюс две строки подписи (заголовок и
-/// год/исполнители) — с запасом, чтобы длинная подпись не обрезалась.
-const double _cardRowHeight = _gridArtworkSize + 72;
-
-/// Высота ленты исполнителей: у круглого аватара подписи нет, поэтому ниже.
-const double _artistRowHeight = _gridArtworkSize + 48;
-
 /// Горизонтальная лента альбомов или синглов.
 ///
 /// Параметры ленты — из `ArtistScreen.kt:877-879`: отступ по краям 12,
 /// зазор между элементами 4. Ширина карточки — `GridThumbnailHeight` (128),
 /// как у `GridItem` в `Items.kt:285`.
 class _CardRow extends StatelessWidget {
-  const _CardRow({required this.title, required this.albums});
+  const _CardRow({
+    required this.title,
+    required this.albums,
+    required this.wide,
+  });
 
   final String title;
   final List<Album> albums;
+  final bool wide;
+
+  /// На широком окне карточки крупнее: колонка 1100 иначе выглядела бы
+  /// пустой, а обложки 128 в ней терялись.
+  double get _itemWidth => wide ? AppLayout.cardWidth : _gridArtworkSize;
 
   @override
   Widget build(BuildContext context) {
@@ -443,15 +492,15 @@ class _CardRow extends StatelessWidget {
       children: <Widget>[
         _SectionTitle(title),
         HorizontalList(
-          height: _cardRowHeight,
+          height: _itemWidth + 72,
           padding: const EdgeInsets.symmetric(horizontal: 12),
-          separator: 4,
+          separator: wide ? 8 : 4,
           itemCount: albums.length,
           itemBuilder: (BuildContext context, int index) {
             final Album album = albums[index];
             return BrowseItemCard(
               item: AlbumItem(album),
-              width: _gridArtworkSize,
+              width: _itemWidth,
               onTap: (BrowseItem _) => AppRoutes.album(context, album.id),
             );
           },
@@ -464,10 +513,17 @@ class _CardRow extends StatelessWidget {
 
 /// Горизонтальная лента исполнителей.
 class _ArtistRow extends StatelessWidget {
-  const _ArtistRow({required this.title, required this.artists});
+  const _ArtistRow({
+    required this.title,
+    required this.artists,
+    required this.wide,
+  });
 
   final String title;
   final List<Artist> artists;
+  final bool wide;
+
+  double get _itemWidth => wide ? AppLayout.cardWidth : _gridArtworkSize;
 
   @override
   Widget build(BuildContext context) {
@@ -476,15 +532,15 @@ class _ArtistRow extends StatelessWidget {
       children: <Widget>[
         _SectionTitle(title),
         HorizontalList(
-          height: _artistRowHeight,
+          height: _itemWidth + 48,
           padding: const EdgeInsets.symmetric(horizontal: 12),
-          separator: 4,
+          separator: wide ? 8 : 4,
           itemCount: artists.length,
           itemBuilder: (BuildContext context, int index) {
             final Artist artist = artists[index];
             return BrowseItemCard(
               item: ArtistItem(artist),
-              width: _gridArtworkSize,
+              width: _itemWidth,
               onTap: (BrowseItem _) => AppRoutes.artist(context, artist.id),
             );
           },

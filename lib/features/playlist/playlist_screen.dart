@@ -17,6 +17,7 @@ import '../../widgets/track_menu.dart';
 import '../../widgets/track_tile.dart';
 import '../album/media_hero.dart';
 import '../album/media_page.dart';
+import '../album/media_wide.dart';
 import 'm3u_export.dart';
 import 'playlist_cover.dart';
 
@@ -79,7 +80,8 @@ class _PlaylistBody extends ConsumerWidget {
     // которые пользователь может править. Пустой плейлист записей не имеет,
     // поэтому его тоже считаем правимым: его мог только что создать сам
     // пользователь, и отказывать ему в переименовании было бы неправильно.
-    final bool canEdit = !liked &&
+    final bool canEdit =
+        !liked &&
         (playlist.tracks.isEmpty ||
             playlist.tracks.any((Track t) => t.setVideoId != null));
 
@@ -87,8 +89,57 @@ class _PlaylistBody extends ConsumerWidget {
         current != null && playlist.tracks.any((Track t) => t.id == current.id);
     final bool hasTracks = playlist.tracks.isNotEmpty;
 
+    // Порядок действий как в ArchiveTune: перемешать, слушать, добавить.
+    // Один список на обе раскладки — шапка и баннер не должны разойтись.
+    final List<Widget> actions = <Widget>[
+      HeroCircleButton(
+        icon: Icons.shuffle,
+        tooltip: 'Перемешать',
+        size: 52,
+        onPressed: hasTracks
+            ? () => ref
+                  .read(playerControllerProvider.notifier)
+                  .playQueue(playlist.tracks, shuffle: true)
+            : null,
+      ),
+      HeroPlayButton(
+        label: isCurrentPlaylist && playing ? 'Пауза' : 'Слушать',
+        icon: isCurrentPlaylist && playing ? Icons.pause : Icons.play_arrow,
+        onPressed: !hasTracks
+            ? null
+            : () {
+                final PlayerController controller = ref.read(
+                  playerControllerProvider.notifier,
+                );
+                // Иконка «пауза» должна действительно ставить на
+                // паузу, а не перезапускать плейлист с начала.
+                if (isCurrentPlaylist && playing) {
+                  controller.togglePlayPause();
+                } else {
+                  controller.playQueue(playlist.tracks);
+                }
+              },
+      ),
+      HeroCircleButton(
+        icon: Icons.playlist_add,
+        tooltip: 'В очередь',
+        size: 52,
+        onPressed: hasTracks ? () => _enqueueAll(ref) : null,
+      ),
+      // Сохранение в библиотеку. У плейлиста ключ состояния и id для
+      // мутации совпадают; «Мне нравится» сохранять нечего — это уже
+      // библиотека, поэтому кнопка неактивна.
+      HeroSaveButton(
+        stateId: playlist.id,
+        playlistId: LibrarySource.isLikedPlaylist(playlist.id)
+            ? null
+            : playlist.id,
+      ),
+    ];
+
     return MediaPage(
       title: playlist.title,
+      description: playlist.description,
       actions: <Widget>[
         // Действия над плейлистом — только после входа: без него сервер
         // правку не примет. У гостя кнопки нет, а не «мертвая» кнопка.
@@ -100,98 +151,112 @@ class _PlaylistBody extends ConsumerWidget {
           ),
         const SizedBox(width: 4),
       ],
-      heroBuilder: (BuildContext context, bool wide) => MediaHero(
-        // На широком окне шапка стоит колонкой слева, а треки — справа.
-        column: wide,
-        title: playlist.title,
-        subtitle: playlist.author,
-        meta: _metaLine(),
-        description: playlist.description,
-        imageUrl: playlist.thumbnails.sized(600),
-        fallbackIcon: Icons.queue_music,
-        // Порядок действий как в ArchiveTune: перемешать, слушать, добавить.
-        actions: <Widget>[
-          HeroCircleButton(
-            icon: Icons.shuffle,
-            tooltip: 'Перемешать',
-            size: 52,
-            onPressed: hasTracks
-                ? () => ref
-                    .read(playerControllerProvider.notifier)
-                    .playQueue(playlist.tracks, shuffle: true)
-                : null,
-          ),
-          HeroPlayButton(
-            label: isCurrentPlaylist && playing ? 'Пауза' : 'Слушать',
-            icon: isCurrentPlaylist && playing
-                ? Icons.pause
-                : Icons.play_arrow,
-            onPressed: !hasTracks
-                ? null
-                : () {
-                    final PlayerController controller =
-                        ref.read(playerControllerProvider.notifier);
-                    // Иконка «пауза» должна действительно ставить на
-                    // паузу, а не перезапускать плейлист с начала.
-                    if (isCurrentPlaylist && playing) {
-                      controller.togglePlayPause();
-                    } else {
-                      controller.playQueue(playlist.tracks);
-                    }
-                  },
-          ),
-          HeroCircleButton(
-            icon: Icons.playlist_add,
-            tooltip: 'В очередь',
-            size: 52,
-            onPressed: hasTracks ? () => _enqueueAll(ref) : null,
-          ),
-          // Сохранение в библиотеку. У плейлиста ключ состояния и id для
-          // мутации совпадают; «Мне нравится» сохранять нечего — это уже
-          // библиотека, поэтому кнопка неактивна.
-          HeroSaveButton(
-            stateId: playlist.id,
-            playlistId:
-                LibrarySource.isLikedPlaylist(playlist.id) ? null : playlist.id,
-          ),
-        ],
-      ),
-      slivers: <Widget>[
-        if (playlist.tracks.isEmpty)
+      heroBuilder: (BuildContext context, bool wide) {
+        if (wide) {
+          return MediaBanner(
+            label: 'Плейлист',
+            title: playlist.title,
+            subtitle: playlist.author,
+            meta: _metaLine(),
+            imageUrl: playlist.thumbnails.sized(1200),
+            fallbackIcon: Icons.queue_music,
+            actions: actions,
+          );
+        }
+        return MediaHero(
+          title: playlist.title,
+          subtitle: playlist.author,
+          meta: _metaLine(),
+          description: playlist.description,
+          imageUrl: playlist.thumbnails.sized(600),
+          fallbackIcon: Icons.queue_music,
+          actions: actions,
+        );
+      },
+      sliverBuilder: (BuildContext context, bool wide) {
+        if (playlist.tracks.isEmpty) {
           // Пустой плейлист — как `MediaDetailStatePanel` в `OnlinePlaylistScreen.kt`
           // (`fillMaxWidth().padding(horizontal = 24.dp, vertical = 32.dp)`).
-          const SliverToBoxAdapter(
-            child: Padding(
-              padding: EdgeInsets.symmetric(horizontal: 24, vertical: 32),
-              child: MediaDetailStatePanel(
-                icon: Icons.queue_music,
-                title: 'Плейлист пуст',
-                description: 'В нём пока нет доступных треков.',
+          return const <Widget>[
+            SliverToBoxAdapter(
+              child: Padding(
+                padding: EdgeInsets.symmetric(horizontal: 24, vertical: 32),
+                child: MediaDetailStatePanel(
+                  icon: Icons.queue_music,
+                  title: 'Плейлист пуст',
+                  description: 'В нём пока нет доступных треков.',
+                ),
               ),
             ),
-          )
-        else
+          ];
+        }
+
+        // Хвост строки: удаление записи и меню трека.
+        Widget rowActions(Track track, VoidCallback openMenu) => _TrackActions(
+          onRemove: () => _removeTrack(context, ref, track),
+          onMenu: openMenu,
+          compact: wide,
+        );
+
+        // Подменить запись можно там же, где её вообще разрешено править:
+        // в своём плейлисте или в «Мне нравится» (там замена — это снять
+        // лайк со старого и поставить новому).
+        bool canReplace(Track track) => liked || track.setVideoId != null;
+
+        // Удалять можно только запись правимого плейлиста — у неё есть
+        // `setVideoId`. У «Мне нравится» удаление не показываем: это снятие
+        // лайка, и живёт оно в меню трека.
+        bool removable(Track track) => !liked && track.setVideoId != null;
+
+        if (wide) {
+          return <Widget>[
+            const SliverToBoxAdapter(child: MediaTrackListHeader()),
+            SliverList.builder(
+              itemCount: playlist.tracks.length,
+              itemBuilder: (BuildContext context, int index) {
+                final Track track = playlist.tracks[index];
+                final bool isCurrent = current?.id == track.id;
+                void openMenu() => showTrackMenu(
+                  context,
+                  track,
+                  replaceInPlaylist: canReplace(track)
+                      ? (Track replacement) =>
+                            _replaceInPlaylist(ref, track, replacement)
+                      : null,
+                );
+                return MediaTrackRow(
+                  track: track,
+                  number: index + 1,
+                  isCurrent: isCurrent,
+                  isPlaying: isCurrent && playing,
+                  onMenu: openMenu,
+                  onTap: () => ref
+                      .read(playerControllerProvider.notifier)
+                      .playTrack(track, context: playlist.tracks),
+                  trailing: removable(track)
+                      ? rowActions(track, openMenu)
+                      : null,
+                );
+              },
+            ),
+          ];
+        }
+
+        return <Widget>[
           SliverList.builder(
             itemCount: playlist.tracks.length,
             itemBuilder: (BuildContext context, int index) {
               final Track track = playlist.tracks[index];
               final bool isCurrent = current?.id == track.id;
-              // Удалять можно только запись правимого плейлиста — у неё есть
-              // `setVideoId`. У «Мне нравится» удаление не показываем: это
-              // снятие лайка, и живёт оно в меню трека.
-              final bool removable = !liked && track.setVideoId != null;
-              // Подменить запись можно там же, где её вообще разрешено
-              // править: в своём плейлисте или в «Мне нравится» (там замена —
-              // это снять лайк со старого и поставить новому).
-              final bool canReplace = liked || track.setVideoId != null;
+              final bool canReplaceRow = canReplace(track);
               void openMenu() => showTrackMenu(
-                    context,
-                    track,
-                    replaceInPlaylist: canReplace
-                        ? (Track replacement) =>
-                            _replaceInPlaylist(ref, track, replacement)
-                        : null,
-                  );
+                context,
+                track,
+                replaceInPlaylist: canReplaceRow
+                    ? (Track replacement) =>
+                          _replaceInPlaylist(ref, track, replacement)
+                    : null,
+              );
               return TrackTile(
                 track: track,
                 isCurrent: isCurrent,
@@ -200,7 +265,7 @@ class _PlaylistBody extends ConsumerWidget {
                 onTap: () => ref
                     .read(playerControllerProvider.notifier)
                     .playTrack(track, context: playlist.tracks),
-                trailing: removable
+                trailing: removable(track)
                     ? _TrackActions(
                         onRemove: () => _removeTrack(context, ref, track),
                         onMenu: openMenu,
@@ -209,7 +274,8 @@ class _PlaylistBody extends ConsumerWidget {
               );
             },
           ),
-      ],
+        ];
+      },
     );
   }
 
@@ -229,8 +295,9 @@ class _PlaylistBody extends ConsumerWidget {
 
   /// Кладёт весь плейлист в конец очереди.
   void _enqueueAll(WidgetRef ref) {
-    final PlayerController controller =
-        ref.read(playerControllerProvider.notifier);
+    final PlayerController controller = ref.read(
+      playerControllerProvider.notifier,
+    );
     for (final Track track in playlist.tracks) {
       controller.enqueue(track);
     }
@@ -266,7 +333,9 @@ class _PlaylistBody extends ConsumerWidget {
     if (!confirmed) return;
 
     try {
-      await ref.read(librarySourceProvider).removeFromPlaylist(
+      await ref
+          .read(librarySourceProvider)
+          .removeFromPlaylist(
             playlist.id,
             track.id,
             setVideoId: track.setVideoId!,
@@ -315,8 +384,9 @@ class _PlaylistBody extends ConsumerWidget {
 
     // Замена уже лежит в плейлисте: повторное добавление создало бы дубль,
     // достаточно убрать старую запись.
-    final bool alreadyPresent =
-        playlist.tracks.any((Track t) => t.id == replacement.id);
+    final bool alreadyPresent = playlist.tracks.any(
+      (Track t) => t.id == replacement.id,
+    );
     await library.removeFromPlaylist(
       playlist.id,
       oldTrack.id,
@@ -346,31 +416,51 @@ class _PlaylistBody extends ConsumerWidget {
 /// Меню трека оставляем рядом с удалением: убрать запись — не единственное,
 /// что нужно от строки, а терять ради этого лайк и «в очередь» нельзя.
 class _TrackActions extends StatelessWidget {
-  const _TrackActions({required this.onRemove, required this.onMenu});
+  const _TrackActions({
+    required this.onRemove,
+    required this.onMenu,
+    this.compact = false,
+  });
 
   final VoidCallback onRemove;
   final VoidCallback onMenu;
 
+  /// Плотный вариант для широкой строки: две кнопки должны уместиться в
+  /// колонку действий, не раздвигая длительность.
+  final bool compact;
+
   @override
   Widget build(BuildContext context) {
     final Color color = Theme.of(context).colorScheme.onSurfaceVariant;
+
+    // В плотном варианте `IconButton` Material 3 сам просит 48: без внешнего
+    // `SizedBox` две кнопки не влезали в колонку действий и строка
+    // переполнялась.
+    Widget button({
+      required IconData icon,
+      required String tooltip,
+      required VoidCallback onPressed,
+    }) {
+      final Widget child = IconButton(
+        tooltip: tooltip,
+        iconSize: compact ? 18 : 20,
+        color: color,
+        padding: compact ? EdgeInsets.zero : null,
+        icon: Icon(icon),
+        onPressed: onPressed,
+      );
+      return compact ? SizedBox.square(dimension: 36, child: child) : child;
+    }
+
     return Row(
       mainAxisSize: MainAxisSize.min,
       children: <Widget>[
-        IconButton(
+        button(
+          icon: Icons.remove_circle_outline,
           tooltip: 'Удалить из плейлиста',
-          iconSize: 20,
-          color: color,
-          icon: const Icon(Icons.remove_circle_outline),
           onPressed: onRemove,
         ),
-        IconButton(
-          tooltip: 'Действия',
-          iconSize: 20,
-          color: color,
-          icon: const Icon(Icons.more_vert),
-          onPressed: onMenu,
-        ),
+        button(icon: Icons.more_vert, tooltip: 'Действия', onPressed: onMenu),
       ],
     );
   }
@@ -471,8 +561,10 @@ class _PlaylistActionsSheet extends ConsumerWidget {
 
   /// Переименование: спросить название, отправить и сбросить кэш.
   Future<void> _rename(BuildContext sheetContext, WidgetRef ref) async {
-    final String? title =
-        await showRenamePlaylistDialog(sheetContext, playlist.title);
+    final String? title = await showRenamePlaylistDialog(
+      sheetContext,
+      playlist.title,
+    );
     if (title == null || !sheetContext.mounted) return;
 
     final ScaffoldMessengerState messenger = ScaffoldMessenger.of(hostContext);
@@ -493,7 +585,8 @@ class _PlaylistActionsSheet extends ConsumerWidget {
   /// Удаление плейлиста — только после подтверждения.
   Future<void> _delete(BuildContext sheetContext, WidgetRef ref) async {
     final bool confirmed =
-        await confirmDeletePlaylistDialog(sheetContext, playlist.title) ?? false;
+        await confirmDeletePlaylistDialog(sheetContext, playlist.title) ??
+        false;
     if (!confirmed || !sheetContext.mounted) return;
 
     final ScaffoldMessengerState messenger = ScaffoldMessenger.of(hostContext);
@@ -578,8 +671,10 @@ class _PlaylistActionsSheet extends ConsumerWidget {
 
     // Загрузка недешёвая и неотменяемая: пока она идёт, повторное нажатие
     // не должно отправить второй файл.
-    final NavigatorState navigator =
-        Navigator.of(hostContext, rootNavigator: true);
+    final NavigatorState navigator = Navigator.of(
+      hostContext,
+      rootNavigator: true,
+    );
     showDialog<void>(
       context: hostContext,
       barrierDismissible: false,
@@ -595,9 +690,7 @@ class _PlaylistActionsSheet extends ConsumerWidget {
     );
 
     try {
-      await ref
-          .read(librarySourceProvider)
-          .setPlaylistImage(playlist.id, png);
+      await ref.read(librarySourceProvider).setPlaylistImage(playlist.id, png);
       invalidatePlaylistCaches(ref, playlist.id);
       messenger.showSnackBar(
         const SnackBar(content: Text('Обложка плейлиста обновлена')),
@@ -656,8 +749,7 @@ Future<String?> showRenamePlaylistDialog(
   BuildContext context,
   String currentTitle,
 ) async {
-  final TextEditingController field =
-      TextEditingController(text: currentTitle);
+  final TextEditingController field = TextEditingController(text: currentTitle);
   final String? result = await showDialog<String>(
     context: context,
     builder: (BuildContext dialogContext) => AlertDialog(
@@ -746,8 +838,7 @@ Future<String?> _showM3uPathDialog(BuildContext context, String title) async {
   final String defaultPath = await defaultM3uPath(title);
   if (!context.mounted) return null;
 
-  final TextEditingController field =
-      TextEditingController(text: defaultPath);
+  final TextEditingController field = TextEditingController(text: defaultPath);
   final String? result = await showDialog<String>(
     context: context,
     builder: (BuildContext dialogContext) => AlertDialog(

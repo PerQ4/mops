@@ -19,7 +19,8 @@ abstract final class AppLayout {
   static const double extendedRailFrom = 1400;
 
   static bool isCompact(double width) => width < compactMax;
-  static bool isMedium(double width) => width >= compactMax && width < mediumMax;
+  static bool isMedium(double width) =>
+      width >= compactMax && width < mediumMax;
   static bool isExpanded(double width) => width >= mediumMax;
   static bool useExtendedRail(double width) => width >= extendedRailFrom;
 
@@ -33,6 +34,35 @@ abstract final class AppLayout {
 
   /// Ширина панели плеера на широких экранах.
   static const double playerPanelWidth = 400;
+
+  // ------------------------------------------------------ плеер: сетка
+  //
+  // Одно правило для всех поверхностей плеера — островка, правой панели и
+  // полного экрана. Боковой отступ слева и справа — одно и то же число,
+  // зазор внутри группы — один, между группами — один. Раньше зазоры
+  // набирались на глаз (2/4/6/8/10/12), и транспорт уезжал с центра: слева
+  // от него стояли обложка с подписью, справа — ряд мелких кнопок.
+
+  /// Боковой отступ содержимого правой панели и полноэкранного плеера.
+  static const double playerInset = 16;
+
+  /// Боковой отступ содержимого островка.
+  ///
+  /// Меньше панельного: островок низкий и узкий, и 16 отнимали бы ширину у
+  /// подписи трека. Слева и справа — ровно столько же, сколько здесь.
+  static const double playerDockInset = 12;
+
+  /// Зазор между элементами одной группы: кнопки транспорта, второстепенные
+  /// действия.
+  static const double playerItemGap = 8;
+
+  /// Зазор между группами плеера — между подписью и транспортом, между
+  /// транспортом и действиями, между блоками по вертикали.
+  static const double playerGroupGap = 20;
+
+  /// Вертикальный отступ содержимого панели и полного экрана: сверху и снизу
+  /// одинаковый, чтобы колонка не «съезжала» к одному краю.
+  static const double playerVerticalInset = 12;
 
   // ---------------------------------------------------- размеры ArchiveTune
   //
@@ -173,6 +203,38 @@ abstract final class AppLayout {
   static const double heroColumnMinWidth = 320;
   static const double heroColumnMaxWidth = 360;
 
+  // ---------------------------------------- страница медиа на широком окне
+  //
+  // Здесь числа для одной колонки на всю страницу: баннер сверху и список под
+  // ним. Раньше широкий вид делился на две независимые панели, и обложка
+  // уезжала в узкую колонку. Предел ниже общего `contentMaxWidth`: строки
+  // треков должны оставаться читаемыми, а не растягиваться на 1920.
+
+  /// Предельная ширина содержимого страницы медиа (баннер и список).
+  static const double mediaContentMaxWidth = 1100;
+
+  /// Минимальная высота баннера шапки.
+  ///
+  /// Меньше — и обложка 208 с названием в две строки и рядом действий
+  /// упирается в края; больше — баннер съедает первый экран у списка.
+  static const double mediaBannerMinHeight = 280;
+
+  /// Строка трека в широком списке: ниже обычной 72, потому что колонки
+  /// подписаны, а обложка в строке не нужна — список читается как таблица.
+  static const double mediaTrackRowHeight = 56;
+
+  /// Шапка списка с подписями колонок.
+  static const double mediaTrackHeaderHeight = 40;
+
+  /// Колонка номера.
+  static const double mediaTrackNumberWidth = 40;
+
+  /// Колонка длительности: в неё должна помещаться подпись «Длительность».
+  static const double mediaTrackDurationWidth = 96;
+
+  /// Колонка действий в конце строки: две кнопки в плейлисте (удалить и «…»).
+  static const double mediaTrackActionWidth = 88;
+
   /// Скругления.
   static const double radiusS = 12;
   static const double radiusM = 18;
@@ -219,8 +281,9 @@ abstract final class AppLayout {
   /// [sidebarMinWidth]: на узком окне панель обязана оставаться читаемой.
   static double sidebarWidthLimit(double windowWidth) {
     final double byWindow = windowWidth * sidebarMaxWidthFraction;
-    final double limit =
-        byWindow < sidebarMaxWidth ? byWindow : sidebarMaxWidth;
+    final double limit = byWindow < sidebarMaxWidth
+        ? byWindow
+        : sidebarMaxWidth;
     return limit < sidebarMinWidth ? sidebarMinWidth : limit;
   }
 
