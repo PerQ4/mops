@@ -286,33 +286,44 @@ class _Controls extends StatelessWidget {
         // строки, и блок управления вырастал на высоту ещё одного ряда. Слева
         // режимы, справа таймер: состояние таймера читается текстом, а его
         // место на краю не мешает частым кнопкам.
+        //
+        // Высота строки задана явно: кнопки режимов — 32, а `TextButton`
+        // таймера по умолчанию просит 48. Сорок восемь делали строку самой
+        // высокой в блоке, и вокруг тридцатидвухпиксельных кнопок оставалась
+        // пустая полоса. Тридцать шесть — ещё и удобная зона попадания.
         Padding(
           padding: side,
-          child: Row(
-            children: <Widget>[
-              // `Expanded` + `Align` — тот же `Spacer` между группами, но
-              // режимы ещё и ужимаются: на узком окне ряд кнопок не
-              // переполняет строку, а таймер остаётся целым.
-              Expanded(
-                child: Align(
-                  alignment: Alignment.centerLeft,
-                  child: PlayerPlaybackModes(
-                    player: player,
-                    size: AppLayout.playerCompactAction,
+          child: SizedBox(
+            height: 36,
+            child: Row(
+              children: <Widget>[
+                // `Expanded` + `Align` — тот же `Spacer` между группами, но
+                // режимы ещё и ужимаются: на узком окне ряд кнопок не
+                // переполняет строку, а таймер остаётся целым.
+                Expanded(
+                  child: Align(
+                    alignment: Alignment.centerLeft,
+                    child: PlayerPlaybackModes(
+                      player: player,
+                      size: AppLayout.playerCompactAction,
+                    ),
                   ),
                 ),
-              ),
-              const SizedBox(width: AppLayout.playerItemGap),
-              const SleepTimerButton(),
-            ],
+                const SizedBox(width: AppLayout.playerItemGap),
+                const SleepTimerButton(),
+              ],
+            ),
           ),
         ),
+        // Громкость — такой же блок, как шкала и транспорт, но своей группой:
+        // зазор между ней и режимами — общий межгрупповой шаг, а не шаг внутри
+        // группы: иначе полоса громкости прилипает к кнопкам.
         const SizedBox(height: AppLayout.playerGroupGap),
         const Padding(
           padding: side,
           child: PlayerVolumeControl(),
         ),
-        const SizedBox(height: AppLayout.playerVerticalInset),
+        const SizedBox(height: AppLayout.playerItemGap),
       ],
     );
   }

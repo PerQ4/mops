@@ -1,5 +1,6 @@
 import 'dart:async';
 
+import 'package:flutter/gestures.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 
@@ -78,17 +79,21 @@ class FloatingDock extends ConsumerStatefulWidget {
   /// Раньше островок складывался из блоков с зазорами на глаз, и транспорт
   /// уезжал вправо ровно на разницу их ширин.
   ///
-  /// 740 = 2 * 298 (боковые блоки) + 120 (транспорт) + 2 * 20 (зазоры групп)
-  /// + 2 * 12 (отступы островка) — см. `AppLayout.player*`.
+  /// 620 = 2 * 230 (боковые половины) + 136 (транспорт: 40 + 8 + 40 + 8 + 40)
+  /// + 2 * 12 (отступы островка) — см. `AppLayout.player*`. Половина получает
+  /// 230: 12 — зазор группы, габарит обложки с кольцом, 8 — зазор внутри
+  /// группы, остальное (около 155) — подпись.
   ///
-  /// Ширина подобрана так, чтобы блок подписи оставался не уже прежних 220:
-  /// с `playerGroupGap` по бокам транспорта он получает 217, и обычное
-  /// название не начинает бежать строкой.
-  static const double playerIslandWidth = 740;
+  /// 740 было заметно больше нужного: островок читался растянутой полосой, а
+  /// подпись в нём всё равно не помещалась целиком. Ширину под содержимое не
+  /// отдаём и теперь — иначе транспорт уезжает с центра. Длинное название
+  /// обрезается, а бежит только под курсором (см. `_IslandTitles`).
+  static const double playerIslandWidth = 620;
 
   /// То же на окне уже широкой раскладки: действий на одно меньше (панели
   /// справа там нет), поэтому блоки уже, иначе ряд действий разъезжается.
-  static const double playerIslandWidthCompact = 620;
+  /// Половина получает 180 — подпись в ней около 105.
+  static const double playerIslandWidthCompact = 520;
 
   /// Ширина панели-ящика и навигации. ArchiveTune: до 420.
   static const double panelWidth = AppLayout.navBarMaxWidth;
@@ -781,7 +786,7 @@ class _ArtworkWithProgress extends StatelessWidget {
   }
 }
 
-class _IslandTitles extends StatelessWidget {
+class _IslandTitles extends StatefulWidget {
   const _IslandTitles({
     required this.track,
     required this.downloading,
@@ -799,50 +804,72 @@ class _IslandTitles extends StatelessWidget {
   final bool playing;
 
   @override
+  State<_IslandTitles> createState() => _IslandTitlesState();
+}
+
+class _IslandTitlesState extends State<_IslandTitles> {
+  /// Курсор над подписью.
+  ///
+  /// Строка бежит только по наведению. Островок низкий, длинное название в
+  /// него не влезает — а бежало оно всё время, пока играет трек: постоянная
+  /// перерисовка в углу экрана и вечная анимация, из-за которой не
+  /// успокаивался `pumpAndSettle` в тестах (островок расширяли именно
+  /// поэтому). Без курсора строка стоит и обрезана, под курсором дочитывается.
+  bool _hovering = false;
+
+  @override
   Widget build(BuildContext context) {
+    final Track track = widget.track;
     final TextTheme text = Theme.of(context).textTheme;
     final ColorScheme scheme = Theme.of(context).colorScheme;
-    final String subtitle = downloading
-        ? 'Загрузка ${(downloadProgress * 100).round()}%'
-        : error ?? track.artistLine;
+    final String subtitle = widget.downloading
+        ? 'Загрузка ${(widget.downloadProgress * 100).round()}%'
+        : widget.error ?? track.artistLine;
     // Исполнителя прокручиваем только когда это обычная подпись: у прогресса
     // загрузки текст меняется по нескольку раз в секунду, а ошибку нужно
     // читать целиком сразу — обе строки остаются обычным текстом.
-    final bool marqueeSubtitle = !downloading && error == null;
+    final bool marqueeSubtitle = !widget.downloading && widget.error == null;
+    final bool running = widget.playing && _hovering;
 
-    return InkWell(
-      onTap: () => AppRoutes.nowPlaying(context),
-      borderRadius: BorderRadius.circular(AppLayout.radiusS),
-      child: Padding(
-        padding: const EdgeInsets.symmetric(vertical: 6),
-        child: Column(
-          mainAxisAlignment: MainAxisAlignment.center,
-          crossAxisAlignment: CrossAxisAlignment.start,
-          children: <Widget>[
-            MarqueeText(
-              track.title,
-              playing: playing,
-              style: text.bodyMedium?.copyWith(fontWeight: FontWeight.w600),
-            ),
-            const SizedBox(height: 1),
-            if (marqueeSubtitle)
+    return MouseRegion(
+      onEnter: (PointerEnterEvent _) => setState(() => _hovering = true),
+      onExit: (PointerExitEvent _) => setState(() => _hovering = false),
+      child: InkWell(
+        onTap: () => AppRoutes.nowPlaying(context),
+        borderRadius: BorderRadius.circular(AppLayout.radiusS),
+        child: Padding(
+          padding: const EdgeInsets.symmetric(vertical: 6),
+          child: Column(
+            mainAxisAlignment: MainAxisAlignment.center,
+            crossAxisAlignment: CrossAxisAlignment.start,
+            children: <Widget>[
               MarqueeText(
-                subtitle,
-                playing: playing,
-                style: text.bodySmall?.copyWith(
-                  color: scheme.onSurfaceVariant,
-                ),
-              )
-            else
-              Text(
-                subtitle,
-                maxLines: 1,
-                overflow: TextOverflow.ellipsis,
-                style: text.bodySmall?.copyWith(
-                  color: error != null ? scheme.error : scheme.onSurfaceVariant,
-                ),
+                track.title,
+                playing: running,
+                style: text.bodyMedium?.copyWith(fontWeight: FontWeight.w600),
               ),
-          ],
+              const SizedBox(height: 1),
+              if (marqueeSubtitle)
+                MarqueeText(
+                  subtitle,
+                  playing: running,
+                  style: text.bodySmall?.copyWith(
+                    color: scheme.onSurfaceVariant,
+                  ),
+                )
+              else
+                Text(
+                  subtitle,
+                  maxLines: 1,
+                  overflow: TextOverflow.ellipsis,
+                  style: text.bodySmall?.copyWith(
+                    color: widget.error != null
+                        ? scheme.error
+                        : scheme.onSurfaceVariant,
+                  ),
+                ),
+            ],
+          ),
         ),
       ),
     );
