@@ -38,19 +38,19 @@ const double _inset = 8;
 const double _rowPad = 8;
 
 /// Горизонталь, по которой выровнены тексты: заголовок категории, название
-/// строки, подпись поиска, счётчик и кнопка сортировки.
+/// строки, подпись поиска и счётчик.
 const double _textInset = _inset + _rowPad;
 
 /// Зазор между кнопками шапки и между подписью и первой кнопкой.
 const double _headerGap = 4;
 
+/// Сторона квадратной кнопки шапки: одна на все кнопки, чтобы ряд не
+/// разъезжался из-за стандартных 48 пикселей `IconButton`.
+const double _headerButton = 36;
+
 /// Высота строки шапки. Одна на заголовок с кнопками и на раскрытый поиск,
 /// иначе при открытии поиска панель дёргалась бы по высоте.
 const double _headerHeight = 44;
-
-/// Ширина, при которой в шапке помещается «Библиотека» рядом со всеми
-/// кнопками. Уже — подпись прячем: обрезанное «Б…» выглядело поломкой.
-const double _headerTitleMinWidth = 250;
 
 /// Предел ширины счётчика категории. В `AppLayout` он 96, но «123 исполнителя»
 /// в него не влезает и обрезается многоточием; здесь счётчик стоит один.
@@ -65,8 +65,8 @@ const double _searchHeight = 36;
 /// Постоянная левая панель широкой раскладки.
 ///
 /// Форма взята у Spotify Desktop и боковой панели swiftify: сверху заголовок
-/// библиотеки с кнопками и поиском, ниже — сортировка и один прокручиваемый
-/// список, в котором категории идут друг под другом («Плейлисты» → плейлисты,
+/// библиотеки с кнопками и поиском, ниже — один прокручиваемый список, в
+/// котором категории идут друг под другом («Плейлисты» → плейлисты,
 /// «Альбомы» → альбомы, «Исполнители» → исполнители). Заголовок категории
 /// закрепляется сверху, пока видна его секция, и сворачивает её по клику.
 /// У каждого элемента — контекстное меню: открыть, играть, сохранить/убрать, а
@@ -257,6 +257,10 @@ class _LibrarySidebarState extends ConsumerState<LibrarySidebar> {
 ///
 /// Высота строки постоянна ([_headerHeight]) в обоих состояниях поиска:
 /// открытие поля не сдвигает список под шапкой.
+///
+/// Сортировка — такая же квадратная кнопка, как поиск и создание: отдельная
+/// строка под шапкой занимала вертикаль, хотя несла одну подпись. Текущий
+/// порядок теперь живёт в подсказке кнопки.
 class _SidebarHeader extends ConsumerWidget {
   const _SidebarHeader({
     required this.collapsed,
@@ -280,6 +284,10 @@ class _SidebarHeader extends ConsumerWidget {
   Widget build(BuildContext context, WidgetRef ref) {
     final bool signedIn = ref.watch(
       authControllerProvider.select((AuthState s) => s.isSignedIn),
+    );
+    // Порядок нужен и кнопке (подсказка, акцент), и меню (галочка).
+    final LibrarySort sort = ref.watch(
+      librarySidebarProvider.select((LibrarySidebarState s) => s.sort),
     );
     final Widget toggle = _HeaderIcon(
       tooltip: collapsed ? 'Развернуть библиотеку' : 'Свернуть библиотеку',
@@ -313,10 +321,16 @@ class _SidebarHeader extends ConsumerWidget {
               : LayoutBuilder(
                   key: const ValueKey<String>('sidebar-actions'),
                   builder: (BuildContext context, BoxConstraints constraints) {
-                    // На 220 заголовок сжимался до «Б…» — подпись прячем,
-                    // ряд кнопок остаётся ровным и прижатым к правому краю.
+                    // Заголовок показываем, только если подпись влезает
+                    // целиком: обрезанное «Б…» выглядело поломкой. Кнопки при
+                    // этом не сжимаются — они важнее подписи.
+                    final int actions = signedIn ? 5 : 2;
+                    final double actionsWidth =
+                        actions * _headerButton + (actions - 1) * _headerGap;
                     final bool showTitle =
-                        constraints.maxWidth >= _headerTitleMinWidth;
+                        constraints.maxWidth - actionsWidth >=
+                        _sectionLabelWidth(context, 'Библиотека') +
+                            2 * _rowPad;
                     return Row(
                       children: <Widget>[
                         if (showTitle)
@@ -328,10 +342,17 @@ class _SidebarHeader extends ConsumerWidget {
                           icon: Icons.search,
                           onPressed: onSearchToggle,
                         ),
-                        // Обновление и создание показываем только вошедшему:
-                        // без входа список всё равно пуст, и кнопки делали бы
+                        // Сортировка, создание и обновление нужны только
+                        // вошедшему: без входа список пуст, и кнопки делали бы
                         // нечего.
                         if (signedIn) ...<Widget>[
+                          const SizedBox(width: _headerGap),
+                          _HeaderSort(
+                            sort: sort,
+                            onSelected: ref
+                                .read(librarySidebarProvider.notifier)
+                                .setSort,
+                          ),
                           const SizedBox(width: _headerGap),
                           _HeaderIcon(
                             tooltip: 'Создать плейлист',
@@ -358,6 +379,47 @@ class _SidebarHeader extends ConsumerWidget {
   }
 }
 
+/// Сортировка библиотеки — квадратная кнопка в ряду шапки.
+///
+/// В подсказке — текущий порядок: подписи рядом с кнопкой нет, и без неё
+/// выбранный порядок иначе не прочитать. Нестандартный порядок подсвечиваем
+/// цветом, чтобы значок не выглядел «по умолчанию» после смены.
+class _HeaderSort extends StatelessWidget {
+  const _HeaderSort({required this.sort, required this.onSelected});
+
+  final LibrarySort sort;
+  final ValueChanged<LibrarySort> onSelected;
+
+  @override
+  Widget build(BuildContext context) {
+    final ColorScheme scheme = Theme.of(context).colorScheme;
+    return PopupMenuButton<LibrarySort>(
+      tooltip: 'Сортировка: ${sort.label}',
+      onSelected: onSelected,
+      icon: Icon(
+        Icons.sort,
+        size: 20,
+        color: sort == LibrarySort.recent ? null : scheme.primary,
+      ),
+      padding: EdgeInsets.zero,
+      style: IconButton.styleFrom(
+        minimumSize: const Size(_headerButton, _headerButton),
+        maximumSize: const Size(_headerButton, _headerButton),
+        tapTargetSize: MaterialTapTargetSize.shrinkWrap,
+      ),
+      // Сортировка одна на весь список: у «вкладок» больше нет своей.
+      itemBuilder: (BuildContext context) => <PopupMenuEntry<LibrarySort>>[
+        for (final LibrarySort option in LibrarySort.values)
+          CheckedPopupMenuItem<LibrarySort>(
+            value: option,
+            checked: option == sort,
+            child: Text(option.label),
+          ),
+      ],
+    );
+  }
+}
+
 /// Кнопка шапки: одинаковый квадрат и одинаковый зазор у всех, чтобы ряд
 /// значков не разъезжался из-за стандартных 48 пикселей `IconButton`.
 class _HeaderIcon extends StatelessWidget {
@@ -377,7 +439,10 @@ class _HeaderIcon extends StatelessWidget {
       tooltip: tooltip,
       iconSize: 20,
       padding: EdgeInsets.zero,
-      constraints: const BoxConstraints.tightFor(width: 36, height: 36),
+      constraints: const BoxConstraints.tightFor(
+        width: _headerButton,
+        height: _headerButton,
+      ),
       style: IconButton.styleFrom(
         tapTargetSize: MaterialTapTargetSize.shrinkWrap,
       ),
@@ -387,6 +452,31 @@ class _HeaderIcon extends StatelessWidget {
   }
 }
 
+/// Стиль подписи шапки и заголовков категорий.
+TextStyle? _sectionLabelStyle(BuildContext context) {
+  return Theme.of(context).textTheme.labelLarge?.copyWith(
+    color: Theme.of(context).colorScheme.onSurfaceVariant,
+    fontWeight: FontWeight.w700,
+    letterSpacing: 0.4,
+  );
+}
+
+/// Ширина подписи шапки при текущем шрифте и масштабе текста.
+///
+/// Нужна, чтобы прятать заголовок до того, как он обрежется многоточием:
+/// порог в пикселях не учитывал ни масштаб интерфейса, ни выбранный шрифт.
+double _sectionLabelWidth(BuildContext context, String text) {
+  final TextPainter painter = TextPainter(
+    text: TextSpan(text: text, style: _sectionLabelStyle(context)),
+    textDirection: TextDirection.ltr,
+    textScaler: MediaQuery.textScalerOf(context),
+    maxLines: 1,
+  )..layout();
+  final double width = painter.width;
+  painter.dispose();
+  return width;
+}
+
 class _SectionLabel extends StatelessWidget {
   const _SectionLabel(this.title);
 
@@ -394,7 +484,6 @@ class _SectionLabel extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
-    final ColorScheme scheme = Theme.of(context).colorScheme;
     return Padding(
       padding: const EdgeInsets.symmetric(horizontal: _rowPad),
       child: Text(
@@ -404,11 +493,7 @@ class _SectionLabel extends StatelessWidget {
         maxLines: 1,
         softWrap: false,
         overflow: TextOverflow.ellipsis,
-        style: Theme.of(context).textTheme.labelLarge?.copyWith(
-          color: scheme.onSurfaceVariant,
-          fontWeight: FontWeight.w700,
-          letterSpacing: 0.4,
-        ),
+        style: _sectionLabelStyle(context),
       ),
     );
   }
@@ -436,17 +521,12 @@ class _ExpandedLibrary extends ConsumerWidget {
     }
 
     final LibrarySidebarState state = ref.watch(librarySidebarProvider);
-    final LibrarySidebarController controller = ref.read(
-      librarySidebarProvider.notifier,
-    );
 
     return Column(
       crossAxisAlignment: CrossAxisAlignment.stretch,
       children: <Widget>[
         // Список один на все категории: переключателя разделов больше нет.
-        Expanded(
-          child: _LibraryList(state: state, onSort: controller.setSort),
-        ),
+        Expanded(child: _LibraryList(state: state)),
       ],
     );
   }
@@ -667,14 +747,9 @@ class _NavRow extends StatelessWidget {
 /// же провайдеров, что и экран «Коллекция», поэтому новых запросов не
 /// появляется; поиск и сортировка применяются ко всем категориям сразу.
 class _LibraryList extends ConsumerWidget {
-  const _LibraryList({
-    required this.state,
-    required this.onSort,
-    this.compact = false,
-  });
+  const _LibraryList({required this.state, this.compact = false});
 
   final LibrarySidebarState state;
-  final ValueChanged<LibrarySort> onSort;
 
   /// Свёрнутая полоса: вместо строк — одни обложки.
   final bool compact;
@@ -762,11 +837,12 @@ class _LibraryList extends ConsumerWidget {
       );
     }
 
-    final Widget toolbar = _LibraryToolbar(
-      found: state.query.isEmpty ? null : found,
-      sort: state.sort,
-      onSort: onSort,
-    );
+    // От строки инструментов остался один счётчик найденного: без поиска она
+    // была пустой полосой между шапкой и первой категорией, а сортировка
+    // переехала в саму шапку.
+    final Widget? foundRow = state.query.isEmpty
+        ? null
+        : _LibraryFoundRow(found: found);
 
     // Ищем, но совпадений нет ни в одной категории: вместо трёх заголовков с
     // нулями показываем одну понятную подсказку. Пустые строки категорий при
@@ -775,7 +851,7 @@ class _LibraryList extends ConsumerWidget {
       return Column(
         crossAxisAlignment: CrossAxisAlignment.stretch,
         children: <Widget>[
-          toolbar,
+          ?foundRow,
           const Expanded(
             child: _Hint(icon: Icons.search_off, text: 'Ничего не найдено'),
           ),
@@ -793,7 +869,7 @@ class _LibraryList extends ConsumerWidget {
     return Column(
       crossAxisAlignment: CrossAxisAlignment.stretch,
       children: <Widget>[
-        toolbar,
+        ?foundRow,
         Expanded(
           child: CustomScrollView(
             key: const PageStorageKey<String>('library-list'),
@@ -1106,84 +1182,27 @@ class _CategoryEmpty extends StatelessWidget {
   }
 }
 
-/// Сколько нашлось и как отсортирован список над ним.
+/// Сколько строк нашлось при поиске.
 ///
-/// Счётчики категорий стоят в их заголовках, поэтому здесь число показываем
-/// только при поиске — иначе строка была бы пустой.
-class _LibraryToolbar extends StatelessWidget {
-  const _LibraryToolbar({
-    required this.found,
-    required this.sort,
-    required this.onSort,
-  });
+/// Счётчики категорий стоят в их заголовках, поэтому общее число нужно только
+/// при фильтре; без него строки нет вовсе — список начинается сразу под
+/// шапкой, без пустой полосы.
+class _LibraryFoundRow extends StatelessWidget {
+  const _LibraryFoundRow({required this.found});
 
-  /// Сколько строк нашлось при поиске; `null` — поиска нет.
-  final int? found;
-  final LibrarySort sort;
-  final ValueChanged<LibrarySort> onSort;
+  final int found;
 
   @override
   Widget build(BuildContext context) {
     final ColorScheme scheme = Theme.of(context).colorScheme;
-    final TextStyle? style = Theme.of(context).textTheme.labelMedium
-        ?.copyWith(color: scheme.onSurfaceVariant);
-
     return Padding(
-      padding: const EdgeInsets.fromLTRB(_textInset, 2, _textInset, 0),
-      child: LayoutBuilder(
-        builder: (BuildContext context, BoxConstraints constraints) {
-          // Подпись сортировки показываем, только когда для неё хватает места:
-          // на 220 она обрезалась до «По дате добавл…» и выглядела поломкой.
-          final bool showSortLabel = constraints.maxWidth >= 240;
-          return Row(
-            children: <Widget>[
-              Expanded(
-                child: Text(
-                  found == null ? '' : 'Найдено: $found',
-                  maxLines: 1,
-                  overflow: TextOverflow.ellipsis,
-                  style: style,
-                ),
-              ),
-              PopupMenuButton<LibrarySort>(
-                tooltip: 'Сортировка: ${sort.label}',
-                onSelected: onSort,
-                // Сортировка одна на весь список: у «вкладок» больше нет своей.
-                itemBuilder: (BuildContext context) =>
-                    <PopupMenuEntry<LibrarySort>>[
-                      for (final LibrarySort option in LibrarySort.values)
-                        CheckedPopupMenuItem<LibrarySort>(
-                          value: option,
-                          checked: option == sort,
-                          child: Text(option.label),
-                        ),
-                    ],
-                child: Padding(
-                  padding: const EdgeInsets.symmetric(vertical: 6),
-                  child: Row(
-                    mainAxisSize: MainAxisSize.min,
-                    children: <Widget>[
-                      Icon(
-                        Icons.sort,
-                        size: 16,
-                        color: scheme.onSurfaceVariant,
-                      ),
-                      if (showSortLabel) ...<Widget>[
-                        const SizedBox(width: 6),
-                        Text(
-                          sort.label,
-                          maxLines: 1,
-                          overflow: TextOverflow.ellipsis,
-                          style: style,
-                        ),
-                      ],
-                    ],
-                  ),
-                ),
-              ),
-            ],
-          );
-        },
+      padding: const EdgeInsets.fromLTRB(_textInset, 2, _textInset, 4),
+      child: Text(
+        'Найдено: $found',
+        maxLines: 1,
+        overflow: TextOverflow.ellipsis,
+        style: Theme.of(context).textTheme.labelMedium
+            ?.copyWith(color: scheme.onSurfaceVariant),
       ),
     );
   }
@@ -1984,14 +2003,7 @@ class _CollapsedLibrary extends ConsumerWidget {
     }
 
     final LibrarySidebarState state = ref.watch(librarySidebarProvider);
-    final LibrarySidebarController controller = ref.read(
-      librarySidebarProvider.notifier,
-    );
-    return _LibraryList(
-      state: state,
-      onSort: controller.setSort,
-      compact: true,
-    );
+    return _LibraryList(state: state, compact: true);
   }
 }
 
