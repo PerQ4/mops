@@ -21,6 +21,7 @@ import '../player/artwork_progress_ring.dart';
 import '../player/lyrics_view.dart';
 import '../player/player_controls.dart';
 import '../player/queue_list.dart';
+import '../player/sleep_timer.dart';
 
 /// Открыта ли правая панель плеера.
 ///
@@ -230,22 +231,20 @@ class _PlayerRightPanelState extends ConsumerState<PlayerRightPanel> {
                 const SizedBox(height: AppLayout.playerItemGap),
               ],
               PlayerSeekBar(player: player),
-              // Транспорт и настройки — одной колонкой по центру: отступы
+              // Транспорт и действия — одной колонкой по центру: отступы
               // равны `playerInset`, поэтому края совпадают с обложкой,
-              // подписями и полосой перемотки.
+              // подписями и полосой перемотки. Перемешивание и повтор стоят
+              // по краям того же ряда: отдельной строки режимов больше нет.
               const SizedBox(height: AppLayout.playerItemGap),
               Padding(
                 padding: const EdgeInsets.symmetric(
                   horizontal: AppLayout.playerInset,
                 ),
-                child: PlayerTransportBar(player: player),
-              ),
-              const SizedBox(height: AppLayout.playerItemGap),
-              Padding(
-                padding: const EdgeInsets.symmetric(
-                  horizontal: AppLayout.playerInset,
+                child: PlayerTransportBar(
+                  player: player,
+                  leading: const ShuffleButton(),
+                  trailing: const RepeatButton(),
                 ),
-                child: PlayerPlaybackModes(player: player),
               ),
               const SizedBox(height: AppLayout.playerGroupGap),
               const Padding(
@@ -415,7 +414,7 @@ class _NextTracks extends ConsumerWidget {
 /// Строка играющего трека в правой панели.
 ///
 /// Одно правило для обоих режимов: миниатюра 56 (только в очереди),
-/// название с исполнителем и сетка действий 2×2 справа. В режиме плеера
+/// название с исполнителем и сетка действий 3×2 справа. В режиме плеера
 /// миниатюры нет — там крупная обложка стоит ниже, — но сетка занимает то же
 /// место. Переключение режима живёт на обложке, а не отдельной кнопкой в
 /// шапке: в строке остаются только действия над треком.
@@ -452,60 +451,38 @@ class _PanelTrackRow extends ConsumerWidget {
     );
     final List<String> variants = track.artworkFallbacks(kArtworkLarge);
 
-    // Кнопки одного размера: сетка 2×2 занимает 68 px вместе с зазором и
+    // Кнопки одного размера: сетка 3×2 занимает 104 px вместе с зазорами и
     // оставляет место подписи даже на минимальной ширине панели (260).
-    const double actionSize = 32;
     const double actionGap = 4;
 
-    Widget action({
-      required String tooltip,
-      required IconData icon,
-      IconData? selectedIcon,
-      bool selected = false,
-      VoidCallback? onPressed,
-    }) {
-      return IconButton(
-        tooltip: tooltip,
-        isSelected: selected,
-        iconSize: 20,
-        padding: EdgeInsets.zero,
-        visualDensity: VisualDensity.compact,
-        // Без этого `IconButton` держит минимальную зону нажатия 40x40, и
-        // сетка перестала бы быть 32×32.
-        style: IconButton.styleFrom(
-          tapTargetSize: MaterialTapTargetSize.shrinkWrap,
-        ),
-        constraints: const BoxConstraints.tightFor(
-          width: actionSize,
-          height: actionSize,
-        ),
-        icon: Icon(icon, color: selected ? scheme.primary : null),
-        selectedIcon: selectedIcon == null
-            ? null
-            : Icon(selectedIcon, size: 20, color: scheme.primary),
-        onPressed: onPressed,
-      );
-    }
-
-    // Сетка 2×2 справа от подписи. Порядок — по чтению: сердце, «…», текст,
-    // свернуть. Переключателя режима здесь больше нет: он переехал на обложку.
+    // Сетка 3×2 справа от подписи. Порядок — по парам «действие и его
+    // настройка»: в первой строке лайк, темп и «…», во второй — текст,
+    // эквалайзер и свёртывание. Визуализатора здесь нет: он живёт только на
+    // полном экране, где для него есть место.
     final Widget actionsGrid = Column(
       mainAxisSize: MainAxisSize.min,
+      crossAxisAlignment: CrossAxisAlignment.end,
       children: <Widget>[
         Row(
           mainAxisSize: MainAxisSize.min,
           children: <Widget>[
-            action(
+            PlayerSquareAction(
               tooltip: liked ? 'Убрать из «Мне нравится»' : 'Нравится',
               icon: liked ? Icons.favorite : Icons.favorite_border,
               selected: liked,
               onPressed: signedIn ? () => _like(context, ref) : null,
             ),
             const SizedBox(width: actionGap),
-            action(
+            const TempoPitchButton(),
+            const SizedBox(width: actionGap),
+            PlayerSquareAction(
               tooltip: 'Действия',
               icon: Icons.more_vert,
-              onPressed: () => showTrackMenu(context, track),
+              onPressed: () => showTrackMenu(
+                context,
+                track,
+                onSleepTimer: () => showSleepTimerMenu(context, ref),
+              ),
             ),
           ],
         ),
@@ -513,7 +490,7 @@ class _PanelTrackRow extends ConsumerWidget {
         Row(
           mainAxisSize: MainAxisSize.min,
           children: <Widget>[
-            action(
+            PlayerSquareAction(
               tooltip: showLyrics ? 'Скрыть текст' : 'Показать текст',
               icon: Icons.lyrics_outlined,
               selectedIcon: Icons.lyrics,
@@ -521,7 +498,9 @@ class _PanelTrackRow extends ConsumerWidget {
               onPressed: onToggleLyrics,
             ),
             const SizedBox(width: actionGap),
-            action(
+            const EqualizerButton(),
+            const SizedBox(width: actionGap),
+            PlayerSquareAction(
               tooltip: 'Свернуть в островок',
               icon: Icons.keyboard_double_arrow_right_rounded,
               onPressed: onClose,

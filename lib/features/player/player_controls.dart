@@ -401,13 +401,16 @@ class QualityBadge extends StatelessWidget {
       child: Row(
         mainAxisSize: MainAxisSize.min,
         children: <Widget>[
-          Icon(Icons.graphic_eq, size: 13, color: scheme.onSurfaceVariant),
-          const SizedBox(width: 6),
+          Icon(Icons.graphic_eq, size: 12, color: scheme.onSurfaceVariant),
+          const SizedBox(width: 5),
           Text(
             note,
+            // Мельче имени исполнителя: кодек — справка, и равный кегль
+            // заставлял его спорить с подписью за внимание.
             style: Theme.of(context).textTheme.labelSmall?.copyWith(
+                  fontSize: 10,
                   color: scheme.onSurfaceVariant,
-                  letterSpacing: 0.6,
+                  letterSpacing: 0.5,
                 ),
           ),
         ],
@@ -549,15 +552,26 @@ Future<void> showTempoPitchDialog(BuildContext context, WidgetRef ref) async {
 
 /// Кнопки транспорта: назад, играть/пауза, вперёд.
 ///
-/// Ряд состоит только из этих трёх кнопок: настройки воспроизведения
-/// (перемешивание, повтор, темп, эквалайзер) вынесены под него отдельной
-/// группой — [PlayerPlaybackModes]. Раньше темп и эквалайзер стояли справа от
-/// «играть», а перемешивание и повтор — слева, поэтому группа была
-/// перекошена, и центральная кнопка уезжала с центра блока.
+/// [leading] и [trailing] — кнопки по краям ряда: перемешивание слева и повтор
+/// справа. Раньше эти настройки стояли отдельной строкой под транспортом; на
+/// полном экране она делила место с таймером сна, а в панели занимала ещё один
+/// ряд. Теперь порядок один и тот же на всех поверхностях:
+/// `перемешать · назад · играть · вперёд · повтор`.
 class PlayerTransportBar extends ConsumerWidget {
-  const PlayerTransportBar({super.key, required this.player});
+  const PlayerTransportBar({
+    super.key,
+    required this.player,
+    this.leading,
+    this.trailing,
+  });
 
   final PlayerUiState player;
+
+  /// Кнопка слева от «Предыдущего» — перемешивание.
+  final Widget? leading;
+
+  /// Кнопка справа от «Следующего» — повтор.
+  final Widget? trailing;
 
   @override
   Widget build(BuildContext context, WidgetRef ref) {
@@ -588,6 +602,10 @@ class PlayerTransportBar extends ConsumerWidget {
       child: Row(
         mainAxisSize: MainAxisSize.min,
         children: <Widget>[
+          if (leading != null) ...<Widget>[
+            leading!,
+            const SizedBox(width: AppLayout.playerItemGap),
+          ],
           _TransportButton(
             tooltip: 'Предыдущий',
             icon: Icons.skip_previous_rounded,
@@ -619,126 +637,83 @@ class PlayerTransportBar extends ConsumerWidget {
             foreground: onBackground.withValues(alpha: canNext ? 1 : 0.4),
             onPressed: canNext ? controller.next : null,
           ),
+          if (trailing != null) ...<Widget>[
+            const SizedBox(width: AppLayout.playerItemGap),
+            trailing!,
+          ],
         ],
       ),
     );
   }
 }
 
-/// Настройки воспроизведения: перемешивание, повтор, визуализатор, темп,
-/// эквалайзер.
-///
-/// Отдельной строкой под транспортом, а не по бокам от «играть»: так у
-/// транспорта слева и справа одинаковое число кнопок, а сами настройки идут
-/// одной линией с равными интервалами. Порядок один и тот же в панели и на
-/// полном экране — мышечная память не переучивается. В полном экране эта
-/// строка делит место с таймером сна, поэтому там кнопки компактнее
-/// ([size] = `AppLayout.playerCompactAction`).
-class PlayerPlaybackModes extends ConsumerWidget {
-  const PlayerPlaybackModes({
-    super.key,
-    required this.player,
-    this.size = 44,
-    this.gap = AppLayout.playerItemGap,
-  });
+/// Перемешивание — левый край транспорта.
+class ShuffleButton extends ConsumerWidget {
+  const ShuffleButton({super.key, this.size = AppLayout.playerCompactAction});
 
-  final PlayerUiState player;
-
-  /// Сторона квадратной кнопки: 44 в панели и 32 в шапке полного экрана.
   final double size;
-
-  /// Зазор между кнопками. По умолчанию общий для группы; полный экран
-  /// оставляет его же — ряд режимов там стоит на одной линии с таймером сна.
-  final double gap;
 
   @override
   Widget build(BuildContext context, WidgetRef ref) {
-    final PlayerController controller =
-        ref.read(playerControllerProvider.notifier);
-    final Color onBackground = Theme.of(context).colorScheme.onSurface;
-    final double radius = size * 0.32;
-    // Иконка — половина кнопки, но не мельче компактного размера: у
-    // компактной кнопки половинного кегля не хватало, чтобы значки читались.
-    final double iconSize =
-        math.max(size * 0.5, AppLayout.playerCompactActionIcon);
-    final bool repeatOn = player.repeat != PlayerRepeatMode.off;
-    // Визуализатор — такая же настройка вида, как и остальные в этом ряду.
-    final bool visualizer = ref.watch(
-      settingsControllerProvider.select(
-        (AppSettings s) => s.visualizerEnabled,
-      ),
+    final bool on = ref.watch(
+      playerControllerProvider.select((PlayerUiState s) => s.shuffle),
     );
-
-    Widget modeButton({
-      required String tooltip,
-      required IconData icon,
-      required bool selected,
-      required VoidCallback onPressed,
-    }) {
-      return _TransportButton(
-        tooltip: tooltip,
-        icon: icon,
-        size: size,
-        radius: radius,
-        iconSize: iconSize,
-        // Заливка приглушённая: 0.08 в покое, 0.2 во включённом виде.
-        background: onBackground.withValues(alpha: selected ? 0.2 : 0.08),
-        foreground: onBackground.withValues(alpha: selected ? 1 : 0.6),
-        onPressed: onPressed,
-      );
-    }
-
-    // FittedBox — чтобы ряд не переполнял узкую панель (минимум 260), а
-    // просто чуть ужимался; обычно масштаб 1:1.
-    return FittedBox(
-      fit: BoxFit.scaleDown,
-      child: Row(
-        mainAxisSize: MainAxisSize.min,
-        children: <Widget>[
-          modeButton(
-            tooltip:
-                player.shuffle ? 'Перемешивание включено' : 'Перемешать',
-            icon: Icons.shuffle,
-            selected: player.shuffle,
-            onPressed: controller.toggleShuffle,
-          ),
-          SizedBox(width: gap),
-          modeButton(
-            tooltip: player.repeat.label,
-            icon: player.repeat == PlayerRepeatMode.one
-                ? Icons.repeat_one
-                : Icons.repeat,
-            selected: repeatOn,
-            onPressed: controller.cycleRepeat,
-          ),
-          SizedBox(width: gap),
-          modeButton(
-            tooltip: visualizer ? 'Визуализатор включён' : 'Визуализатор',
-            icon: Icons.bar_chart_rounded,
-            selected: visualizer,
-            onPressed: () => ref
-                .read(settingsControllerProvider.notifier)
-                .setVisualizerEnabled(!visualizer),
-          ),
-          SizedBox(width: gap),
-          _TempoButton(
-            speed: player.playback.speed,
-            pitch: player.playback.pitch,
-            size: size,
-            radius: radius,
-            iconSize: iconSize,
-            onPressed: () => showTempoPitchDialog(context, ref),
-          ),
-          SizedBox(width: gap),
-          _EqualizerButton(
-            size: size,
-            radius: radius,
-            iconSize: iconSize,
-          ),
-        ],
-      ),
+    return _modeButton(
+      context,
+      tooltip: on ? 'Перемешивание включено' : 'Перемешать',
+      icon: Icons.shuffle,
+      selected: on,
+      size: size,
+      onPressed: ref.read(playerControllerProvider.notifier).toggleShuffle,
     );
   }
+}
+
+/// Повтор — правый край транспорта.
+class RepeatButton extends ConsumerWidget {
+  const RepeatButton({super.key, this.size = AppLayout.playerCompactAction});
+
+  final double size;
+
+  @override
+  Widget build(BuildContext context, WidgetRef ref) {
+    final PlayerRepeatMode mode = ref.watch(
+      playerControllerProvider.select((PlayerUiState s) => s.repeat),
+    );
+    return _modeButton(
+      context,
+      tooltip: mode.label,
+      icon: mode == PlayerRepeatMode.one ? Icons.repeat_one : Icons.repeat,
+      selected: mode != PlayerRepeatMode.off,
+      size: size,
+      onPressed: ref.read(playerControllerProvider.notifier).cycleRepeat,
+    );
+  }
+}
+
+/// Кнопка настройки воспроизведения: приглушённая заливка в покое и заметная —
+/// во включённом виде.
+Widget _modeButton(
+  BuildContext context, {
+  required String tooltip,
+  required IconData icon,
+  required bool selected,
+  required double size,
+  required VoidCallback onPressed,
+}) {
+  final Color onBackground = Theme.of(context).colorScheme.onSurface;
+  return _TransportButton(
+    tooltip: tooltip,
+    icon: icon,
+    size: size,
+    radius: size * 0.32,
+    // Иконка — половина кнопки, но не мельче компактной: у кнопки 32
+    // половинного кегля не хватало, чтобы значок читался.
+    iconSize: math.max(size * 0.5, AppLayout.playerCompactActionIcon),
+    background: onBackground.withValues(alpha: selected ? 0.2 : 0.08),
+    foreground: onBackground.withValues(alpha: selected ? 1 : 0.6),
+    onPressed: onPressed,
+  );
 }
 
 /// Квадратная кнопка транспорта — как `Surface` со скруглением в ArchiveTune.
@@ -791,62 +766,95 @@ class _TransportButton extends StatelessWidget {
   }
 }
 
-/// Кнопка «Темп и питч» в блоке управления.
+/// Квадратная кнопка действия в сетке правой панели: 32 с иконкой 20.
 ///
-/// Подсвечена, когда темп или питч отличаются от 1.0: иначе сдвинутое
-/// воспроизведение выглядело бы как обычное, и причину пришлось бы искать.
-/// Текущие значения — в подсказке и в самом диалоге.
-class _TempoButton extends StatelessWidget {
-  const _TempoButton({
-    required this.speed,
-    required this.pitch,
-    required this.size,
-    required this.radius,
-    required this.iconSize,
-    required this.onPressed,
+/// Одна на все кнопки панели — и на действия над треком, и на настройки
+/// (темп, эквалайзер). `IconButton` без этого держит свою минимальную зону
+/// нажатия 40, и сетка переставала бы быть 32×32.
+class PlayerSquareAction extends StatelessWidget {
+  const PlayerSquareAction({
+    super.key,
+    required this.tooltip,
+    required this.icon,
+    this.selectedIcon,
+    this.selected = false,
+    this.onPressed,
+    this.size = AppLayout.playerCompactAction,
   });
 
-  final double speed;
-  final double pitch;
+  final String tooltip;
+  final IconData icon;
+
+  /// Иконка включённого состояния; если не задана, остаётся та же.
+  final IconData? selectedIcon;
+
+  final bool selected;
+  final VoidCallback? onPressed;
   final double size;
-  final double radius;
-  final double iconSize;
-  final VoidCallback onPressed;
 
   @override
   Widget build(BuildContext context) {
-    final Color onBackground = Theme.of(context).colorScheme.onSurface;
-    final bool active = speed != 1.0 || pitch != 1.0;
-    final String value = active
-        ? 'темп ${speed.toStringAsFixed(2)}×, питч ${pitch.toStringAsFixed(2)}×'
-        : 'темп и питч обычные';
-    return _TransportButton(
-      tooltip: 'Темп и питч ($value)',
-      icon: Icons.speed,
-      size: size,
-      radius: radius,
-      iconSize: iconSize,
-      background: onBackground.withValues(alpha: active ? 0.2 : 0.08),
-      foreground: onBackground.withValues(alpha: active ? 1 : 0.6),
+    final ColorScheme scheme = Theme.of(context).colorScheme;
+    return IconButton(
+      tooltip: tooltip,
+      isSelected: selected,
+      iconSize: 20,
+      padding: EdgeInsets.zero,
+      // Без `visualDensity` и с `shrinkWrap`: иначе `IconButton` ужимает или
+      // расширяет заданный квадрат (compact отнимал 8 px, и кнопка выходила
+      // 24 вместо 32).
+      style: IconButton.styleFrom(
+        tapTargetSize: MaterialTapTargetSize.shrinkWrap,
+      ),
+      constraints: BoxConstraints.tightFor(width: size, height: size),
+      icon: Icon(icon, color: selected ? scheme.primary : null),
+      selectedIcon: selectedIcon == null
+          ? null
+          : Icon(selectedIcon, size: 20, color: scheme.primary),
       onPressed: onPressed,
     );
   }
 }
 
-/// Кнопка «Эквалайзер» в блоке управления.
+/// Кнопка «Темп и питч» в сетке правой панели.
+///
+/// Подсвечена, когда темп или питч отличаются от 1.0: иначе сдвинутое
+/// воспроизведение выглядело бы как обычное, и причину пришлось бы искать.
+/// Текущие значения — в подсказке и в самом диалоге.
+class TempoPitchButton extends ConsumerWidget {
+  const TempoPitchButton({super.key, this.size = AppLayout.playerCompactAction});
+
+  final double size;
+
+  @override
+  Widget build(BuildContext context, WidgetRef ref) {
+    final (double speed, double pitch) = ref.watch(
+      playerControllerProvider.select(
+        (PlayerUiState s) => (s.playback.speed, s.playback.pitch),
+      ),
+    );
+    final bool active = speed != 1.0 || pitch != 1.0;
+    final String value = active
+        ? 'темп ${speed.toStringAsFixed(2)}×, питч ${pitch.toStringAsFixed(2)}×'
+        : 'темп и питч обычные';
+    return PlayerSquareAction(
+      tooltip: 'Темп и питч ($value)',
+      icon: Icons.speed,
+      selected: active,
+      size: size,
+      onPressed: () => showTempoPitchDialog(context, ref),
+    );
+  }
+}
+
+/// Кнопка «Эквалайзер» в сетке правой панели.
 ///
 /// Подсвечена, когда эквалайзер включён: сам он звук не подписывает, и без
 /// подсветки причину «почему звук не такой» пришлось бы искать в настройках.
-class _EqualizerButton extends ConsumerWidget {
-  const _EqualizerButton({
-    required this.size,
-    required this.radius,
-    required this.iconSize,
-  });
+class EqualizerButton extends ConsumerWidget {
+  const EqualizerButton({super.key, this.size = AppLayout.playerCompactAction});
 
   final double size;
-  final double radius;
-  final double iconSize;
 
   @override
   Widget build(BuildContext context, WidgetRef ref) {
@@ -855,15 +863,11 @@ class _EqualizerButton extends ConsumerWidget {
         (AppSettings s) => s.equalizerEnabled,
       ),
     );
-    final Color onBackground = Theme.of(context).colorScheme.onSurface;
-    return _TransportButton(
+    return PlayerSquareAction(
       tooltip: enabled ? 'Эквалайзер (включён)' : 'Эквалайзер',
       icon: Icons.graphic_eq,
+      selected: enabled,
       size: size,
-      radius: radius,
-      iconSize: iconSize,
-      background: onBackground.withValues(alpha: enabled ? 0.2 : 0.08),
-      foreground: onBackground.withValues(alpha: enabled ? 1 : 0.6),
       onPressed: () => showEqualizerDialog(context, ref),
     );
   }

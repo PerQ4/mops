@@ -11,6 +11,7 @@ import '../data/local/blocked_artists.dart';
 import '../data/models/models.dart';
 import '../features/common/navigation.dart';
 import '../features/library/playlist_edit.dart';
+import '../features/player/sleep_timer.dart';
 import '../features/playlist/song_replacement_dialog.dart';
 import '../state/auth_controller.dart';
 import '../state/library_providers.dart';
@@ -41,6 +42,7 @@ enum _TrackAction {
   openInYouTubeMusic,
   addToPlaylist,
   mediaInfo,
+  sleepTimer,
   like,
 }
 
@@ -74,6 +76,7 @@ Future<void> showTrackMenu(
   Track track, {
   bool rootNavigator = false,
   VoidCallback? onMediaInfo,
+  VoidCallback? onSleepTimer,
   Future<void> Function(Track replacement)? replaceInPlaylist,
   Offset? position,
 }) {
@@ -84,6 +87,7 @@ Future<void> showTrackMenu(
     // widget-ссылки на него не имеет, а действиям нужны те же провайдеры.
     container: ProviderScope.containerOf(context, listen: false),
     onMediaInfo: onMediaInfo,
+    onSleepTimer: onSleepTimer,
     replaceInPlaylist: replaceInPlaylist,
   );
 
@@ -128,6 +132,7 @@ class _MenuState {
     required this.download,
     required this.downloaded,
     required this.blockedArtists,
+    required this.sleepTimer,
   }) {
     isCurrent = currentId != null && currentId == track.id;
     // Есть ли трек в очереди вообще: для играющего это всегда так, но пункт
@@ -158,6 +163,9 @@ class _MenuState {
   final DownloadTask? download;
   final bool downloaded;
   final List<BlockedArtist> blockedArtists;
+
+  /// Текущий таймер сна: подпись пункта меню показывает, идёт он или нет.
+  final int sleepTimer;
 
   late final bool isCurrent;
   late final int queueIndex;
@@ -206,6 +214,7 @@ class _TrackMenu {
     required this.hostContext,
     required this.container,
     this.onMediaInfo,
+    this.onSleepTimer,
     this.replaceInPlaylist,
   });
 
@@ -221,6 +230,10 @@ class _TrackMenu {
   /// Показ параметров играющего потока. Задаёт только плеер: у трека из списка
   /// никакого потока ещё нет, и пункт там был бы враньём.
   final VoidCallback? onMediaInfo;
+
+  /// Таймер сна: состояние и выбор живут в контроллере плеера, а меню лишь
+  /// открывает их. Задаёт только плеер — в строке списка таймер не к месту.
+  final VoidCallback? onSleepTimer;
 
   /// Подмена записи в плейлисте, из которого открыли меню. Задаёт экран
   /// плейлиста: только он знает, можно ли править список. Без колбэка замена
@@ -289,6 +302,7 @@ class _TrackMenu {
       download: downloads.taskFor(track.id),
       downloaded: downloads.isDownloaded(track.id),
       blockedArtists: container.read(blockedArtistsProvider),
+      sleepTimer: player.sleepTimer,
     );
   }
 
@@ -431,6 +445,21 @@ class _TrackMenu {
           icon: Icons.info_outline,
           title: 'Детали потока',
         ),
+      // Таймер сна — тоже только в плеере: состояние пишем в подписи, чтобы
+      // включённый отсчёт читался без наведения на кнопку.
+      if (onSleepTimer != null)
+        _MenuActionEntry(
+          action: _TrackAction.sleepTimer,
+          icon: state.sleepTimer == 0
+              ? Icons.bedtime_outlined
+              : Icons.bedtime,
+          title: state.sleepTimer == 0
+              ? 'Таймер сна'
+              // Подпись состояния — строчными: строка идёт после двоеточия,
+              // а `sleepTimerLabel` рассчитан и на отдельную строку настроек.
+              : 'Таймер сна: '
+                  '${sleepTimerLabel(state.sleepTimer).toLowerCase()}',
+        ),
       _MenuActionEntry(
         action: _TrackAction.like,
         icon: state.liked ? Icons.favorite : Icons.favorite_border,
@@ -509,6 +538,8 @@ class _TrackMenu {
         showAddToPlaylistDialog(hostContext, track);
       case _TrackAction.mediaInfo:
         onMediaInfo?.call();
+      case _TrackAction.sleepTimer:
+        onSleepTimer?.call();
       case _TrackAction.like:
         await _toggleLike(messenger);
     }
@@ -743,6 +774,11 @@ class _TrackMenuSheet extends ConsumerWidget {
         (PlayerUiState s) => s.unavailableIds.contains(track.id),
       ),
     );
+    // Таймер сна — тоже отдельным `select`: подпись пункта живая, а позиция
+    // воспроизведения меняется несколько раз в секунду.
+    final int sleepTimer = ref.watch(
+      playerControllerProvider.select((PlayerUiState s) => s.sleepTimer),
+    );
 
     // Загрузка трека: пункт меню и прогресс берутся из одного контроллера,
     // поэтому скачивание, начатое на экране «Загрузки», видно и здесь.
@@ -773,6 +809,7 @@ class _TrackMenuSheet extends ConsumerWidget {
       download: download,
       downloaded: downloaded,
       blockedArtists: blockedArtists,
+      sleepTimer: sleepTimer,
     );
 
     return SafeArea(

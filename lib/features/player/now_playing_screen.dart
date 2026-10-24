@@ -10,7 +10,6 @@ import '../../core/utils/format.dart';
 import '../../data/local/app_settings.dart';
 import '../../data/models/models.dart';
 import '../../state/auth_controller.dart';
-import '../../state/catalog_providers.dart';
 import '../../state/library_providers.dart';
 import '../../state/player_controller.dart';
 import '../../state/providers.dart';
@@ -21,7 +20,7 @@ import '../../widgets/liquid_backdrop.dart';
 import '../../widgets/live_cover.dart';
 import '../../widgets/spectrum_visualizer.dart';
 import '../../widgets/track_menu.dart';
-import 'lyrics_actions.dart';
+import 'equalizer.dart';
 import 'lyrics_view.dart';
 import 'media_info.dart';
 import 'queue_list.dart';
@@ -90,7 +89,6 @@ class _NowPlayingScreenState extends ConsumerState<NowPlayingScreen> {
                   child: Column(
                     children: <Widget>[
                       _TopBar(
-                        track: track,
                         showLyrics: showLyrics,
                         onToggleLyrics: () => ref
                             .read(settingsControllerProvider.notifier)
@@ -279,45 +277,17 @@ class _Controls extends StatelessWidget {
         const SizedBox(height: AppLayout.playerItemGap),
         Padding(
           padding: side,
-          child: PlayerTransportBar(player: player),
-        ),
-        const SizedBox(height: AppLayout.playerItemGap),
-        // Режимы и таймер сна — одной строкой: раньше это были две отдельные
-        // строки, и блок управления вырастал на высоту ещё одного ряда. Слева
-        // режимы, справа таймер: состояние таймера читается текстом, а его
-        // место на краю не мешает частым кнопкам.
-        //
-        // Высота строки задана явно: кнопки режимов — 32, а `TextButton`
-        // таймера по умолчанию просит 48. Сорок восемь делали строку самой
-        // высокой в блоке, и вокруг тридцатидвухпиксельных кнопок оставалась
-        // пустая полоса. Тридцать шесть — ещё и удобная зона попадания.
-        Padding(
-          padding: side,
-          child: SizedBox(
-            height: 36,
-            child: Row(
-              children: <Widget>[
-                // `Expanded` + `Align` — тот же `Spacer` между группами, но
-                // режимы ещё и ужимаются: на узком окне ряд кнопок не
-                // переполняет строку, а таймер остаётся целым.
-                Expanded(
-                  child: Align(
-                    alignment: Alignment.centerLeft,
-                    child: PlayerPlaybackModes(
-                      player: player,
-                      size: AppLayout.playerCompactAction,
-                    ),
-                  ),
-                ),
-                const SizedBox(width: AppLayout.playerItemGap),
-                const SleepTimerButton(),
-              ],
-            ),
+          // Перемешивание и повтор — по краям транспорта: отдельной строки
+          // режимов больше нет, и блок управления стал ниже на её высоту.
+          child: PlayerTransportBar(
+            player: player,
+            leading: const ShuffleButton(),
+            trailing: const RepeatButton(),
           ),
         ),
         // Громкость — такой же блок, как шкала и транспорт, но своей группой:
-        // зазор между ней и режимами — общий межгрупповой шаг, а не шаг внутри
-        // группы: иначе полоса громкости прилипает к кнопкам.
+        // зазор между ней и транспортом — общий межгрупповой шаг, а не шаг
+        // внутри группы: иначе полоса громкости прилипает к кнопкам.
         const SizedBox(height: AppLayout.playerGroupGap),
         const Padding(
           padding: side,
@@ -811,19 +781,34 @@ class _ArtworkStage extends StatelessWidget {
 
 class _TopBar extends ConsumerWidget {
   const _TopBar({
-    required this.track,
     required this.showLyrics,
     required this.onToggleLyrics,
   });
 
-  final Track track;
   final bool showLyrics;
   final VoidCallback onToggleLyrics;
 
   @override
   Widget build(BuildContext context, WidgetRef ref) {
-    // Метаданные для внешней базы текста (LRCLIB) — из играющего трека.
-    final LyricsRequest request = LyricsRequest.fromTrack(track);
+    final bool equalizer = ref.watch(
+      settingsControllerProvider.select(
+        (AppSettings s) => s.equalizerEnabled,
+      ),
+    );
+    final bool visualizer = ref.watch(
+      settingsControllerProvider.select(
+        (AppSettings s) => s.visualizerEnabled,
+      ),
+    );
+    final (double speed, double pitch) = ref.watch(
+      playerControllerProvider.select(
+        (PlayerUiState s) => (s.playback.speed, s.playback.pitch),
+      ),
+    );
+    final bool tempoActive = speed != 1.0 || pitch != 1.0;
+    final String tempoValue = tempoActive
+        ? 'темп ${speed.toStringAsFixed(2)}×, питч ${pitch.toStringAsFixed(2)}×'
+        : 'темп и питч обычные';
 
     return Padding(
       // Тот же боковой отступ, что и у блока управления: кнопки шапки не
@@ -840,29 +825,89 @@ class _TopBar extends ConsumerWidget {
             onPressed: () => Navigator.maybePop(context),
           ),
           const Spacer(),
-          // Подпись «Сейчас играет» убрана: название трека и так видно ниже.
-          // Показ текста — отдельной кнопкой, а выбор источника — в меню
-          // (пункт «Показать/скрыть» оттуда убран, чтобы не дублировать).
-          IconButton.filledTonal(
+          // Шапка — рабочая строка: текст, эквалайзер, темп и визуализатор
+          // стоят рядом, как кнопки одного ряда. Поиск текста отсюда убран:
+          // тот же значок есть в шапке самого текста, и он не дублируется.
+          _TopBarButton(
             tooltip: showLyrics ? 'Скрыть текст' : 'Показать текст',
-            isSelected: showLyrics,
-            icon: const Icon(Icons.lyrics_outlined, size: 20),
-            selectedIcon: const Icon(Icons.lyrics, size: 20),
+            icon: Icons.lyrics_outlined,
+            selectedIcon: Icons.lyrics,
+            selected: showLyrics,
             onPressed: onToggleLyrics,
           ),
           const SizedBox(width: AppLayout.playerItemGap),
-          LyricsMenuButton(request: request),
+          _TopBarButton(
+            tooltip: equalizer ? 'Эквалайзер (включён)' : 'Эквалайзер',
+            icon: Icons.graphic_eq,
+            selected: equalizer,
+            onPressed: () => showEqualizerDialog(context, ref),
+          ),
+          const SizedBox(width: AppLayout.playerItemGap),
+          _TopBarButton(
+            tooltip: 'Темп и питч ($tempoValue)',
+            icon: Icons.speed,
+            selected: tempoActive,
+            onPressed: () => showTempoPitchDialog(context, ref),
+          ),
+          const SizedBox(width: AppLayout.playerItemGap),
+          _TopBarButton(
+            tooltip: visualizer ? 'Визуализатор включён' : 'Визуализатор',
+            icon: Icons.bar_chart_rounded,
+            selected: visualizer,
+            onPressed: () => ref
+                .read(settingsControllerProvider.notifier)
+                .setVisualizerEnabled(!visualizer),
+          ),
         ],
       ),
     );
   }
 }
 
-/// Название, исполнитель и кнопка «нравится».
+/// Кнопка шапки полного экрана — тот же `IconButton.filledTonal` и тот же
+/// размер 40, что у прежней кнопки «текст»: ряд из четырёх кнопок читается
+/// одной линией и не выше соседей.
+class _TopBarButton extends StatelessWidget {
+  const _TopBarButton({
+    required this.tooltip,
+    required this.icon,
+    required this.onPressed,
+    this.selectedIcon,
+    this.selected = false,
+  });
+
+  final String tooltip;
+  final IconData icon;
+  final IconData? selectedIcon;
+  final bool selected;
+  final VoidCallback onPressed;
+
+  @override
+  Widget build(BuildContext context) {
+    return IconButton.filledTonal(
+      tooltip: tooltip,
+      isSelected: selected,
+      iconSize: 20,
+      // Зона нажатия — сам квадрат: без `shrinkWrap` кнопка растягивала
+      // строку до 48 и шапка становилась выше прежней.
+      style: IconButton.styleFrom(
+        tapTargetSize: MaterialTapTargetSize.shrinkWrap,
+        fixedSize: const Size.square(40),
+        padding: EdgeInsets.zero,
+      ),
+      icon: Icon(icon),
+      selectedIcon: selectedIcon == null ? null : Icon(selectedIcon),
+      onPressed: onPressed,
+    );
+  }
+}
+
+/// Название, исполнитель, кодек и кнопки действий.
 ///
-/// Состояние берём из общего [likedIdsProvider], а не из локального флага:
-/// лайк, поставленный здесь, сразу виден в строках треков и островке плеера
-/// (и наоборот).
+/// Состояние лайка берём из общего [likedIdsProvider], а не из локального
+/// флага: лайк, поставленный здесь, сразу виден в строках треков и островке
+/// плеера (и наоборот). Выравнивание блока — настройка
+/// `playerInfoAlignment`: по центру (ось обложки) или по левому краю.
 class _InfoRow extends ConsumerWidget {
   const _InfoRow({required this.track, required this.player});
 
@@ -885,14 +930,25 @@ class _InfoRow extends ConsumerWidget {
           context,
           track,
           rootNavigator: true,
-          // Параметры играющего потока — в том же меню, что и действия над
-          // треком: второй «⋮» на экране только путал бы.
+          // Параметры играющего потока и таймер сна — в том же меню, что и
+          // действия над треком: второй «⋮» на экране только путал бы.
           onMediaInfo: () => showMediaInfoDialog(context),
+          onSleepTimer: () => showSleepTimerMenu(context, ref),
         );
+
+    // Выравнивание блока — настройка: по центру (прежний вид) или по левому
+    // краю, где длинные названия читаются как строки списка.
+    final PlayerInfoAlignment align = ref.watch(
+      settingsControllerProvider.select(
+        (AppSettings s) => s.playerInfoAlignment,
+      ),
+    );
+    final bool byLeft = align == PlayerInfoAlignment.left;
 
     // Кнопки действий одной группой: слева от названия стоит такая же по
     // ширине пустая полоса, поэтому центр заголовка совпадает с центром блока,
-    // хотя справа от него кнопки.
+    // хотя справа от него кнопки. При выравнивании по левому краю распорка
+    // обнуляется: иначе текст начинался бы не от края, а от её середины.
     final double actionsWidth = AppLayout.playerCompactAction * 2 +
         AppLayout.playerItemGap;
     final Widget actions = Row(
@@ -932,16 +988,21 @@ class _InfoRow extends ConsumerWidget {
       ),
       // Название, исполнитель и действия — одной строкой. Раньше действия
       // стояли под названием третьей строкой и вместе с крупным кеглем
-      // занимали 122 px; теперь высоту задаёт только текст (56–80 px).
+      // занимали 122 px; теперь высоту задаёт только текст.
       child: Row(
         children: <Widget>[
-          SizedBox(width: actionsWidth + AppLayout.playerItemGap),
+          SizedBox(
+            width: byLeft ? 0 : actionsWidth + AppLayout.playerItemGap,
+          ),
           Expanded(
             child: Column(
               mainAxisSize: MainAxisSize.min,
+              crossAxisAlignment: byLeft
+                  ? CrossAxisAlignment.start
+                  : CrossAxisAlignment.center,
               children: <Widget>[
-                // Название и исполнитель — по центру, как обложка, транспорт
-                // и действия.
+                // Название — крупнее подписи на ступень (`titleLarge`): это
+                // главная строка экрана, а не подпись под обложкой.
                 GestureDetector(
                   behavior: HitTestBehavior.opaque,
                   onSecondaryTap: openMenu,
@@ -949,19 +1010,19 @@ class _InfoRow extends ConsumerWidget {
                     track.title,
                     maxLines: 2,
                     overflow: TextOverflow.ellipsis,
-                    textAlign: TextAlign.center,
-                    // На ступень ниже прежнего `titleLarge`: крупное название
-                    // отбирало у обложки и очереди около тридцати пикселей
-                    // высоты, а несёт только ориентир.
-                    style: text.titleMedium
-                        ?.copyWith(fontWeight: FontWeight.w700),
+                    textAlign: byLeft ? TextAlign.left : TextAlign.center,
+                    style: text.titleLarge?.copyWith(
+                      fontWeight: FontWeight.w700,
+                    ),
                   ),
                 ),
                 // Название и подпись — одна пара, поэтому зазор между ними
                 // меньше шага блока: 8 px разрывали бы их на две строки.
                 const SizedBox(height: 2),
                 Row(
-                  mainAxisAlignment: MainAxisAlignment.center,
+                  mainAxisAlignment: byLeft
+                      ? MainAxisAlignment.start
+                      : MainAxisAlignment.center,
                   children: <Widget>[
                     Flexible(
                       // Исполнитель — ссылка на его страницу. Ошибку плеера
@@ -975,19 +1036,25 @@ class _InfoRow extends ConsumerWidget {
                                 player.error!,
                                 maxLines: 1,
                                 overflow: TextOverflow.ellipsis,
-                                textAlign: TextAlign.center,
-                                style: text.bodySmall
-                                    ?.copyWith(color: scheme.error),
+                                textAlign:
+                                    byLeft ? TextAlign.left : TextAlign.center,
+                                style: text.bodySmall?.copyWith(
+                                  fontSize: 11,
+                                  color: scheme.error,
+                                ),
                               ),
                             )
                           : ArtistLine(
                               artists: track.artists,
-                              // Как подпись под названием: второй строки у
-                              // блока больше нет.
+                              // Исполнитель на пиксель мельче прежнего
+                              // `bodySmall`: кодек рядом — справка, и равный
+                              // кегль заставлял их спорить за внимание.
                               style: text.bodySmall?.copyWith(
+                                fontSize: 11,
                                 color: scheme.onSurfaceVariant,
                               ),
-                              textAlign: TextAlign.center,
+                              textAlign:
+                                  byLeft ? TextAlign.left : TextAlign.center,
                               // Переход сам сворачивает плеер (см.
                               // [AppRoutes]): иначе страница оказалась бы под
                               // ним или легла бы поверх вторым слоем.
