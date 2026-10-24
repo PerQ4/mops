@@ -43,44 +43,68 @@ class ArtworkProgressRing extends ConsumerWidget {
   /// Эталон (`M3ECircularProgressTheme.defaults`) рассчитан на индикатор
   /// 48 dp: штрих 4, амплитуда 1.6, длина волны 15, — и в мини-плеере
   /// ArchiveTune (`MiniPlayerComponents.kt`) обложка 42 обёрнута индикатором
-  /// 52 dp. На нашей стороне 44 те же пропорции дали бы штрих 3.67, амплитуду
-  /// 1.47 и волну 13.75, но владелец просил гребни заметно чаще и волну ниже
-  /// («не колбаса») — отсюда волна 2 при амплитуде 1.0. Числа ниже — эти
-  /// значения,
-  /// делённые на сторону, поэтому дальше они масштабируются от обложки: на
-  /// крупной обложке панели кольцо остаётся тем же по пропорциям, а не
-  /// превращается в тонкую нитку с частой рябью, как при абсолютных пикселях.
+  /// 52 dp. На нашей стороне 44 те же пропорции дают штрих 3.67, амплитуду
+  /// 1.47 и волну 13.75 — эти значения и берём.
+  ///
+  /// Раньше здесь стояла волна длиной 2: гребни «чаще» дали период **меньше
+  /// толщины штриха**, синус выродился в дрожание вдоль кромки, и кольцо
+  /// читалось рваным облаком, а не волной. Волна обязана быть заметно длиннее
+  /// штриха — иначе это не форма, а шум.
   static const double _refSide = 44;
 
   /// Толщина штриха на стороне [_refSide].
   static const double _refStroke = 3.5;
 
   /// Амплитуда волны на стороне [_refSide].
-  static const double _refAmplitude = 1.0;
+  static const double _refAmplitude = 1.5;
 
-  /// Длина волны на стороне [_refSide] — гребни чаще эталонных 15 на 48.
-  static const double _refWavelength = 2;
+  /// Длина волны на стороне [_refSide] — как у эталонного индикатора.
+  static const double _refWavelength = 13.75;
+
+  /// Предел толщины кольца.
+  ///
+  /// Пропорция от 44 на крупной обложке панели давала 16 px — это уже плита
+  /// вокруг картинки, а не кольцо. Толщина растёт вместе с обложкой только до
+  /// предела; дальше кольцо остаётся кольцом.
+  static const double _maxStroke = 6;
+
+  /// Предел амплитуды волны — в тех же пропорциях к пределу штриха.
+  static const double _maxAmplitude = 2.6;
 
   /// Толщина кольца для обложки [side].
-  static double strokeFor(double side) => side * (_refStroke / _refSide);
+  static double strokeFor(double side) =>
+      (side * (_refStroke / _refSide)).clamp(1.5, _maxStroke);
 
   /// Амплитуда волны для обложки [side].
-  static double amplitudeFor(double side) => side * (_refAmplitude / _refSide);
+  static double amplitudeFor(double side) =>
+      (side * (_refAmplitude / _refSide)).clamp(0.6, _maxAmplitude);
 
   /// Длина волны для обложки [side].
   static double wavelengthFor(double side) =>
-      side * (_refWavelength / _refSide);
-
-  /// Во сколько раз габарит кольца больше стороны обложки: штрих и амплитуда
-  /// выступают за кромку с каждой стороны.
-  static const double outerRatio =
-      1 + 2 * ((_refStroke + _refAmplitude) / _refSide);
+      (side * (_refWavelength / _refSide)).clamp(6.0, 64.0);
 
   /// Габарит кольца вокруг обложки со стороной [side].
   ///
-  /// Компоновка (островок, панель) считает по этому значению, чтобы кольцо не
-  /// обрезалось.
-  static double extent(double side) => side * outerRatio;
+  /// Осевая линия идёт по кромке, раздутой на полштриха, сам штрих ложится на
+  /// неё половиной наружу, а волна добавляет амплитуду — значит за каждую
+  /// сторону обложки выходит `штрих + амплитуда`. Считаем точно, а не
+  /// постоянным множителем: штрих ограничен сверху, и на крупной обложке доля
+  /// габарита от стороны меньше.
+  static double extent(double side) =>
+      side + 2 * (strokeFor(side) + amplitudeFor(side));
+
+  /// Сторона обложки, которая впишется в ширину [width] вместе с кольцом.
+  ///
+  /// Компоновка знает доступную ширину, а не сторону. Решаем подстановкой:
+  /// вычет (штрих и амплитуда) зависит от стороны слабо и ограничен сверху,
+  /// поэтому трёх шагов хватает с запасом.
+  static double sideForWidth(double width) {
+    double side = width;
+    for (int i = 0; i < 3; i++) {
+      side = width - 2 * (strokeFor(side) + amplitudeFor(side));
+    }
+    return math.max(0, side);
+  }
 
   @override
   Widget build(BuildContext context, WidgetRef ref) {
