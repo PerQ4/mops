@@ -88,6 +88,23 @@ class MediaKitEngine implements AudioEngine {
   /// же потока (`stop`, конец трека) питч сохраняет.
   double _pitch = 1.0;
 
+  /// Последняя запрошенная громкость (0..1).
+  ///
+  /// Храним сами, а не полагаемся на `state` плеера: `Player.setVolume` до
+  /// первого `open` нативная часть принимает не мгновенно, а `open` в свою
+  /// очередь пересобирает аудиовыход. Громкость — выбор пользователя, поэтому
+  /// её нужно переприменить после каждого открытия потока, а не один раз при
+  /// создании контроллера.
+  double _volume = 1.0;
+
+  /// Громкость ещё не подтверждена движком: применить её нужно при ближайшей
+  /// возможности (следующий `open`/`play`).
+  bool _volumePending = false;
+
+  /// Очередь записей громкости: быстрые движения ползунка не должны
+  /// обгонять друг друга, иначе на движке осталось бы предпоследнее значение.
+  Future<void>? _volumeQueue;
+
   /// Полосы эквалайзера (дБ). Пусто — эквалайзер выключен.
   ///
   /// Храним сами: `af` — глобальное свойство libmpv, и media_kit (темп и питч)
@@ -521,6 +538,9 @@ class MediaKitEngine implements AudioEngine {
         () => _player.open(_mediaFor(source, isLocal), play: autoplay),
         resetPitch: pitchWasShifted,
       );
+      // `open` пересобирает аудиовыход: громкость выставляем заново, чтобы
+      // выбор пользователя действовал с первого же сэмпла нового трека.
+      await _enqueueVolume();
       // Эффекты ставим после темпа/питча: media_kit задаёт своё `af` целиком и
       // затёр бы их. Не ждём: проверка фильтров на пробном плеере занимает
       // мгновения, но задерживать старт звука ею незачем.
@@ -557,6 +577,9 @@ class MediaKitEngine implements AudioEngine {
       return;
     }
     await _player.play();
+    // Громкость могла не дойти до плеера до первого звука — здесь последний
+    // момент, когда её можно применить без потери первого сэмпла.
+    if (_volumePending) await _enqueueVolume();
   }
 
   @override
@@ -640,6 +663,7 @@ class MediaKitEngine implements AudioEngine {
           play: shouldPlay,
         ),
       );
+      await _enqueueVolume();
       unawaited(_rebuildAudioChain());
       if (!shouldPlay) {
         // Открыли на паузе: настоящего `playing = true` не будет, снимаем
@@ -724,11 +748,43 @@ class MediaKitEngine implements AudioEngine {
   }
 
   @override
-  Future<void> setVolume(double volume) async {
-    final double clamped = volume.clamp(0.0, 1.0);
-    // media_kit принимает проценты: 100.0 — обычная громкость.
-    await _player.setVolume(clamped * 100.0);
-    _emit(_state.copyWith(volume: clamped));
+  Future<void> setVolume(double volume) {
+    // Значение запоминаем сразу, ещё до записи в плеер: если движок не готов,
+    // оно дождётся ближайшего открытия потока и не потеряется.
+    _volume = volume.clamp(0.0, 1.0);
+    _volumePending = true;
+    return _enqueueVolume();
+  }
+
+  /// Применяет последнюю запрошенную громкость к libmpv.
+  ///
+  /// Ошибку не глотаем молча: значение остаётся в очереди ([_volumePending]),
+  /// причина уходит в журнал, а состояние всё равно показывает выбор
+  /// пользователя — ползунок не должен «отпрыгивать» из-за задержки движка.
+  Future<void> _applyVolume() async {
+    final double target = _volume;
+    try {
+      // media_kit принимает проценты: 100.0 — обычная громкость.
+      await _player.setVolume(target * 100.0);
+      // Пока шла запись, ползунок могли двинуть ещё раз: тогда оставляем
+      // ожидание и применим свежее значение следующим шагом очереди.
+      if (target == _volume) _volumePending = false;
+      _emit(_state.copyWith(volume: target));
+    } on Object catch (error) {
+      _volumePending = true;
+      debugPrint(
+        'Громкость ${target.toStringAsFixed(2)} не применена, '
+        'повторим при открытии потока: $error',
+      );
+    }
+  }
+
+  Future<void> _enqueueVolume() {
+    final Future<void> run =
+        (_volumeQueue ?? Future<void>.value()).then((_) => _applyVolume());
+    // Хвост очереди не должен «падать»: иначе следующая запись не пойдёт.
+    _volumeQueue = run.then((_) {}, onError: (Object _) {});
+    return run;
   }
 
   /// Запоминает громкость перед сменой устройства и проверяет её после.
@@ -737,7 +793,7 @@ class MediaKitEngine implements AudioEngine {
   /// сразу, а через мгновение: драйвер выставляет громкость не мгновенно, и
   /// слишком ранняя проверка увидела бы ещё прежнее значение.
   void _watchVolumeAfterDeviceChange() {
-    final double target = _state.volume;
+    final double target = _volume;
     // Ноль выставил пользователь — «восстанавливать» его обратно нельзя.
     if (target <= 0.01) return;
     _volumeBeforeDeviceChange = target;
@@ -753,11 +809,12 @@ class MediaKitEngine implements AudioEngine {
     _volumeBeforeDeviceChange = null;
     if (target == null || _disposed) return;
     // Пользователь успел выставить другую громкость — его выбор важнее.
-    if ((_state.volume - target).abs() > 0.01) return;
+    if ((_volume - target).abs() > 0.01) return;
     // `volume` у media_kit — проценты: ноль означает «звука нет».
     if (_player.state.volume > 0.5) return;
-    await _player.setVolume(target * 100.0);
-    _emit(_state.copyWith(volume: target));
+    _volume = target;
+    _volumePending = true;
+    await _enqueueVolume();
     debugPrint('Громкость восстановлена после смены устройства вывода');
   }
 

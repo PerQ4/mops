@@ -11,6 +11,7 @@ import '../core/audio/media_kit_engine.dart';
 import '../core/playback/listening_tracker.dart';
 import '../core/playback/playback_failure.dart';
 import '../core/scrobbling/scrobbler.dart';
+import '../data/local/app_settings.dart';
 import '../data/local/listening_stats.dart';
 import '../data/local/local_media.dart';
 import '../data/local/queue_snapshot.dart';
@@ -318,12 +319,24 @@ class PlayerController extends Notifier<PlayerUiState> {
   double? _pendingVolume;
   Timer? _volumeSaveTimer;
 
+  /// Громкость, выбранная пользователем (0..1).
+  ///
+  /// Владелец значения — контроллер, а не движок: до первого трека движок
+  /// может ещё не принимать запись, а ползунок обязан двигаться сразу.
+  /// Значение переприменяется после каждой загрузки потока.
+  double _volume = 1.0;
+
   /// Известные эпизоды подкастов (id треков) и когда список читали в прошлый раз.
   final Set<String> _podcastEpisodes = <String>{};
   DateTime? _podcastPolledAt;
 
   @override
   PlayerUiState build() {
+    // Настройки читаем до подписки: громкость и темп — не состояние трека, и
+    // восстановленная очередь не должна начинать с громкости по умолчанию.
+    final AppSettings settings = ref.read(settingsControllerProvider);
+    _volume = settings.lastVolume.clamp(0.0, 1.0);
+
     // Отписка от предыдущего движка (если нотификатор пересоздали).
     _engineSub?.cancel();
     // Таймер сна — состояние сессии: при пересоздании нотификатора он не
@@ -332,11 +345,24 @@ class PlayerController extends Notifier<PlayerUiState> {
 
     _engineSub = _engine.stateStream.listen((PlaybackState playback) {
       // Пока восстановленный трек не запущен, в движке ничего нет: его «idle»
-      // затирал бы сохранённую позицию, которую показывает интерфейс.
+      // затирал бы сохранённую позицию, которую показывает интерфейс. Но
+      // громкость, темп и питч к позиции не относятся — их терять нельзя,
+      // иначе до первого трека ползунок громкости не двигался бы вовсе.
       if (_restorePending && playback.status == PlaybackStatus.idle) {
+        state = state.copyWith(
+          playback: state.playback.copyWith(
+            volume: _volume,
+            speed: playback.speed,
+            pitch: playback.pitch,
+          ),
+        );
         return;
       }
-      state = state.copyWith(playback: playback);
+      // Громкость ведёт контроллер: очередной тик движка не должен возвращать
+      // ползунок к прежнему значению, пока запись новой ещё идёт.
+      state = state.copyWith(
+        playback: playback.copyWith(volume: _volume),
+      );
       if (playback.status == PlaybackStatus.error && playback.error != null) {
         // Ошибку открытия сначала пробуем пережить повтором: тот же адрес
         // через секунду отвечает, поэтому молча ронять трек нельзя.
@@ -402,9 +428,9 @@ class PlayerController extends Notifier<PlayerUiState> {
       );
     });
 
-    // Восстанавливаем громкость и скорость из прошлой сессии.
-    final settings = ref.read(settingsControllerProvider);
-    unawaited(_engine.setVolume(settings.lastVolume));
+    // Восстанавливаем скорость из прошлой сессии. Громкость уже известна
+    // контроллеру ([_volume]) — движку передаём её же.
+    unawaited(_engine.setVolume(_volume));
     unawaited(_engine.setSpeed(settings.lastSpeed));
 
     // Смена настроек SponsorBlock подхватывается сразу, не дожидаясь тика:
@@ -504,11 +530,14 @@ class PlayerController extends Notifier<PlayerUiState> {
   /// загружен — показываем сохранённую позицию и длительность, статус «пауза».
   PlaybackState _restoredPlayback(QueueSnapshot? snapshot) {
     final Track? track = snapshot?.current;
-    if (track == null) return PlaybackState.initial;
+    if (track == null) {
+      return PlaybackState.initial.copyWith(volume: _volume);
+    }
     return PlaybackState(
       status: PlaybackStatus.paused,
       position: snapshot!.position,
       duration: track.duration,
+      volume: _volume,
     );
   }
 
@@ -727,7 +756,11 @@ class PlayerController extends Notifier<PlayerUiState> {
     clearSleepTimer();
     // И снимок: при следующем запуске восстанавливать нечего.
     _clearSnapshot();
-    state = const PlayerUiState();
+    // Очередь сбрасывается, но громкость — настройка пользователя, а не
+    // свойство очереди: она остаётся и в интерфейсе, и в движке.
+    state = const PlayerUiState().copyWith(
+      playback: PlaybackState.initial.copyWith(volume: _volume),
+    );
     await _engine.stop();
   }
 
@@ -952,9 +985,25 @@ class PlayerController extends Notifier<PlayerUiState> {
   /// всего JSON. Пишем последнее значение не чаще раза в секунду; перед паузой
   /// и сменой трека — сразу ([_flushVolume]).
   Future<void> setVolume(double volume) async {
-    await _engine.setVolume(volume);
-    _pendingVolume = volume;
+    final double clamped = volume.clamp(0.0, 1.0);
+    _volume = clamped;
+    // Ползунок двигается сразу, не дожидаясь движка: до первого открытия
+    // потока его подтверждение может прийти позже (или не прийти, если
+    // нативная часть ещё поднимается), а значение уже выбрано пользователем.
+    state = state.copyWith(
+      playback: state.playback.copyWith(volume: clamped),
+    );
+    // Запись в настройки планируем до обращения к движку: даже если он сейчас
+    // не готов, выбор пользователя уже сделан и должен пережить перезапуск.
+    _pendingVolume = clamped;
     _volumeSaveTimer ??= Timer(const Duration(seconds: 1), _flushVolume);
+    try {
+      await _engine.setVolume(clamped);
+    } on Object catch (error) {
+      // Движок держит значение до ближайшего открытия потока; здесь только
+      // журнал — громкость не повод считать трек сломанным.
+      debugPrint('Громкость не применена сейчас: $error');
+    }
   }
 
   /// Записывает отложенную громкость немедленно.
@@ -1261,6 +1310,14 @@ class PlayerController extends Notifier<PlayerUiState> {
         autoplay: autoplay,
         isLocal: resolved.isLocal,
       );
+      // Громкость принадлежит пользователю, а не треку: после открытия потока
+      // передаём её движку ещё раз. Сбой самой громкости не должен выглядеть
+      // как сбой загрузки трека.
+      try {
+        await _engine.setVolume(_volume);
+      } on Object catch (error) {
+        debugPrint('Громкость не применена после загрузки трека: $error');
+      }
       state = state.copyWith(
         resolving: false,
         // Успешная загрузка снимает прежнюю отметку: трек мог быть помечен
