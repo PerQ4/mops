@@ -152,7 +152,7 @@ class SettingsScreen extends ConsumerWidget {
                 // Вид плеера живёт здесь, а не в «Воспроизведении»: это
                 // оформление, а не поведение звука. Порядок — от раскладки
                 // плеера к его деталям: панель, полоса, фон, гало, размытие,
-                // громкость, затем оформление окна.
+                // громкость, текст, затем оформление окна.
                 // Плеер стоит справа от навигации, поэтому и разворачивается в
                 // правую панель — зеркально библиотеке слева. На телефоне
                 // панели нет: там по нажатию открывается полный экран.
@@ -259,6 +259,18 @@ class SettingsScreen extends ConsumerWidget {
                   title: 'Ползунок громкости',
                   subtitle: settings.volumeSliderStyle.label,
                   onTap: () => _pickVolumeSliderStyle(
+                    context,
+                    controller,
+                    settings,
+                  ),
+                ),
+                // Текст — часть плеера, но не окна: строка стоит до пунктов,
+                // которые настраивают саму Windows-рамку.
+                SettingsRow(
+                  icon: Icons.format_align_center,
+                  title: 'Название и исполнитель',
+                  subtitle: settings.playerInfoAlignment.label,
+                  onTap: () => _pickPlayerInfoAlignment(
                     context,
                     controller,
                     settings,
@@ -1241,6 +1253,23 @@ class SettingsScreen extends ConsumerWidget {
       label: (ProgressBarStyle v) => v.label,
     );
     if (result != null) await controller.setVolumeSliderStyle(result);
+  }
+
+  /// Выравнивание названия и исполнителя: по центру или по левому краю.
+  Future<void> _pickPlayerInfoAlignment(
+    BuildContext context,
+    SettingsController controller,
+    AppSettings settings,
+  ) async {
+    final PlayerInfoAlignment? result = await _showChoice<PlayerInfoAlignment>(
+      context,
+      title: 'Название и исполнитель',
+      current: settings.playerInfoAlignment,
+      values: PlayerInfoAlignment.values,
+      label: (PlayerInfoAlignment v) => v.label,
+      description: (PlayerInfoAlignment v) => v.description,
+    );
+    if (result != null) await controller.setPlayerInfoAlignment(result);
   }
 
   Future<void> _pickLyricsSource(

@@ -72,6 +72,27 @@ enum ProgressBarStyle {
       );
 }
 
+/// Выравнивание блока «название и исполнитель» в полноэкранном плеере.
+///
+/// По центру — прежний вид: текст держит ту же ось, что обложка, транспорт и
+/// действия. По левому краю — длинные названия читаются как строки списка и не
+/// «пляшут» при смене трека.
+enum PlayerInfoAlignment {
+  center('По центру', 'Текст на одной оси с обложкой и управлением — как было'),
+  left('По левому краю', 'Длинные названия читаются как строка списка');
+
+  const PlayerInfoAlignment(this.label, this.description);
+
+  final String label;
+  final String description;
+
+  static PlayerInfoAlignment fromName(String? name) =>
+      PlayerInfoAlignment.values.firstWhere(
+        (PlayerInfoAlignment v) => v.name == name,
+        orElse: () => PlayerInfoAlignment.center,
+      );
+}
+
 /// Стиль фона полноэкранного плеера.
 ///
 /// Первый шаг переноса настроек внешнего вида ArchiveTune
@@ -183,6 +204,9 @@ class AppearanceSettings {
     this.compactRows = false,
     this.progressBarStyle = ProgressBarStyle.standard,
     this.volumeSliderStyle = ProgressBarStyle.standard,
+    // Название и исполнитель по центру — прежний вид: левый край включают
+    // осознанно, чтобы старые настройки не меняли плеер после обновления.
+    this.playerInfoAlignment = PlayerInfoAlignment.center,
     this.miniPlayerBackgroundStyle = MiniPlayerBackgroundStyle.theme,
     this.playerBackgroundStyle = PlayerBackgroundStyle.gradient,
     // «Жидкость»: значения по умолчанию совпадают с прежним видом фона.
@@ -248,6 +272,12 @@ class AppearanceSettings {
 
   /// Стиль ползунка громкости — тот же набор, что у полосы перемотки.
   final ProgressBarStyle volumeSliderStyle;
+
+  /// Выравнивание названия и исполнителя в полноэкранном плеере.
+  ///
+  /// Меняет только оси текста: место блока в раскладке и высота строки
+  /// остаются прежними.
+  final PlayerInfoAlignment playerInfoAlignment;
 
   /// Фон мини-плеера: тема, градиент или свечение.
   final MiniPlayerBackgroundStyle miniPlayerBackgroundStyle;
@@ -323,6 +353,7 @@ class AppearanceSettings {
     bool? compactRows,
     ProgressBarStyle? progressBarStyle,
     ProgressBarStyle? volumeSliderStyle,
+    PlayerInfoAlignment? playerInfoAlignment,
     MiniPlayerBackgroundStyle? miniPlayerBackgroundStyle,
     PlayerBackgroundStyle? playerBackgroundStyle,
     double? liquidSpeed,
@@ -353,6 +384,7 @@ class AppearanceSettings {
       compactRows: compactRows ?? this.compactRows,
       progressBarStyle: progressBarStyle ?? this.progressBarStyle,
       volumeSliderStyle: volumeSliderStyle ?? this.volumeSliderStyle,
+      playerInfoAlignment: playerInfoAlignment ?? this.playerInfoAlignment,
       miniPlayerBackgroundStyle:
           miniPlayerBackgroundStyle ?? this.miniPlayerBackgroundStyle,
       playerBackgroundStyle:
@@ -387,6 +419,7 @@ class AppearanceSettings {
     'compactRows': compactRows,
     'progressBarStyle': progressBarStyle.name,
     'volumeSliderStyle': volumeSliderStyle.name,
+    'playerInfoAlignment': playerInfoAlignment.name,
     'miniPlayerBackgroundStyle': miniPlayerBackgroundStyle.name,
     'playerBackgroundStyle': playerBackgroundStyle.name,
     'liquidSpeed': liquidSpeed,
@@ -441,6 +474,11 @@ class AppearanceSettings {
         json['volumeSliderStyle'],
         ProgressBarStyle.values,
         ProgressBarStyle.standard,
+      ),
+      playerInfoAlignment: readEnumByName(
+        json['playerInfoAlignment'],
+        PlayerInfoAlignment.values,
+        PlayerInfoAlignment.center,
       ),
       miniPlayerBackgroundStyle: readEnumByName(
         json['miniPlayerBackgroundStyle'],

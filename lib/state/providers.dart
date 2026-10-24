@@ -402,6 +402,10 @@ class SettingsController extends Notifier<AppSettings> {
   Future<void> setVolumeSliderStyle(ProgressBarStyle style) =>
       update((AppSettings s) => s.copyWith(volumeSliderStyle: style));
 
+  /// Выравнивание названия и исполнителя в полноэкранном плеере.
+  Future<void> setPlayerInfoAlignment(PlayerInfoAlignment align) =>
+      update((AppSettings s) => s.copyWith(playerInfoAlignment: align));
+
   /// Заголовок окна по центру (иначе — слева).
   Future<void> setTitleBarCentered(bool value) =>
       update((AppSettings s) => s.copyWith(titleBarCentered: value));

@@ -78,6 +78,7 @@ class AppSettings {
   bool get compactRows => appearance.compactRows;
   ProgressBarStyle get progressBarStyle => appearance.progressBarStyle;
   ProgressBarStyle get volumeSliderStyle => appearance.volumeSliderStyle;
+  PlayerInfoAlignment get playerInfoAlignment => appearance.playerInfoAlignment;
   MiniPlayerBackgroundStyle get miniPlayerBackgroundStyle =>
       appearance.miniPlayerBackgroundStyle;
   PlayerBackgroundStyle get playerBackgroundStyle =>
@@ -289,6 +290,7 @@ class AppSettings {
     bool? audioNormalization,
     bool? pauseOnDeviceMute,
     ProgressBarStyle? volumeSliderStyle,
+    PlayerInfoAlignment? playerInfoAlignment,
     MiniPlayerBackgroundStyle? miniPlayerBackgroundStyle,
     bool? titleBarCentered,
     bool? titleBarMatchesBackground,
@@ -311,6 +313,7 @@ class AppSettings {
         compactRows: compactRows,
         progressBarStyle: progressBarStyle,
         volumeSliderStyle: volumeSliderStyle,
+        playerInfoAlignment: playerInfoAlignment,
         miniPlayerBackgroundStyle: miniPlayerBackgroundStyle,
         playerBackgroundStyle: playerBackgroundStyle,
         liquidSpeed: liquidSpeed,
@@ -492,6 +495,8 @@ class AppSettings {
     'titleBarMatchesBackground',
     'sponsorBlockEnabled',
     'sponsorBlockCategories',
+    // Новое поле — в конец: прежние ключи и их порядок остаются как были.
+    'playerInfoAlignment',
   ];
 
   /// Плоский JSON: домены пишут свои ключи, здесь они только упорядочиваются.

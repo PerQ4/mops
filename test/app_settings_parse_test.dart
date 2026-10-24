@@ -103,6 +103,7 @@ AppSettings _allNonDefault() => const AppSettings().copyWith(
   audioNormalization: true,
   pauseOnDeviceMute: false,
   volumeSliderStyle: ProgressBarStyle.simple,
+  playerInfoAlignment: PlayerInfoAlignment.left,
   miniPlayerBackgroundStyle: MiniPlayerBackgroundStyle.glow,
   titleBarCentered: false,
   titleBarMatchesBackground: true,
@@ -204,6 +205,7 @@ const List<String> _expectedKeyOrder = <String>[
   'titleBarMatchesBackground',
   'sponsorBlockEnabled',
   'sponsorBlockCategories',
+  'playerInfoAlignment',
 ];
 
 void main() {
@@ -307,6 +309,55 @@ void main() {
     });
   });
 
+  group('playerInfoAlignment', () {
+    /// Тот же дефолтный JSON, но с подменённым полем: так проверяется разбор
+    /// одного значения, а не весь набор настроек.
+    Map<String, dynamic> withAlignment(Object? value) {
+      final Map<String, dynamic> json = Map<String, dynamic>.of(
+        const AppSettings().toJson(),
+      );
+      json['playerInfoAlignment'] = value;
+      return json;
+    }
+
+    test('по умолчанию — по центру', () {
+      expect(
+        const AppSettings().playerInfoAlignment,
+        PlayerInfoAlignment.center,
+      );
+    });
+
+    test('left читается из сохранённых настроек', () {
+      final AppSettings settings = AppSettings.decode(
+        jsonEncode(withAlignment('left')),
+      );
+
+      expect(settings.playerInfoAlignment, PlayerInfoAlignment.left);
+    });
+
+    test('неизвестное имя, пустая строка и не строка дают центр', () {
+      for (final Object? value in <Object?>['middle', '', 1, null]) {
+        expect(
+          AppSettings.decode(jsonEncode(withAlignment(value)))
+              .playerInfoAlignment,
+          PlayerInfoAlignment.center,
+          reason: 'вход: $value',
+        );
+      }
+    });
+
+    test('значение переживает toJson → fromJson', () {
+      for (final PlayerInfoAlignment alignment in PlayerInfoAlignment.values) {
+        final AppSettings original = const AppSettings().copyWith(
+          playerInfoAlignment: alignment,
+        );
+        final AppSettings restored = AppSettings.fromJson(original.toJson());
+
+        expect(restored.playerInfoAlignment, alignment);
+      }
+    });
+  });
+
   group('round-trip', () {
     test('дефолт: fromJson(toJson()) даёт те же значения', () {
       const AppSettings original = AppSettings();
@@ -326,11 +377,11 @@ void main() {
   });
 
   group('toJson: состав и порядок', () {
-    test('88 ключей в прежнем порядке', () {
+    test('89 ключей в прежнем порядке', () {
       final Map<String, dynamic> json = const AppSettings().toJson();
 
       expect(json.length, _expectedKeyOrder.length);
-      expect(json.length, 88);
+      expect(json.length, 89);
       expect(json.keys.toList(), _expectedKeyOrder);
     });
 
@@ -343,4 +394,4 @@ void main() {
 /// JSON, который приложение писало до правки разбора (снят с кода до неё).
 /// Это эталон байт в байт: состав, порядок и формат значений не должны меняться.
 const String kDefaultSettingsJson =
-    r'{"themeMode":"system","colorSource":"seed","seedColorIndex":0,"useMaterialExpressive":true,"pureBlack":false,"paletteStyle":"tonal","fontPreference":"poppins","customFontPath":"","disableAnimations":false,"forceHighRefreshRate":false,"playerPanelWidth":280.0,"playerPanelMode":"queue","sidebarWidth":280.0,"lyricsSource":"auto","audioQuality":"high","lowDataMode":false,"streamClient":"auto","showLyricsInPlayer":true,"lyricsTextScale":1.0,"lyricsLineSpacing":1.35,"lyricsLineBlur":true,"lyricsMode":"classic","lyricsAnimationStyle":"fade","lyricsActiveLineScale":0.0,"lyricsInactiveOpacity":1.0,"lyricsTextAlign":"left","lyricsColumnWidth":"normal","lyricsAutoScroll":true,"lyricsProviderOrder":"youlyPlus,betterLyrics,musixmatch,kugou,lrclib,unison","lyricsDisabledProviders":"","paxsenixAppleMusic":true,"paxsenixSpotify":true,"paxsenixMusixmatch":true,"romanizeJapanese":true,"romanizeKorean":true,"romanizeChinese":true,"romanizeHindi":true,"romanizeOther":true,"autoPlayNext":true,"restoreQueue":true,"preloadNextTrack":true,"localMediaFolder":"","searchSource":"online","hideExplicit":false,"hideVideo":false,"topSize":"fifty","miniSwipeSensitivity":"normal","trackSwipeAction":"off","streamingRegion":"RU","streamingLanguage":"ru","oauthClientId":"","oauthClientSecret":"","musixmatchApiKey":"","discordRichPresence":false,"discordApplicationId":"","lastVolume":1.0,"lastSpeed":1.0,"uiScale":0.0,"compactRows":false,"bypass":{"frontingEnabled":true,"frontHost":"www.google.com","fragmentation":"off","fragmentDelayMs":1,"proxyKind":"none","proxyHost":"","proxyPort":1080,"proxyUsername":"","proxyPassword":""},"autoDetectProxy":true,"sidebarCollapsed":false,"sidebarNavigation":false,"playerPanelEnabled":true,"progressBarStyle":"standard","playerBackgroundStyle":"gradient","liquidSpeed":1.0,"liquidScale":1.0,"liquidSaturation":1.0,"liquidColorSource":"artwork","disableBlur":false,"blurRadius":48.0,"visualizerEnabled":false,"visualizerStyle":"halo","liveCoverEnabled":false,"listeningStatsEnabled":true,"equalizerEnabled":false,"equalizerBands":"0.0,0.0,0.0,0.0,0.0,0.0,0.0,0.0,0.0,0.0","equalizerPresetId":"flat","skipSilence":false,"audioNormalization":false,"pauseOnDeviceMute":true,"volumeSliderStyle":"standard","miniPlayerBackgroundStyle":"theme","titleBarCentered":true,"titleBarMatchesBackground":false,"sponsorBlockEnabled":false,"sponsorBlockCategories":"sponsor,selfpromo,intro,outro,music_offtopic"}';
+    r'{"themeMode":"system","colorSource":"seed","seedColorIndex":0,"useMaterialExpressive":true,"pureBlack":false,"paletteStyle":"tonal","fontPreference":"poppins","customFontPath":"","disableAnimations":false,"forceHighRefreshRate":false,"playerPanelWidth":280.0,"playerPanelMode":"queue","sidebarWidth":280.0,"lyricsSource":"auto","audioQuality":"high","lowDataMode":false,"streamClient":"auto","showLyricsInPlayer":true,"lyricsTextScale":1.0,"lyricsLineSpacing":1.35,"lyricsLineBlur":true,"lyricsMode":"classic","lyricsAnimationStyle":"fade","lyricsActiveLineScale":0.0,"lyricsInactiveOpacity":1.0,"lyricsTextAlign":"left","lyricsColumnWidth":"normal","lyricsAutoScroll":true,"lyricsProviderOrder":"youlyPlus,betterLyrics,musixmatch,kugou,lrclib,unison","lyricsDisabledProviders":"","paxsenixAppleMusic":true,"paxsenixSpotify":true,"paxsenixMusixmatch":true,"romanizeJapanese":true,"romanizeKorean":true,"romanizeChinese":true,"romanizeHindi":true,"romanizeOther":true,"autoPlayNext":true,"restoreQueue":true,"preloadNextTrack":true,"localMediaFolder":"","searchSource":"online","hideExplicit":false,"hideVideo":false,"topSize":"fifty","miniSwipeSensitivity":"normal","trackSwipeAction":"off","streamingRegion":"RU","streamingLanguage":"ru","oauthClientId":"","oauthClientSecret":"","musixmatchApiKey":"","discordRichPresence":false,"discordApplicationId":"","lastVolume":1.0,"lastSpeed":1.0,"uiScale":0.0,"compactRows":false,"bypass":{"frontingEnabled":true,"frontHost":"www.google.com","fragmentation":"off","fragmentDelayMs":1,"proxyKind":"none","proxyHost":"","proxyPort":1080,"proxyUsername":"","proxyPassword":""},"autoDetectProxy":true,"sidebarCollapsed":false,"sidebarNavigation":false,"playerPanelEnabled":true,"progressBarStyle":"standard","playerBackgroundStyle":"gradient","liquidSpeed":1.0,"liquidScale":1.0,"liquidSaturation":1.0,"liquidColorSource":"artwork","disableBlur":false,"blurRadius":48.0,"visualizerEnabled":false,"visualizerStyle":"halo","liveCoverEnabled":false,"listeningStatsEnabled":true,"equalizerEnabled":false,"equalizerBands":"0.0,0.0,0.0,0.0,0.0,0.0,0.0,0.0,0.0,0.0","equalizerPresetId":"flat","skipSilence":false,"audioNormalization":false,"pauseOnDeviceMute":true,"volumeSliderStyle":"standard","miniPlayerBackgroundStyle":"theme","titleBarCentered":true,"titleBarMatchesBackground":false,"sponsorBlockEnabled":false,"sponsorBlockCategories":"sponsor,selfpromo,intro,outro,music_offtopic","playerInfoAlignment":"center"}';
