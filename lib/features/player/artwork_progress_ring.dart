@@ -56,10 +56,18 @@ class ArtworkProgressRing extends ConsumerWidget {
   static const double _refStroke = 3.5;
 
   /// Амплитуда волны на стороне [_refSide].
-  static const double _refAmplitude = 1.5;
+  ///
+  /// Заметно меньше половины штриха, но не «ниточка»: волна должна читаться
+  /// как волна, а не как дрожание кромки.
+  static const double _refAmplitude = 1.8;
 
-  /// Длина волны на стороне [_refSide] — как у эталонного индикатора.
-  static const double _refWavelength = 13.75;
+  /// Длина волны на стороне [_refSide].
+  ///
+  /// Волна короткая — примерно треть толщины штриха на гребень. Эталонные 15
+  /// на 48 давали на кольце вокруг обложки всего десяток огромных горбов: на
+  /// кольце из 150 px длины волна в 14 px выглядит как бугор, а не как рябь.
+  /// Здесь гребней около тридцати, и волна видна и на островке, и в панели.
+  static const double _refWavelength = 5;
 
   /// Предел толщины кольца.
   ///
@@ -81,7 +89,7 @@ class ArtworkProgressRing extends ConsumerWidget {
 
   /// Длина волны для обложки [side].
   static double wavelengthFor(double side) =>
-      (side * (_refWavelength / _refSide)).clamp(6.0, 64.0);
+      (side * (_refWavelength / _refSide)).clamp(2.5, 40.0);
 
   /// Габарит кольца вокруг обложки со стороной [side].
   ///
@@ -405,7 +413,12 @@ class _WavyRingPainter extends CustomPainter {
     double waveK,
   ) {
     final Path path = Path();
-    final int steps = math.max(24, (length / 1.5).ceil());
+    // Шаг выборки привязан к волне, а не к длине: короткая волна требует
+    // плотной выборки. Прежние 1.5 px на шаг оставляли на гребень меньше двух
+    // точек, и волна вырождалась в случайную рябь — именно так кольцо и
+    // выглядело «багованным».
+    final double waves = waveK * total;
+    final int steps = math.max(96, (waves * 8).round());
     for (int i = 0; i <= steps; i++) {
       final double t = i / steps;
       final double distance = (offset + length * t) % total;
