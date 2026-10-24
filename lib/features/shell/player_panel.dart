@@ -190,14 +190,13 @@ class _PlayerRightPanelState extends ConsumerState<PlayerRightPanel> {
           // фиксированные 260 не влезали и панель переполнялась снизу. Ширину
           // тоже учитываем: кольцу нужно место снаружи обложки, и на узкой
           // панели обложка с кольцом иначе вылезала бы за край. Габарит кольца
-          // растёт вместе с обложкой (`ArtworkProgressRing.outerRatio`),
-          // поэтому ширину делим на этот множитель, а не вычитаем константу.
+          // считает сам виджет (`sideForWidth` — обратная к его `extent`), а не
+          // постоянный множитель: штрих кольца ограничен сверху.
           final double availableWidth =
               constraints.maxWidth - AppLayout.playerInset * 2;
           final double artSide = math.min(
             (constraints.maxHeight * 0.30).clamp(96.0, 260.0),
-            (availableWidth / ArtworkProgressRing.outerRatio)
-                .clamp(72.0, 260.0),
+            ArtworkProgressRing.sideForWidth(availableWidth).clamp(72.0, 260.0),
           );
           return Column(
             crossAxisAlignment: CrossAxisAlignment.stretch,
@@ -206,9 +205,6 @@ class _PlayerRightPanelState extends ConsumerState<PlayerRightPanel> {
                 track: track,
                 player: player,
                 mode: mode,
-                // В режиме плеера крупная обложка стоит ниже, и маленькая
-                // в строке дублировала бы её.
-                showArtwork: mode != RightPanelMode.player,
                 showLyrics: showLyrics,
                 onToggleLyrics: () => ref
                     .read(settingsControllerProvider.notifier)
@@ -224,7 +220,13 @@ class _PlayerRightPanelState extends ConsumerState<PlayerRightPanel> {
               // В режиме плеера — крупная обложка; в режиме очереди её нет,
               // всё место отдано списку.
               if (mode == RightPanelMode.player) ...<Widget>[
-                _PanelArtwork(track: track, side: artSide),
+                _PanelArtwork(
+                  track: track,
+                  side: artSide,
+                  onTap: () => ref
+                      .read(settingsControllerProvider.notifier)
+                      .setRightPanelMode(RightPanelMode.queue),
+                ),
                 const SizedBox(height: AppLayout.playerItemGap),
               ],
               PlayerSeekBar(player: player),
@@ -288,10 +290,18 @@ class _PlayerRightPanelState extends ConsumerState<PlayerRightPanel> {
 /// ArchiveTune. Обложка в панели — скруглённый квадрат (как и на полном
 /// экране), поэтому кольцо повторяет её форму.
 class _PanelArtwork extends StatelessWidget {
-  const _PanelArtwork({required this.track, required this.side});
+  const _PanelArtwork({
+    required this.track,
+    required this.side,
+    required this.onTap,
+  });
 
   final Track track;
   final double side;
+
+  /// Клик по обложке. Крупная обложка сама переключает панель в очередь:
+  /// отдельная кнопка режима в шапке больше не нужна.
+  final VoidCallback onTap;
 
   @override
   Widget build(BuildContext context) {
@@ -321,17 +331,24 @@ class _PanelArtwork extends StatelessWidget {
               SizedBox(
                 width: side,
                 height: side,
-                // Правый клик по обложке — то же меню, что у «…» в строке:
-                // на крупной обложке это самая очевидная цель.
-                child: GestureDetector(
-                  behavior: HitTestBehavior.opaque,
-                  onSecondaryTap: () => showTrackMenu(context, track),
-                  child: Artwork(
-                    url: variants.isEmpty ? null : variants.first,
-                    fallbacks: variants.length > 1
-                        ? variants.sublist(1)
-                        : const <String>[],
-                    radius: shape,
+                // Клик по обложке — переключение в очередь (та же функция,
+                // что раньше была у кнопки в шапке); правый — меню трека.
+                child: Tooltip(
+                  message: 'Показать очередь',
+                  child: MouseRegion(
+                    cursor: SystemMouseCursors.click,
+                    child: GestureDetector(
+                      behavior: HitTestBehavior.opaque,
+                      onTap: onTap,
+                      onSecondaryTap: () => showTrackMenu(context, track),
+                      child: Artwork(
+                        url: variants.isEmpty ? null : variants.first,
+                        fallbacks: variants.length > 1
+                            ? variants.sublist(1)
+                            : const <String>[],
+                        radius: shape,
+                      ),
+                    ),
                   ),
                 ),
               ),
@@ -397,19 +414,16 @@ class _NextTracks extends ConsumerWidget {
 
 /// Строка играющего трека в правой панели.
 ///
-/// Вариант «очередь главная»: вместо крупной обложки — одна строка высотой 72
-/// с миниатюрой 56, как `CurrentSongHeader` в ArchiveTune
-/// (`ui/player/QueueComponents.kt`): обложка 64 с радиусом 12, название
-/// `titleLarge` жирным, исполнитель `bodyMedium` приглушённым, лайк и «…».
-///
-/// Освободившиеся ~300 px уходят очереди — раньше она обрезалась, потому что
-/// делила колонку с обложкой и управлением.
+/// Одно правило для обоих режимов: миниатюра 56 (только в очереди),
+/// название с исполнителем и сетка действий 2×2 справа. В режиме плеера
+/// миниатюры нет — там крупная обложка стоит ниже, — но сетка занимает то же
+/// место. Переключение режима живёт на обложке, а не отдельной кнопкой в
+/// шапке: в строке остаются только действия над треком.
 class _PanelTrackRow extends ConsumerWidget {
   const _PanelTrackRow({
     required this.track,
     required this.player,
     required this.mode,
-    required this.showArtwork,
     required this.showLyrics,
     required this.onToggleLyrics,
     required this.onToggleMode,
@@ -419,9 +433,6 @@ class _PanelTrackRow extends ConsumerWidget {
   final Track track;
   final PlayerUiState player;
   final RightPanelMode mode;
-
-  /// Показывать миниатюру в строке. В режиме плеера она не нужна.
-  final bool showArtwork;
   final bool showLyrics;
   final VoidCallback onToggleLyrics;
   final VoidCallback onToggleMode;
@@ -441,8 +452,11 @@ class _PanelTrackRow extends ConsumerWidget {
     );
     final List<String> variants = track.artworkFallbacks(kArtworkLarge);
 
-    // Компактные кнопки: в строке их четыре, обычный размер не поместился бы
-    // в узкую панель.
+    // Кнопки одного размера: сетка 2×2 занимает 68 px вместе с зазором и
+    // оставляет место подписи даже на минимальной ширине панели (260).
+    const double actionSize = 32;
+    const double actionGap = 4;
+
     Widget action({
       required String tooltip,
       required IconData icon,
@@ -457,12 +471,14 @@ class _PanelTrackRow extends ConsumerWidget {
         padding: EdgeInsets.zero,
         visualDensity: VisualDensity.compact,
         // Без этого `IconButton` держит минимальную зону нажатия 40x40, и
-        // пять кнопок в строке уже не помещались (переполнение на 10 px).
-        // В панели на десктопе мышь, а не палец, поэтому 34 хватает.
+        // сетка перестала бы быть 32×32.
         style: IconButton.styleFrom(
           tapTargetSize: MaterialTapTargetSize.shrinkWrap,
         ),
-        constraints: const BoxConstraints.tightFor(width: 34, height: 34),
+        constraints: const BoxConstraints.tightFor(
+          width: actionSize,
+          height: actionSize,
+        ),
         icon: Icon(icon, color: selected ? scheme.primary : null),
         selectedIcon: selectedIcon == null
             ? null
@@ -471,62 +487,54 @@ class _PanelTrackRow extends ConsumerWidget {
       );
     }
 
-    // Действия строки: один размер, один зазор. Раньше они шли по одной
-    // линии с названием вперемешку с текстом и без зазоров, а в режиме
-    // плеера — сдвигались вправо вслед за названием.
-    final List<Widget> actions = <Widget>[
-      action(
-        // Переключатель режима: обложка против списка.
-        tooltip: mode == RightPanelMode.player
-            ? 'Показать очередь'
-            : 'Показать обложку',
-        icon: mode == RightPanelMode.player
-            ? Icons.queue_music
-            : Icons.album_outlined,
-        onPressed: onToggleMode,
-      ),
-      action(
-        tooltip: showLyrics ? 'Скрыть текст' : 'Показать текст',
-        icon: Icons.lyrics_outlined,
-        selectedIcon: Icons.lyrics,
-        selected: showLyrics,
-        onPressed: onToggleLyrics,
-      ),
-      action(
-        tooltip: 'Свернуть в островок',
-        icon: Icons.keyboard_double_arrow_right_rounded,
-        onPressed: onClose,
-      ),
-      action(
-        tooltip: liked ? 'Убрать из «Мне нравится»' : 'Нравится',
-        icon: liked ? Icons.favorite : Icons.favorite_border,
-        selected: liked,
-        onPressed: signedIn ? () => _like(context, ref) : null,
-      ),
-      action(
-        tooltip: 'Действия',
-        icon: Icons.more_vert,
-        onPressed: () => showTrackMenu(context, track),
-      ),
-    ];
-
-    /// Ряд действий по центру колонки: интервалы одинаковые, края ряда
-    /// совпадают с остальными блоками панели.
-    Widget actionsRow() {
-      return Row(
-        mainAxisAlignment: MainAxisAlignment.center,
-        children: <Widget>[
-          for (int i = 0; i < actions.length; i++) ...<Widget>[
-            if (i > 0) const SizedBox(width: AppLayout.playerItemGap),
-            actions[i],
+    // Сетка 2×2 справа от подписи. Порядок — по чтению: сердце, «…», текст,
+    // свернуть. Переключателя режима здесь больше нет: он переехал на обложку.
+    final Widget actionsGrid = Column(
+      mainAxisSize: MainAxisSize.min,
+      children: <Widget>[
+        Row(
+          mainAxisSize: MainAxisSize.min,
+          children: <Widget>[
+            action(
+              tooltip: liked ? 'Убрать из «Мне нравится»' : 'Нравится',
+              icon: liked ? Icons.favorite : Icons.favorite_border,
+              selected: liked,
+              onPressed: signedIn ? () => _like(context, ref) : null,
+            ),
+            const SizedBox(width: actionGap),
+            action(
+              tooltip: 'Действия',
+              icon: Icons.more_vert,
+              onPressed: () => showTrackMenu(context, track),
+            ),
           ],
-        ],
-      );
-    }
+        ),
+        const SizedBox(height: actionGap),
+        Row(
+          mainAxisSize: MainAxisSize.min,
+          children: <Widget>[
+            action(
+              tooltip: showLyrics ? 'Скрыть текст' : 'Показать текст',
+              icon: Icons.lyrics_outlined,
+              selectedIcon: Icons.lyrics,
+              selected: showLyrics,
+              onPressed: onToggleLyrics,
+            ),
+            const SizedBox(width: actionGap),
+            action(
+              tooltip: 'Свернуть в островок',
+              icon: Icons.keyboard_double_arrow_right_rounded,
+              onPressed: onClose,
+            ),
+          ],
+        ),
+      ],
+    );
 
     /// Исполнитель или ошибка плеера. Ошибка — не ссылка, поэтому это
-    /// обычный текст; в режиме плеера подписи выровнены по центру.
-    Widget subtitle(TextAlign align) {
+    /// обычный текст. В обоих режимах подпись идёт от левого края: справа от
+    /// неё стоит сетка кнопок, и центрирование съезжало бы влево от центра.
+    Widget subtitle() {
       if (player.error != null) {
         return Tooltip(
           message: player.error!,
@@ -534,7 +542,6 @@ class _PanelTrackRow extends ConsumerWidget {
             player.error!,
             maxLines: 2,
             overflow: TextOverflow.ellipsis,
-            textAlign: align,
             style: text.bodySmall?.copyWith(color: scheme.error),
           ),
         );
@@ -544,105 +551,80 @@ class _PanelTrackRow extends ConsumerWidget {
       // и в одну строку её не прочитать.
       return ArtistLine(
         artists: track.artists,
-        textAlign: align,
         style: text.bodySmall?.copyWith(color: scheme.onSurfaceVariant),
       );
     }
 
-    if (mode != RightPanelMode.player) {
-      // Режим очереди: сверху строка с миниатюрой, ниже — действия. Действия
-      // вынесены из строки, иначе на минимальной ширине панели (260) они
-      // выдавливали подпись в ноль.
-      return Padding(
-        padding: const EdgeInsets.fromLTRB(
-          AppLayout.playerInset,
-          AppLayout.playerVerticalInset,
-          AppLayout.playerInset,
-          AppLayout.playerItemGap,
+    // Название и исполнитель. Название — тоже цель для правого клика: это
+    // подпись играющего трека, и меню здесь ждут в первую очередь.
+    final Widget caption = Column(
+      mainAxisSize: MainAxisSize.min,
+      crossAxisAlignment: CrossAxisAlignment.start,
+      children: <Widget>[
+        GestureDetector(
+          behavior: HitTestBehavior.opaque,
+          onSecondaryTap: () => showTrackMenu(context, track),
+          child: MarqueeText(
+            track.title,
+            // Прокрутка стоит на паузе вместе с треком.
+            playing: player.isPlaying,
+            style: text.titleMedium?.copyWith(fontWeight: FontWeight.w700),
+          ),
         ),
-        child: Column(
-          children: <Widget>[
-            Row(
-              children: <Widget>[
-                if (showArtwork) ...<Widget>[
-                  // Правый клик по миниатюре — то же меню трека, что у «…».
-                  GestureDetector(
-                    behavior: HitTestBehavior.opaque,
-                    onSecondaryTap: () => showTrackMenu(context, track),
-                    child: ClipRRect(
-                      borderRadius: BorderRadius.circular(10),
-                      child: SizedBox(
-                        width: 56,
-                        height: 56,
-                        child: Artwork(
-                          url: variants.isEmpty ? null : variants.first,
-                          fallbacks: variants.length > 1
-                              ? variants.sublist(1)
-                              : const <String>[],
-                          radius: BorderRadius.circular(10),
-                        ),
-                      ),
-                    ),
-                  ),
-                  const SizedBox(width: AppLayout.playerItemGap),
-                ],
-                Expanded(
-                  child: Column(
-                    mainAxisAlignment: MainAxisAlignment.center,
-                    crossAxisAlignment: CrossAxisAlignment.start,
-                    children: <Widget>[
-                      // Название — тоже цель для правого клика: это подпись
-                      // играющего трека, и меню здесь ждут в первую очередь.
-                      GestureDetector(
-                        behavior: HitTestBehavior.opaque,
-                        onSecondaryTap: () => showTrackMenu(context, track),
-                        child: MarqueeText(
-                          track.title,
-                          // Прокрутка стоит на паузе вместе с треком.
-                          playing: player.isPlaying,
-                          style: text.titleMedium?.copyWith(
-                            fontWeight: FontWeight.w700,
-                          ),
-                        ),
-                      ),
-                      const SizedBox(height: 2),
-                      subtitle(TextAlign.start),
-                    ],
-                  ),
-                ),
-              ],
-            ),
-            const SizedBox(height: AppLayout.playerItemGap),
-            actionsRow(),
-          ],
-        ),
-      );
-    }
+        const SizedBox(height: 2),
+        subtitle(),
+      ],
+    );
 
-    // Режим плеера: название, исполнитель и действия — по центру колонки,
-    // крупная обложка стоит ниже.
+    // Миниатюра в режиме очереди — вторая цель переключения: клик по ней
+    // возвращает крупную обложку. Правый клик по-прежнему открывает меню.
+    final Widget thumbnail = Tooltip(
+      message: 'Показать обложку',
+      child: MouseRegion(
+        cursor: SystemMouseCursors.click,
+        child: GestureDetector(
+          behavior: HitTestBehavior.opaque,
+          onTap: onToggleMode,
+          onSecondaryTap: () => showTrackMenu(context, track),
+          child: ClipRRect(
+            borderRadius: BorderRadius.circular(10),
+            child: SizedBox(
+              width: 56,
+              height: 56,
+              child: Artwork(
+                url: variants.isEmpty ? null : variants.first,
+                fallbacks: variants.length > 1
+                    ? variants.sublist(1)
+                    : const <String>[],
+                radius: BorderRadius.circular(10),
+              ),
+            ),
+          ),
+        ),
+      ),
+    );
+
+    // Одно правило для обоих режимов: [миниатюра], подпись, сетка. Миниатюры
+    // нет только в режиме плеера — там ниже стоит крупная обложка.
     return Padding(
-      padding: const EdgeInsets.fromLTRB(
+      padding: EdgeInsets.fromLTRB(
         AppLayout.playerInset,
         AppLayout.playerVerticalInset,
         AppLayout.playerInset,
-        0,
+        // В очереди под строкой сразу полоса перемотки — без зазора она
+        // прилипала к сетке. В режиме плеера ниже обложка со своим отступом.
+        mode != RightPanelMode.player ? AppLayout.playerItemGap : 0,
       ),
-      child: Column(
+      child: Row(
         children: <Widget>[
-          GestureDetector(
-            behavior: HitTestBehavior.opaque,
-            onSecondaryTap: () => showTrackMenu(context, track),
-            child: MarqueeText(
-              track.title,
-              playing: player.isPlaying,
-              style: text.titleMedium?.copyWith(fontWeight: FontWeight.w700),
-            ),
-          ),
-          const SizedBox(height: 2),
-          subtitle(TextAlign.center),
-          const SizedBox(height: AppLayout.playerItemGap),
-          actionsRow(),
+          if (mode != RightPanelMode.player) ...<Widget>[
+            thumbnail,
+            const SizedBox(width: AppLayout.playerItemGap),
+          ],
+          // Подпись занимает остаток и обрезается, а не выдавливает сетку.
+          Expanded(child: caption),
+          const SizedBox(width: AppLayout.playerItemGap),
+          actionsGrid,
         ],
       ),
     );
